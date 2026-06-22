@@ -1,0 +1,25 @@
+# Scratchpad
+temp
+
+# Local Claude client settings
+/.claude/settings.json
+/.claude/scheduled_tasks.lock
+
+# Humanize state directories (runtime-generated, project-local)
+.humanize/
+.claude-flow/
+.swarm/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
