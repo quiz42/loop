@@ -59,6 +59,14 @@ templates/         Additional templates
 tests/             Test suite
 ```
 
+## Testing
+
+Run the local test suite with:
+
+```bash
+python3 -m unittest discover -s tests
+```
+
 ## License
 
 MIT
