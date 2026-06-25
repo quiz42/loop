@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Run the full humanize-loop test suite.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+cd "$PROJECT_ROOT"
+
+echo "Running humanize-loop test suite..."
+python3 -m unittest discover -s tests -p "test_*.py" -v
