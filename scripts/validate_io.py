@@ -36,7 +36,7 @@ def validate_markdown_sections(path: Path, sections: list[str]) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Validate humanize-loop command input and output paths.")
+    parser = argparse.ArgumentParser(description="Validate loop command input and output paths.")
     parser.add_argument("mode", choices=["gen-idea", "gen-plan", "refine-plan"])
     parser.add_argument("--input", type=Path)
     parser.add_argument("--output", type=Path, required=True)

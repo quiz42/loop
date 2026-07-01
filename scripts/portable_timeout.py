@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cross-platform timeout runner for humanize-loop."""
+"""Cross-platform timeout runner for loop."""
 
 from __future__ import annotations
 

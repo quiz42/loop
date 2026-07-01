@@ -1,5 +1,5 @@
 ---
-name: humanize-gen-plan
+name: loop-gen-plan
 description: Generate a structured implementation plan from an idea file
 ---
 
@@ -10,7 +10,7 @@ Generate a structured, AI-driven implementation plan from a raw idea or requirem
 ## Usage
 
 ```
-python3 scripts/humanize.py gen-plan [OPTIONS]
+python3 scripts/loop.py gen-plan [OPTIONS]
 ```
 
 ## Options
@@ -25,24 +25,24 @@ python3 scripts/humanize.py gen-plan [OPTIONS]
 
 Generate a plan from the default IDEA.md:
 ```
-python3 scripts/humanize.py gen-plan
+python3 scripts/loop.py gen-plan
 ```
 
 Specify input and output files:
 ```
-python3 scripts/humanize.py gen-plan --input my_idea.md --output my_plan.md
+python3 scripts/loop.py gen-plan --input my_idea.md --output my_plan.md
 ```
 
 Set a custom title:
 ```
-python3 scripts/humanize.py gen-plan --input IDEA.md --output plan.md --title "Refactor Auth Module"
+python3 scripts/loop.py gen-plan --input IDEA.md --output plan.md --title "Refactor Auth Module"
 ```
 
 ## Workflow
 
 1. Write your idea or requirements into an input file (e.g., `IDEA.md`).
 2. Run `gen-plan` to produce a structured `plan.md`.
-3. Review and optionally refine the plan (see the `humanize-refine-plan` skill).
+3. Review and optionally refine the plan (see the `loop-refine-plan` skill).
 4. Pass the plan to `start-rlcr-loop` to begin iterative development.
 
 ## Notes

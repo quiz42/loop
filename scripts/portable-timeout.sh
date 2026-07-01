@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cross-platform timeout helper for humanize-loop commands.
+# Cross-platform timeout helper for loop commands.
 
 run_with_timeout() {
     local timeout_seconds="${1:-}"

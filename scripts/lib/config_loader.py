@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Configuration loading helpers for humanize-loop."""
+"""Configuration loading helpers for loop."""
 
 from __future__ import annotations
 
@@ -114,7 +114,7 @@ def get_config_value(config: Mapping[str, Any], key: str) -> str:
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Load humanize-loop configuration.")
+    parser = argparse.ArgumentParser(description="Load loop configuration.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     load_parser = subparsers.add_parser("load", help="Print merged configuration JSON.")

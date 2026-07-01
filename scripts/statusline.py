@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Terminal status line rendering for humanize-loop."""
+"""Terminal status line rendering for loop."""
 
 from __future__ import annotations
 
@@ -56,7 +56,7 @@ def render_from_json(payload: str, width: int | None = None) -> str:
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Render a humanize-loop terminal status line.")
+    parser = argparse.ArgumentParser(description="Render a loop terminal status line.")
     parser.add_argument("--cwd", default=".")
     parser.add_argument("--width", type=int, default=None)
     parser.add_argument("--json", action="store_true", help="Read status context JSON from stdin.")

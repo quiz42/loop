@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shell compatibility wrapper for humanize-loop model routing.
+# Shell compatibility wrapper for loop model routing.
 
 [[ -n "${_MODEL_ROUTER_LOADED:-}" ]] && return 0 2>/dev/null || true
 _MODEL_ROUTER_LOADED=1

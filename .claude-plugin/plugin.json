@@ -1,12 +1,12 @@
 {
-  "name": "humanize-loop",
+  "name": "loop",
   "description": "Humanize - An iterative development plugin that uses Codex to review Claude's work. Creates a feedback loop where Claude implements plans and Codex independently reviews progress, ensuring quality through continuous refinement.",
   "version": "0.1.0",
   "author": {
     "name": "FrankDan77"
   },
-  "repository": "https://github.com/FrankDan77/humanize-loop",
-  "homepage": "https://github.com/FrankDan77/humanize-loop#readme",
+  "repository": "https://github.com/FrankDan77/loop",
+  "homepage": "https://github.com/FrankDan77/loop#readme",
   "license": "MIT",
   "keywords": [
     "iterative-development",

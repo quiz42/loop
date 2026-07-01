@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shell compatibility wrapper for shared humanize-loop monitor utilities.
+# Shell compatibility wrapper for shared loop monitor utilities.
 
 [[ -n "${_MONITOR_COMMON_LOADED:-}" ]] && return 0 2>/dev/null || true
 _MONITOR_COMMON_LOADED=1

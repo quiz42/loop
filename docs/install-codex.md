@@ -1,6 +1,6 @@
-# Installing Codex CLI for humanize-loop
+# Installing Codex CLI for loop
 
-humanize-loop uses the Codex CLI as the code review engine inside the RLCR loop. This guide covers installing and configuring Codex CLI.
+loop uses the Codex CLI as the code review engine inside the RLCR loop. This guide covers installing and configuring Codex CLI.
 
 ## What is Codex CLI
 
@@ -59,9 +59,9 @@ codex "print hello world in Python"
 
 You should see a brief code snippet returned. If you see an authentication error, double-check your API key.
 
-## Configuration in humanize-loop
+## Configuration in loop
 
-humanize-loop controls Codex behavior through `config/default_config.json`:
+loop controls Codex behavior through `config/default_config.json`:
 
 ```json
 {

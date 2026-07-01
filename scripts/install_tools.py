@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install humanize-loop command assets into local tool directories."""
+"""Install loop command assets into local tool directories."""
 
 from __future__ import annotations
 
@@ -69,7 +69,7 @@ def install_skills(plugin_root: Path, destination: Path, profile: str) -> list[P
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Install humanize-loop hooks and skills.")
+    parser = argparse.ArgumentParser(description="Install loop hooks and skills.")
     subparsers = parser.add_subparsers(dest="command", required=True)
     hooks = subparsers.add_parser("codex-hooks")
     hooks.add_argument("--plugin-root", type=Path, default=Path.cwd())

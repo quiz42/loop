@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""RLCR loop orchestration utilities for humanize-loop."""
+"""RLCR loop orchestration utilities for loop."""
 
 from __future__ import annotations
 

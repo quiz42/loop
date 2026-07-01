@@ -1,6 +1,6 @@
 # Command: /humanize:monitor
 
-Display live status information for running humanize-loop processes. Supports monitoring the RLCR loop, Codex reviewer activity, and Gemini-based tasks.
+Display live status information for running loop processes. Supports monitoring the RLCR loop, Codex reviewer activity, and Gemini-based tasks.
 
 ## Usage
 

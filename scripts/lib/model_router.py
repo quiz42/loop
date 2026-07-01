@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Model routing helpers for humanize-loop."""
+"""Model routing helpers for loop."""
 
 from __future__ import annotations
 

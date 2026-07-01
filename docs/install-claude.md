@@ -1,6 +1,6 @@
-# Installing humanize-loop for Claude Code
+# Installing loop for Claude Code
 
-This guide walks through installing the humanize-loop plugin in Claude Code.
+This guide walks through installing the loop plugin in Claude Code.
 
 ## Prerequisites
 
@@ -15,7 +15,7 @@ This guide walks through installing the humanize-loop plugin in Claude Code.
 In a Claude Code session, run:
 
 ```
-/plugin marketplace add FrankDan77/humanize-loop
+/plugin marketplace add FrankDan77/loop
 ```
 
 This fetches the plugin metadata from the marketplace.
@@ -23,7 +23,7 @@ This fetches the plugin metadata from the marketplace.
 ### Step 2: Install the plugin
 
 ```
-/plugin install humanize-loop@FrankDan77
+/plugin install loop@FrankDan77
 ```
 
 Claude Code downloads and registers the plugin. You should see a confirmation message listing the available commands.
@@ -64,13 +64,13 @@ This creates `.humanize/bitlesson/lessons.md` and `.humanize/bitlesson/state.jso
 To update to the latest version, re-run the install command:
 
 ```
-/plugin install humanize-loop@FrankDan77
+/plugin install loop@FrankDan77
 ```
 
 ## Uninstalling
 
 ```
-/plugin remove humanize-loop
+/plugin remove loop
 ```
 
 This removes the plugin and its registered commands. Project files under `.humanize/` and `config/` are not deleted.

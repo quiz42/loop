@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Main command line entry point for humanize-loop."""
+"""Main command line entry point for loop."""
 
 from __future__ import annotations
 
@@ -96,7 +96,7 @@ def render_idea(description: str, title: str | None = None) -> str:
 
         ## Users
 
-        - Developers using humanize-loop to plan, implement, and review iterative changes.
+        - Developers using loop to plan, implement, and review iterative changes.
 
         ## Acceptance Criteria
 

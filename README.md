@@ -1,4 +1,4 @@
-# humanize-loop
+# loop
 
 **Version: 0.1.0**
 
@@ -19,10 +19,10 @@ The loop has two phases: **Implementation** (Claude works, Codex reviews summari
 
 ```bash
 # Add the marketplace source
-/plugin marketplace add FrankDan77/humanize-loop
+/plugin marketplace add FrankDan77/loop
 
 # Install the plugin
-/plugin install humanize-loop@FrankDan77
+/plugin install loop@FrankDan77
 ```
 
 Requires Claude Code CLI and [Codex CLI](https://github.com/openai/codex) for review functionality.

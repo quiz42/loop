@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shell compatibility wrapper for humanize-loop configuration loading.
+# Shell compatibility wrapper for loop configuration loading.
 
 [[ -n "${_CONFIG_LOADER_LOADED:-}" ]] && return 0 2>/dev/null || true
 _CONFIG_LOADER_LOADED=1

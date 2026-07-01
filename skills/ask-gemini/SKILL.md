@@ -5,7 +5,7 @@ description: Ask a question to Google Gemini and get a direct answer
 
 # Ask Gemini
 
-Send a question or prompt to Google Gemini via the humanize-loop toolchain. Useful for large-context analysis, design review, and cross-model validation during the RLCR workflow.
+Send a question or prompt to Google Gemini via the loop toolchain. Useful for large-context analysis, design review, and cross-model validation during the RLCR workflow.
 
 ## Usage
 

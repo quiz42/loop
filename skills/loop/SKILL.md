@@ -1,11 +1,11 @@
 ---
 name: humanize
-description: Main humanize-loop plugin skill covering all humanize commands
+description: Main loop plugin skill covering all humanize commands
 ---
 
 # Humanize
 
-The humanize-loop plugin drives iterative AI-assisted development through a structured workflow: generate a plan, refine it, then run the RLCR (Ralph-Loop with Codex Review) loop until all plan steps pass automated review.
+The loop plugin drives iterative AI-assisted development through a structured workflow: generate a plan, refine it, then run the RLCR (Ralph-Loop with Codex Review) loop until all plan steps pass automated review.
 
 ## Commands Overview
 
@@ -21,7 +21,7 @@ The humanize-loop plugin drives iterative AI-assisted development through a stru
 ## Usage
 
 ```
-python3 scripts/humanize.py COMMAND [OPTIONS]
+python3 scripts/loop.py COMMAND [OPTIONS]
 ```
 
 ## Commands
@@ -31,7 +31,7 @@ python3 scripts/humanize.py COMMAND [OPTIONS]
 Generate a structured implementation plan from an idea file.
 
 ```
-python3 scripts/humanize.py gen-plan [--input IDEA.md] [--output plan.md] [--title TITLE]
+python3 scripts/loop.py gen-plan [--input IDEA.md] [--output plan.md] [--title TITLE]
 ```
 
 ### start-rlcr-loop
@@ -39,7 +39,7 @@ python3 scripts/humanize.py gen-plan [--input IDEA.md] [--output plan.md] [--tit
 Start the RLCR loop to iteratively implement and review a plan.
 
 ```
-python3 scripts/humanize.py start-rlcr-loop [PLAN.md] [--codex-model MODEL] [--codex-effort high] [--max-iterations 42] [--agent-teams] [--track-plan-file] [--push-every-round]
+python3 scripts/loop.py start-rlcr-loop [PLAN.md] [--codex-model MODEL] [--codex-effort high] [--max-iterations 42] [--agent-teams] [--track-plan-file] [--push-every-round]
 ```
 
 ### cancel-rlcr-loop
@@ -47,7 +47,7 @@ python3 scripts/humanize.py start-rlcr-loop [PLAN.md] [--codex-model MODEL] [--c
 Gracefully stop a running loop and record a reason.
 
 ```
-python3 scripts/humanize.py cancel-rlcr-loop [--reason REASON]
+python3 scripts/loop.py cancel-rlcr-loop [--reason REASON]
 ```
 
 ### monitor
@@ -55,9 +55,9 @@ python3 scripts/humanize.py cancel-rlcr-loop [--reason REASON]
 Stream live output from the loop or an AI subprocess.
 
 ```
-python3 scripts/humanize.py monitor rlcr [--once]
-python3 scripts/humanize.py monitor codex [--once]
-python3 scripts/humanize.py monitor gemini [--once]
+python3 scripts/loop.py monitor rlcr [--once]
+python3 scripts/loop.py monitor codex [--once]
+python3 scripts/loop.py monitor gemini [--once]
 ```
 
 ## End-to-End Workflow
@@ -65,20 +65,20 @@ python3 scripts/humanize.py monitor gemini [--once]
 1. Write your idea into `IDEA.md`.
 2. Generate a plan:
    ```
-   python3 scripts/humanize.py gen-plan --input IDEA.md --output plan.md --title "My Feature"
+   python3 scripts/loop.py gen-plan --input IDEA.md --output plan.md --title "My Feature"
    ```
-3. Review `plan.md` and edit as needed (see `humanize-refine-plan` skill).
+3. Review `plan.md` and edit as needed (see `loop-refine-plan` skill).
 4. Start the RLCR loop:
    ```
-   python3 scripts/humanize.py start-rlcr-loop plan.md --codex-effort high --push-every-round
+   python3 scripts/loop.py start-rlcr-loop plan.md --codex-effort high --push-every-round
    ```
 5. Monitor progress:
    ```
-   python3 scripts/humanize.py monitor rlcr
+   python3 scripts/loop.py monitor rlcr
    ```
 6. If a plan-level change is needed, cancel and refine:
    ```
-   python3 scripts/humanize.py cancel-rlcr-loop --reason "Scope change"
+   python3 scripts/loop.py cancel-rlcr-loop --reason "Scope change"
    # edit plan.md, then restart the loop
    ```
 
@@ -97,8 +97,8 @@ Default values are read from `config/default_config.json`:
 
 ## Related Skills
 
-- `humanize-gen-plan` — detailed gen-plan options and workflow
-- `humanize-rlcr` — detailed RLCR loop options and monitoring
-- `humanize-refine-plan` — strategies for refining plans between iterations
+- `loop-gen-plan` — detailed gen-plan options and workflow
+- `loop-rlcr` — detailed RLCR loop options and monitoring
+- `loop-refine-plan` — strategies for refining plans between iterations
 - `ask-codex` — one-off Codex queries outside the loop
 - `ask-gemini` — one-off Gemini queries outside the loop

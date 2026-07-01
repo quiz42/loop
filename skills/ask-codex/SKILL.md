@@ -5,7 +5,7 @@ description: Ask a question to OpenAI Codex and get a direct answer
 
 # Ask Codex
 
-Send a question or prompt to OpenAI Codex via the humanize-loop toolchain. Useful for code generation, review, debugging, and technical Q&A during the RLCR workflow.
+Send a question or prompt to OpenAI Codex via the loop toolchain. Useful for code generation, review, debugging, and technical Q&A during the RLCR workflow.
 
 ## Usage
 

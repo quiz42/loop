@@ -1,5 +1,5 @@
 ---
-name: humanize-refine-plan
+name: loop-refine-plan
 description: Refine and iterate on a plan using RLCR loop feedback
 ---
 
@@ -13,9 +13,9 @@ The RLCR loop evaluates a plan file each iteration. When a round produces feedba
 
 ## Workflow
 
-1. Start or run the RLCR loop: `python3 scripts/humanize.py start-rlcr-loop plan.md`
-2. Review the loop output or monitor: `python3 scripts/humanize.py monitor rlcr`
-3. Cancel the loop if a plan-level change is needed: `python3 scripts/humanize.py cancel-rlcr-loop --reason "Plan needs restructuring"`
+1. Start or run the RLCR loop: `python3 scripts/loop.py start-rlcr-loop plan.md`
+2. Review the loop output or monitor: `python3 scripts/loop.py monitor rlcr`
+3. Cancel the loop if a plan-level change is needed: `python3 scripts/loop.py cancel-rlcr-loop --reason "Plan needs restructuring"`
 4. Edit `plan.md` to address the feedback.
 5. Re-run the loop with the refined plan.
 

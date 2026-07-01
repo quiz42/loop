@@ -104,7 +104,7 @@ class TestRootFiles(unittest.TestCase):
         with open(readme_path) as f:
             content = f.read()
 
-        self.assertIn("humanize-loop", content, "README missing project name")
+        self.assertIn("loop", content, "README missing project name")
         self.assertIn("RLCR", content, "README missing RLCR reference")
         self.assertIn("MIT", content, "README missing license info")
         self.assertIn("## Quick Start", content, "README missing Quick Start section")
@@ -122,7 +122,7 @@ class TestPluginConfiguration(unittest.TestCase):
         with open(plugin_path) as f:
             data = json.load(f)
 
-        self.assertEqual(data["name"], "humanize-loop")
+        self.assertEqual(data["name"], "loop")
         self.assertEqual(data["license"], "MIT")
         self.assertIn("version", data)
         self.assertIn("description", data)
@@ -145,7 +145,7 @@ class TestPluginConfiguration(unittest.TestCase):
         self.assertGreater(len(data["plugins"]), 0)
 
         plugin = data["plugins"][0]
-        self.assertEqual(plugin["name"], "humanize-loop")
+        self.assertEqual(plugin["name"], "loop")
         self.assertEqual(plugin["source"], "./")
         self.assertIn("version", plugin)
         self.assertIn("description", plugin)
@@ -159,7 +159,7 @@ class TestPluginConfiguration(unittest.TestCase):
             content = f.read()
 
         self.assertIn(
-            "humanize-loop", content, "CLAUDE.md missing project name"
+            "loop", content, "CLAUDE.md missing project name"
         )
         self.assertIn("version bump", content.lower())
 

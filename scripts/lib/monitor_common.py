@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shared monitor helpers for humanize-loop."""
+"""Shared monitor helpers for loop."""
 
 from __future__ import annotations
 
@@ -205,7 +205,7 @@ def parse_goal_tracker(path: str | Path) -> tuple[int, int, int, int, int, int, 
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Shared humanize-loop monitor utilities.")
+    parser = argparse.ArgumentParser(description="Shared loop monitor utilities.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     color_parser = subparsers.add_parser("color")

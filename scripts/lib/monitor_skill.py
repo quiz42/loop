@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Skill invocation monitor for humanize-loop."""
+"""Skill invocation monitor for loop."""
 
 from __future__ import annotations
 
@@ -266,7 +266,7 @@ def render_once(skill_dir: str | Path = ".humanize/skill", tool_filter: str = ""
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Monitor humanize-loop skill invocations.")
+    parser = argparse.ArgumentParser(description="Monitor loop skill invocations.")
     parser.add_argument("--skill-dir", default=".humanize/skill")
     parser.add_argument("--project-root", default=None)
     parser.add_argument("--tool-filter", choices=["codex", "gemini"], default="")

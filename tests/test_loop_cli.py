@@ -22,7 +22,7 @@ def load_module(name: str, relative_path: str):
     return module
 
 
-humanize = load_module("humanize_cli", "scripts/humanize.py")
+humanize = load_module("humanize_cli", "scripts/loop.py")
 
 
 class TestHumanizeCli(unittest.TestCase):
@@ -65,7 +65,7 @@ class TestHumanizeCli(unittest.TestCase):
             result = subprocess.run(
                 [
                     "bash",
-                    "scripts/humanize.sh",
+                    "scripts/loop.sh",
                     "monitor",
                     "codex",
                     "--once",
@@ -92,7 +92,7 @@ class TestHumanizeCli(unittest.TestCase):
             plan.write_text("# Plan\n", encoding="utf-8")
 
             start = subprocess.run(
-                ["python3", str(PROJECT_ROOT / "scripts/humanize.py"), "start-rlcr-loop", str(plan)],
+                ["python3", str(PROJECT_ROOT / "scripts/loop.py"), "start-rlcr-loop", str(plan)],
                 cwd=root,
                 text=True,
                 capture_output=True,
@@ -101,7 +101,7 @@ class TestHumanizeCli(unittest.TestCase):
             self.assertIn("Created RLCR session", start.stdout)
 
             monitor = subprocess.run(
-                ["python3", str(PROJECT_ROOT / "scripts/humanize.py"), "monitor", "rlcr", "--once"],
+                ["python3", str(PROJECT_ROOT / "scripts/loop.py"), "monitor", "rlcr", "--once"],
                 cwd=root,
                 text=True,
                 capture_output=True,
@@ -111,7 +111,7 @@ class TestHumanizeCli(unittest.TestCase):
             self.assertIn("Status:  active", monitor.stdout)
 
             cancel = subprocess.run(
-                ["python3", str(PROJECT_ROOT / "scripts/humanize.py"), "cancel-rlcr-loop", "--reason", "No longer needed."],
+                ["python3", str(PROJECT_ROOT / "scripts/loop.py"), "cancel-rlcr-loop", "--reason", "No longer needed."],
                 cwd=root,
                 text=True,
                 capture_output=True,
@@ -122,7 +122,7 @@ class TestHumanizeCli(unittest.TestCase):
 
     def test_help_includes_top_level_commands(self):
         result = subprocess.run(
-            ["bash", "scripts/humanize.sh", "--help"],
+            ["bash", "scripts/loop.sh", "--help"],
             cwd=PROJECT_ROOT,
             text=True,
             capture_output=True,

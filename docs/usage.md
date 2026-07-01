@@ -1,6 +1,6 @@
-# humanize-loop Usage Guide
+# loop Usage Guide
 
-humanize-loop is a Claude Code plugin that implements the RLCR (Ralph-Loop with Codex Review) iterative development workflow. It orchestrates idea generation, planning, and iterative code review cycles using Claude Code and the Codex CLI.
+loop is a Claude Code plugin that implements the RLCR (Ralph-Loop with Codex Review) iterative development workflow. It orchestrates idea generation, planning, and iterative code review cycles using Claude Code and the Codex CLI.
 
 ## Prerequisites
 

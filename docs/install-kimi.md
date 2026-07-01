@@ -1,6 +1,6 @@
 # Using Kimi as an Alternative Review Model
 
-humanize-loop uses Codex CLI for code review by default. If you prefer Kimi (Moonshot AI) as your review model, this guide explains how to configure it.
+loop uses Codex CLI for code review by default. If you prefer Kimi (Moonshot AI) as your review model, this guide explains how to configure it.
 
 ## What is Kimi
 
@@ -13,7 +13,7 @@ Kimi is a large language model by Moonshot AI with strong code understanding cap
 
 ## Configuration
 
-Kimi support in humanize-loop is configured through `config/default_config.json`. Set `bitlesson_model` to `kimi` and point the review model to the Kimi endpoint:
+Kimi support in loop is configured through `config/default_config.json`. Set `bitlesson_model` to `kimi` and point the review model to the Kimi endpoint:
 
 ```json
 {
@@ -30,7 +30,7 @@ Set your Moonshot API key in the environment:
 export MOONSHOT_API_KEY="sk-..."
 ```
 
-humanize-loop reads `MOONSHOT_API_KEY` when `bitlesson_model` is set to `kimi` and routes review requests to the Moonshot API.
+loop reads `MOONSHOT_API_KEY` when `bitlesson_model` is set to `kimi` and routes review requests to the Moonshot API.
 
 ## Available Kimi models
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shared utilities for humanize-loop hook implementations."""
+"""Shared utilities for loop hook implementations."""
 
 from __future__ import annotations
 

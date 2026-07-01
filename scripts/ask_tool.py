@@ -115,7 +115,7 @@ def run_gemini(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run one-shot humanize-loop consultation commands.")
+    parser = argparse.ArgumentParser(description="Run one-shot loop consultation commands.")
     subparsers = parser.add_subparsers(dest="provider", required=True)
     codex = subparsers.add_parser("codex", description="Ask Codex a one-shot question.")
     codex.add_argument("--codex-model", default="gpt-5.5")

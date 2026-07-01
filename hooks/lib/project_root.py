@@ -62,7 +62,7 @@ def resolve_project_root(
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Resolve humanize-loop project paths.")
+    parser = argparse.ArgumentParser(description="Resolve loop project paths.")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("root", help="Print the project root.")
     canonical = subparsers.add_parser("canonicalize", help="Canonicalize a path.")

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shell compatibility wrapper for humanize-loop skill monitoring.
+# Shell compatibility wrapper for loop skill monitoring.
 
 _humanize_monitor_skill() {
     local script_dir=""
