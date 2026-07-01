@@ -15,6 +15,36 @@ An iterative development plugin for Claude Code and Codex implementing the RLCR 
 
 The loop has two phases: **Implementation** (Claude works, Codex reviews summaries) and **Code Review** (Codex checks code quality with severity markers). Issues feed back into implementation until resolved.
 
+## Prerequisites
+
+- **Python 3.10+** — Required for running loop scripts
+- **[uv](https://docs.astral.sh/uv/)** — Fast Python package manager (installed automatically if missing)
+- **Claude Code CLI** — Required for Claude-based implementation
+- **[Codex CLI](https://github.com/openai/codex)** — Required for independent code review
+- **OpenAI API key** — Set as `OPENAI_API_KEY` environment variable
+
+### Installing uv (if not already installed)
+
+uv is a fast Python package and project manager. The install script will auto-install it, or you can install manually:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+After installation, uv is available at `~/.cargo/bin/uv`. You may need to restart your shell or add it to PATH:
+
+```bash
+export PATH="$HOME/.cargo/bin:$PATH"
+```
+
+Verify installation:
+
+```bash
+uv --version
+```
+
+For detailed uv documentation, see: https://docs.astral.sh/uv/
+
 ## Installation
 
 ### Method 1: Marketplace installation (Claude Code only)
@@ -44,6 +74,17 @@ bash scripts/install-local.sh
 ```
 
 The installer automatically detects and installs the plugin for both Claude Code and Codex (if installed).
+
+**What the installer does:**
+- Installs uv (if not already present)
+- Runs `uv sync` to create a `.venv/` with all Python dependencies
+- Symlinks `loop` CLI to `~/.local/bin/loop` for global access
+- Symlinks the plugin to Claude Code and Codex plugin directories
+
+After installation, you can:
+- Run `loop` directly from any directory (if `~/.local/bin` is in PATH)
+- Or activate the venv: `source .venv/bin/activate` and use `scripts/loop.sh`
+- Or use inside Claude Code with `/` prefix (e.g., `/monitor`)
 
 **Uninstall:**
 
@@ -144,6 +185,41 @@ Loop behavior is controlled via `config/default_config.json`:
 - `hooks` — Custom validation and lifecycle hooks
 
 See [Configuration Guide](docs/usage.md#configuration) for details.
+
+## Dependency Management with uv
+
+This project uses [uv](https://docs.astral.sh/uv/) for fast, reliable Python dependency management.
+
+### Common uv commands
+
+```bash
+# Install/sync all dependencies (creates .venv/)
+uv sync
+
+# Include dev dependencies (pytest, etc.)
+uv sync --extra dev
+
+# Add a new runtime dependency
+uv add <package>
+
+# Add a dev-only dependency
+uv add --dev <package>
+
+# Run a script inside the managed environment
+uv run scripts/loop.py monitor
+
+# Activate the virtual environment manually
+source .venv/bin/activate
+```
+
+### Why uv?
+
+- **10-100x faster** than pip for installing packages
+- **Deterministic** — lockfile ensures reproducible installs
+- **Built-in virtual environment** management
+- **Drop-in replacement** for pip, poetry, and pipenv
+
+All dependencies are declared in `pyproject.toml`. Currently, loop uses only Python standard library modules, but uv is ready when external packages are needed.
 
 ## Skills
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# One-click local install script for loop plugin
-# Installs loop into Claude Code and Codex from local/cloned repository
+# One-click local install script for loop plugin and CLI
+# Installs loop into Claude Code and Codex plugin directories
 
 set -e
 
@@ -10,6 +10,47 @@ PLUGIN_NAME="loop"
 
 echo "=== loop local installer ==="
 echo "Plugin root: $PLUGIN_ROOT"
+echo ""
+
+# Check for uv
+if ! command -v uv &> /dev/null; then
+    echo "⚠ uv not found. Installing uv..."
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="$HOME/.cargo/bin:$PATH"
+    
+    if ! command -v uv &> /dev/null; then
+        echo "✗ uv installation failed. Please install manually:"
+        echo "  curl -LsSf https://astral.sh/uv/install.sh | sh"
+        exit 1
+    fi
+    echo "✓ uv installed"
+fi
+
+# Initialize uv environment (creates .venv if doesn't exist)
+echo ""
+echo "Setting up Python environment with uv..."
+cd "$PLUGIN_ROOT"
+uv sync
+echo "✓ Python environment ready"
+
+# Add loop CLI to PATH via symlink
+LOOP_BIN="$HOME/.local/bin/loop"
+mkdir -p "$HOME/.local/bin"
+if [ -L "$LOOP_BIN" ] || [ -f "$LOOP_BIN" ]; then
+    rm -f "$LOOP_BIN"
+fi
+ln -s "$PLUGIN_ROOT/scripts/loop.sh" "$LOOP_BIN"
+chmod +x "$LOOP_BIN"
+echo "✓ loop CLI symlinked to $LOOP_BIN"
+
+# Verify CLI installation
+if command -v loop &> /dev/null; then
+    echo "  loop command: $(which loop)"
+else
+    echo "⚠ 'loop' not in PATH yet. Add ~/.local/bin to PATH:"
+    echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+fi
+
 echo ""
 
 # Detect Claude Code plugin directory
@@ -42,7 +83,7 @@ if [ -n "$CLAUDE_PLUGIN_DIR" ]; then
     
     echo "  Creating symlink: $TARGET -> $PLUGIN_ROOT"
     ln -s "$PLUGIN_ROOT" "$TARGET"
-    echo "  ✓ Claude Code installation complete"
+    echo "  ✓ Claude Code plugin installed"
 else
     echo "⚠ Claude Code plugin directory not found"
     echo "  Expected locations:"
@@ -65,7 +106,7 @@ if [ -n "$CODEX_PLUGIN_DIR" ]; then
     
     echo "  Creating symlink: $TARGET -> $PLUGIN_ROOT"
     ln -s "$PLUGIN_ROOT" "$TARGET"
-    echo "  ✓ Codex installation complete"
+    echo "  ✓ Codex plugin installed"
 else
     echo "⚠ Codex plugin directory not found"
     echo "  Expected locations:"
@@ -74,31 +115,25 @@ else
 fi
 
 echo ""
-
-# Make scripts executable
-echo "Making scripts executable..."
-chmod +x "$PLUGIN_ROOT"/scripts/*.sh "$PLUGIN_ROOT"/scripts/*.py 2>/dev/null || true
-echo "✓ Scripts are executable"
-
-echo ""
 echo "=== Installation summary ==="
+echo "  ✓ Python environment: .venv/ (managed by uv)"
+if command -v loop &> /dev/null; then
+    echo "  ✓ loop CLI: available in PATH"
+else
+    echo "  ⚠ loop CLI: add ~/.local/bin to PATH"
+fi
 if [ -n "$CLAUDE_PLUGIN_DIR" ]; then
-    echo "  ✓ Claude Code: installed at $CLAUDE_PLUGIN_DIR/$PLUGIN_NAME"
-    echo "    Restart Claude Code and run: /monitor"
+    echo "  ✓ Claude Code plugin: $CLAUDE_PLUGIN_DIR/$PLUGIN_NAME"
 fi
 if [ -n "$CODEX_PLUGIN_DIR" ]; then
-    echo "  ✓ Codex: installed at $CODEX_PLUGIN_DIR/$PLUGIN_NAME"
-fi
-
-if [ -z "$CLAUDE_PLUGIN_DIR" ] && [ -z "$CODEX_PLUGIN_DIR" ]; then
-    echo "  ✗ No plugin directories found. Install Claude Code or Codex first."
-    exit 1
+    echo "  ✓ Codex plugin: $CODEX_PLUGIN_DIR/$PLUGIN_NAME"
 fi
 
 echo ""
 echo "Next steps:"
-echo "  1. Restart Claude Code / Codex"
-echo "  2. Verify with: /monitor (Claude Code) or codex /monitor (Codex)"
-echo "  3. Review config at: config/default_config.json"
+echo "  1. Activate environment: source .venv/bin/activate"
+echo "  2. Or ensure ~/.local/bin is in PATH for 'loop' command"
+echo "  3. Verify CLI: loop monitor"
+echo "  4. Use in Claude Code: restart and run /monitor"
 echo ""
 echo "To uninstall, run: bash scripts/uninstall-local.sh"
