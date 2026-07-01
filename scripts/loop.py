@@ -79,7 +79,7 @@ def write_text(path: Path, content: str, force: bool = False) -> None:
 def render_idea(description: str, title: str | None = None) -> str:
     """Render a structured idea draft from a short description."""
     clean_description = " ".join(description.strip().split())
-    idea_title = title or clean_description[:80].rstrip(".") or "Humanize idea"
+    idea_title = title or clean_description[:80].rstrip(".") or "loop idea"
     return dedent(
         f"""
         # {idea_title}
@@ -126,7 +126,7 @@ def _first_markdown_heading(markdown: str) -> str:
     for line in markdown.splitlines():
         if line.startswith("# "):
             return line.removeprefix("# ").strip()
-    first = next((line.strip() for line in markdown.splitlines() if line.strip()), "Humanize plan")
+    first = next((line.strip() for line in markdown.splitlines() if line.strip()), "loop plan")
     return first[:80]
 
 
@@ -214,11 +214,11 @@ def render_rlcr_once(loop_dir: Path) -> str:
     """Render a one-shot RLCR monitor view."""
     session = latest_loop_session(loop_dir)
     if session is None:
-        return f"No session directories found in {loop_dir}\nStart an RLCR loop first with /humanize:start-rlcr-loop\n"
+        return f"No session directories found in {loop_dir}\nStart an RLCR loop first with loop start-rlcr-loop\n"
 
     lines = [
         "==========================================",
-        " Humanize RLCR Monitor",
+        " loop RLCR Monitor",
         "==========================================",
         "",
         f"Session: {session.path.name}",
@@ -320,7 +320,7 @@ def command_start_rlcr_loop(args: argparse.Namespace) -> int:
         print(f"Error: plan file not found: {plan}", file=sys.stderr)
         return 1
     root = project_root()
-    loop_root = root / ".humanize" / "rlcr"
+    loop_root = root / ".loop" / "rlcr"
     session_name = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S")
     session = loop_root / session_name
     session.mkdir(parents=True, exist_ok=False)
@@ -377,14 +377,14 @@ def command_cancel_rlcr_loop(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the top-level argument parser."""
-    parser = argparse.ArgumentParser(prog="humanize", description="Humanize loop command line tools.")
+    parser = argparse.ArgumentParser(prog="loop", description="loop command line tools.")
     subparsers = parser.add_subparsers(dest="command")
 
     monitor = subparsers.add_parser("monitor", help="Monitor RLCR or skill activity.")
     monitor_sub = monitor.add_subparsers(dest="target")
 
     rlcr = monitor_sub.add_parser("rlcr", help="Monitor the latest RLCR loop log.")
-    rlcr.add_argument("--loop-dir", default=".humanize/rlcr")
+    rlcr.add_argument("--loop-dir", default=".loop/rlcr")
     rlcr.add_argument("--once", action="store_true", help="Render one snapshot and exit.")
     rlcr.add_argument("--interval", type=float, default=2.0)
     rlcr.set_defaults(func=monitor_rlcr)
@@ -395,7 +395,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("gemini", "Monitor gemini skill invocations only.", "gemini"),
     ):
         command = monitor_sub.add_parser(target, help=help_text)
-        command.add_argument("--skill-dir", default=".humanize/skill")
+        command.add_argument("--skill-dir", default=".loop/skill")
         command.add_argument("--project-root", default=None)
         command.add_argument("--once", action="store_true", help="Render one snapshot and exit.")
         command.add_argument("--interval", type=float, default=2.0)
@@ -424,7 +424,7 @@ def build_parser() -> argparse.ArgumentParser:
     start.set_defaults(func=command_start_rlcr_loop)
 
     cancel = subparsers.add_parser("cancel-rlcr-loop", help="Mark the newest RLCR loop session as cancelled.")
-    cancel.add_argument("--loop-dir", default=".humanize/rlcr")
+    cancel.add_argument("--loop-dir", default=".loop/rlcr")
     cancel.add_argument("--reason", default="Cancelled by user request.")
     cancel.set_defaults(func=command_cancel_rlcr_loop)
 
@@ -434,12 +434,18 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     """Run the command line interface."""
     parser = build_parser()
-    args = parser.parse_args(argv)
+    # Default 'loop monitor [args...]' to 'loop monitor rlcr [args...]'
+    # by injecting 'rlcr' as the first monitor subcommand when missing
+    raw_args = list(argv) if argv is not None else sys.argv[1:]
+    monitor_targets = {"rlcr", "skill", "codex", "gemini"}
+    if raw_args and raw_args[0] == "monitor":
+        rest = raw_args[1:]
+        # If no target subcommand is provided, inject "rlcr" as default
+        if not rest or rest[0] not in monitor_targets:
+            raw_args = ["monitor", "rlcr"] + rest
+    args = parser.parse_args(raw_args)
     if not hasattr(args, "func"):
         parser.print_help()
-        return 1
-    if args.command == "monitor" and not getattr(args, "target", None):
-        parser.parse_args(["monitor", "--help"])
         return 1
     return int(args.func(args))
 

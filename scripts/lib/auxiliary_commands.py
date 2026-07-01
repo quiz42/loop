@@ -68,10 +68,10 @@ def ensure_directory(path: Path) -> None:
 
 
 def ensure_project_storage(project_root_path: Path, unique: str) -> tuple[Path, Path]:
-    skill_dir = project_root_path / ".humanize" / "skill" / unique
+    skill_dir = project_root_path / ".loop" / "skill" / unique
     ensure_directory(skill_dir)
     cache_base = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
-    cache_dir = cache_base / "humanize" / sanitize_path(project_root_path) / f"skill-{unique}"
+    cache_dir = cache_base / "loop" / sanitize_path(project_root_path) / f"skill-{unique}"
     try:
         ensure_directory(cache_dir)
     except OSError:

@@ -26,7 +26,7 @@ This file records small lessons learned from implementation deltas.
 
 
 def bitlesson_dir(root: Path) -> Path:
-    return root / ".humanize" / "bitlesson"
+    return root / ".loop" / "bitlesson"
 
 
 def lessons_path(root: Path) -> Path:

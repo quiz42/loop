@@ -59,7 +59,7 @@ def install_skill(skill_source: Path, destination: Path) -> Path:
 
 def install_skills(plugin_root: Path, destination: Path, profile: str) -> list[Path]:
     copied = copy_tree_contents(plugin_root / "skills", destination)
-    manifest = destination / f"humanize-{profile}-skills.json"
+    manifest = destination / f"loop-{profile}-skills.json"
     manifest.write_text(
         json.dumps({"profile": profile, "installed": [str(path) for path in copied]}, indent=2) + "\n",
         encoding="utf-8",
@@ -73,15 +73,15 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
     hooks = subparsers.add_parser("codex-hooks")
     hooks.add_argument("--plugin-root", type=Path, default=Path.cwd())
-    hooks.add_argument("--target-dir", type=Path, default=Path.home() / ".codex" / "humanize")
+    hooks.add_argument("--target-dir", type=Path, default=Path.home() / ".codex" / "loop")
     skill = subparsers.add_parser("skill")
     skill.add_argument("source", type=Path)
-    skill.add_argument("--destination", type=Path, default=Path.home() / ".humanize" / "skills")
+    skill.add_argument("--destination", type=Path, default=Path.home() / ".loop" / "skills")
     for name, profile in (("skills-codex", "codex"), ("skills-kimi", "kimi")):
         sub = subparsers.add_parser(name)
         sub.set_defaults(profile=profile)
         sub.add_argument("--plugin-root", type=Path, default=Path.cwd())
-        sub.add_argument("--destination", type=Path, default=Path.home() / ".humanize" / "skills")
+        sub.add_argument("--destination", type=Path, default=Path.home() / ".loop" / "skills")
     return parser
 
 

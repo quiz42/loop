@@ -108,7 +108,7 @@ def parse_state(path: Path) -> dict[str, str]:
 
 def active_loop_base(project_root: Path) -> Path:
     """Return the RLCR loop base directory for a project."""
-    return project_root / ".humanize" / "rlcr"
+    return project_root / ".loop" / "rlcr"
 
 
 def find_active_loop(loop_base: Path) -> Path | None:
@@ -470,7 +470,7 @@ def setup_rlcr_loop(options: RLCRSetupOptions) -> RLCRSession:
     if options.skip_impl:
         _write(loop_dir / ".review-phase-started", "build_finish_round=0\n")
 
-    pending_file = project_root / ".humanize" / ".pending-session-id"
+    pending_file = project_root / ".loop" / ".pending-session-id"
     pending_file.parent.mkdir(parents=True, exist_ok=True)
     _write(pending_file, f"{state_file}\nsetup-rlcr-loop\n")
     return session
@@ -508,7 +508,7 @@ def cancel_rlcr_loop(project_root: Path, force: bool = False) -> tuple[int, str]
             "The loop is currently in Finalize Phase. Use --force to cancel anyway.",
         )
     (loop_dir / ".cancel-requested").touch()
-    pending = project_root / ".humanize" / ".pending-session-id"
+    pending = project_root / ".loop" / ".pending-session-id"
     pending.unlink(missing_ok=True)
     target = loop_dir / "cancel-state.md"
     if target.exists():
@@ -535,7 +535,7 @@ def run_stop_gate(project_root: Path, session_id: str = "", transcript_path: str
         "hook_event_name": "Stop",
         "stop_hook_active": False,
         "cwd": str(project_root),
-        "model": os.environ.get("CODEX_MODEL", "humanize-skill-gate"),
+        "model": os.environ.get("CODEX_MODEL", "loop-skill-gate"),
         "permission_mode": os.environ.get("CODEX_PERMISSION_MODE", "default"),
         "session_id": session_id or None,
         "transcript_path": transcript_path or None,

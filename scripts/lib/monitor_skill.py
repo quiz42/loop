@@ -97,7 +97,7 @@ def project_cache_dir(invocation_dir: str | Path, project_root: str | Path | Non
         root = str(project_root)
     sanitized = re.sub(r"-+", "-", re.sub(r"[^a-zA-Z0-9._-]", "-", root))
     cache_base = Path(values.get("XDG_CACHE_HOME") or Path(values.get("HOME", "")) / ".cache")
-    return cache_base / "humanize" / sanitized / f"skill-{Path(invocation_dir).name}"
+    return cache_base / "loop" / sanitized / f"skill-{Path(invocation_dir).name}"
 
 
 def _first_existing(paths: list[Path], require_content: bool) -> Path | None:
@@ -149,7 +149,7 @@ def monitored_file(invocation_dir: str | Path, project_root: str | Path | None =
     return output if output.is_file() else None
 
 
-def list_invocation_dirs(skill_dir: str | Path = ".humanize/skill", tool_filter: str = "") -> list[Path]:
+def list_invocation_dirs(skill_dir: str | Path = ".loop/skill", tool_filter: str = "") -> list[Path]:
     """Return valid invocation directories newest first."""
     root = Path(skill_dir)
     if not root.is_dir():
@@ -165,7 +165,7 @@ def list_invocation_dirs(skill_dir: str | Path = ".humanize/skill", tool_filter:
     return sorted(directories, key=lambda item: item.name, reverse=True)
 
 
-def count_stats(skill_dir: str | Path = ".humanize/skill", tool_filter: str = "") -> dict[str, int]:
+def count_stats(skill_dir: str | Path = ".loop/skill", tool_filter: str = "") -> dict[str, int]:
     """Count invocations by status."""
     stats = {"total": 0, "success": 0, "error": 0, "timeout": 0, "empty": 0, "running": 0}
     for directory in list_invocation_dirs(skill_dir, tool_filter):
@@ -206,7 +206,7 @@ def build_invocation(path: Path, project_root: str | Path | None = None, env: di
     )
 
 
-def best_invocation(skill_dir: str | Path = ".humanize/skill", tool_filter: str = "", project_root: str | Path | None = None) -> Invocation | None:
+def best_invocation(skill_dir: str | Path = ".loop/skill", tool_filter: str = "", project_root: str | Path | None = None) -> Invocation | None:
     """Return the newest invocation with content, or the newest invocation."""
     directories = list_invocation_dirs(skill_dir, tool_filter)
     if not directories:
@@ -218,7 +218,7 @@ def best_invocation(skill_dir: str | Path = ".humanize/skill", tool_filter: str 
     return build_invocation(directories[0], project_root)
 
 
-def render_once(skill_dir: str | Path = ".humanize/skill", tool_filter: str = "", project_root: str | Path | None = None) -> str:
+def render_once(skill_dir: str | Path = ".loop/skill", tool_filter: str = "", project_root: str | Path | None = None) -> str:
     """Render a one-shot text dashboard."""
     focus = best_invocation(skill_dir, tool_filter, project_root)
     title = " Humanize Skill Monitor" + (f" [{tool_filter}]" if tool_filter else "")
@@ -267,7 +267,7 @@ def render_once(skill_dir: str | Path = ".humanize/skill", tool_filter: str = ""
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Monitor loop skill invocations.")
-    parser.add_argument("--skill-dir", default=".humanize/skill")
+    parser.add_argument("--skill-dir", default=".loop/skill")
     parser.add_argument("--project-root", default=None)
     parser.add_argument("--tool-filter", choices=["codex", "gemini"], default="")
     parser.add_argument("--once", action="store_true", help="Render one dashboard snapshot and exit.")

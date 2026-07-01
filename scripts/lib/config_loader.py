@@ -67,15 +67,15 @@ def _read_layer(path: Path, label: str, required: bool) -> dict[str, Any]:
 def user_config_path(env: Mapping[str, str] | None = None) -> Path:
     values = os.environ if env is None else env
     if values.get("XDG_CONFIG_HOME"):
-        return Path(values["XDG_CONFIG_HOME"]) / "humanize" / "config.json"
-    return Path(values.get("HOME", "")) / ".config" / "humanize" / "config.json"
+        return Path(values["XDG_CONFIG_HOME"]) / "loop" / "config.json"
+    return Path(values.get("HOME", "")) / ".config" / "loop" / "config.json"
 
 
 def project_config_path(project_root: str | Path, env: Mapping[str, str] | None = None) -> Path:
     values = os.environ if env is None else env
     if values.get("HUMANIZE_CONFIG"):
         return Path(values["HUMANIZE_CONFIG"])
-    return Path(project_root) / ".humanize" / "config.json"
+    return Path(project_root) / ".loop" / "config.json"
 
 
 def load_merged_config(
