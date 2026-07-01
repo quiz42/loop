@@ -34,15 +34,28 @@ uv venv
 uv sync --no-install-project
 echo "✓ Python environment ready"
 
-# Add loop CLI to PATH via symlink
+# Install loop CLI to ~/.local/lib/loop/
+LOOP_INSTALL_DIR="$HOME/.local/lib/loop"
+echo ""
+echo "Installing loop CLI to $LOOP_INSTALL_DIR..."
+mkdir -p "$LOOP_INSTALL_DIR"
+
+# Copy Python scripts and libraries
+cp -r "$PLUGIN_ROOT/scripts/"* "$LOOP_INSTALL_DIR/"
+echo "✓ loop scripts installed"
+
+# Create wrapper script at ~/.local/bin/loop
 LOOP_BIN="$HOME/.local/bin/loop"
 mkdir -p "$HOME/.local/bin"
-if [ -L "$LOOP_BIN" ] || [ -f "$LOOP_BIN" ]; then
-    rm -f "$LOOP_BIN"
-fi
-ln -s "$PLUGIN_ROOT/scripts/loop.sh" "$LOOP_BIN"
+cat > "$LOOP_BIN" <<'EOF'
+#!/usr/bin/env bash
+# loop CLI wrapper — calls the installed Python script
+set -euo pipefail
+LOOP_LIB="$HOME/.local/lib/loop"
+exec python3 "$LOOP_LIB/loop.py" "$@"
+EOF
 chmod +x "$LOOP_BIN"
-echo "✓ loop CLI symlinked to $LOOP_BIN"
+echo "✓ loop command installed to $LOOP_BIN"
 
 # Verify CLI installation
 if command -v loop &> /dev/null; then

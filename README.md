@@ -77,14 +77,20 @@ The installer automatically detects and installs the plugin for both Claude Code
 
 **What the installer does:**
 - Installs uv (if not already present)
-- Runs `uv sync` to create a `.venv/` with all Python dependencies
-- Symlinks `loop` CLI to `~/.local/bin/loop` for global access
+- Runs `uv sync` to create a `.venv/` with all Python dependencies in the cloned repo
+- **Copies** loop scripts to `~/.local/lib/loop/` (persistent installation)
+- Creates `~/.local/bin/loop` wrapper script for global access
 - Symlinks the plugin to Claude Code and Codex plugin directories
 
 After installation, you can:
 - Run `loop` directly from any directory (if `~/.local/bin` is in PATH)
-- Or activate the venv: `source .venv/bin/activate` and use `scripts/loop.sh`
+- Delete the cloned repo if desired — the `loop` command will continue to work
 - Or use inside Claude Code with `/` prefix (e.g., `/monitor`)
+
+**Important:** The loop CLI is **copied** to `~/.local/lib/loop/`, not symlinked. This means:
+- ✅ You can safely delete the cloned repository after installation
+- ✅ The `loop` command will continue to work
+- ⚠️  Updates require re-running `install-local.sh` to refresh the installed files
 
 **Uninstall:**
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Uninstall loop plugin from local Claude Code and Codex installations
+# Uninstall loop plugin from local Claude Code, Codex, and system installations
 
 set -e
 
@@ -9,6 +9,19 @@ echo "=== loop uninstaller ==="
 echo ""
 
 removed=0
+
+# Remove CLI installation
+if [ -f "$HOME/.local/bin/loop" ]; then
+    echo "Removing loop CLI: $HOME/.local/bin/loop"
+    rm -f "$HOME/.local/bin/loop"
+    removed=$((removed + 1))
+fi
+
+if [ -d "$HOME/.local/lib/loop" ]; then
+    echo "Removing loop installation: $HOME/.local/lib/loop"
+    rm -rf "$HOME/.local/lib/loop"
+    removed=$((removed + 1))
+fi
 
 # Remove from Claude Code
 for dir in \
@@ -40,5 +53,5 @@ if [ "$removed" -eq 0 ]; then
 else
     echo ""
     echo "✓ loop uninstalled ($removed location(s) cleaned up)"
-    echo "  Note: config/ and project files are not deleted."
+    echo "  Note: .venv/ and config/ files in the cloned repo are not deleted."
 fi
