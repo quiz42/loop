@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Hook validators for Humanize loop safety rules."""
+"""Hook validators for loop safety rules."""
 
 from __future__ import annotations
 
@@ -102,7 +102,7 @@ def _active_loop(payload: Mapping[str, Any], env: Mapping[str, str] | None = Non
     if not root:
         return None
     session_id = loop_common.extract_session_id(payload)
-    return loop_common.find_active_loop(root / ".humanize" / "rlcr", session_id)
+    return loop_common.find_active_loop(root / ".loop" / "rlcr", session_id)
 
 
 def _active_state(loop_dir: Path | None) -> tuple[Path | None, loop_common.LoopState | None]:
@@ -133,7 +133,7 @@ def _resolve_input_path(path: str, root: Path | None) -> Path:
 
 
 def _is_loop_path(path: str | Path) -> bool:
-    return ".humanize/rlcr/" in str(path).replace(os.sep, "/")
+    return ".loop/rlcr/" in str(path).replace(os.sep, "/")
 
 
 def _round_kind(path: str) -> str:
@@ -330,14 +330,14 @@ def validate_bash(payload: Mapping[str, Any]) -> ValidationResult:
         return ValidationResult.block(_block_message("Hook Execution Blocked", "Loop hook and stop gate scripts cannot be invoked manually."))
 
     root = _project_root()
-    if root and loop_common.git_adds_humanize(command_lower, root):
-        return ValidationResult.block(_block_message("Git Add Blocked", "Do not stage local .humanize loop state."))
+    if root and loop_common.git_adds_loop(command_lower, root):
+        return ValidationResult.block(_block_message("Git Add Blocked", "Do not stage local .loop runtime state."))
 
     blocked_files = [
         (r"methodology-analysis-state\.md", "State File Blocked"),
         (r"finalize-state\.md", "State File Blocked"),
         (r"state\.md", "State File Blocked"),
-        (r"\.humanize/rlcr(/[^/]+)?/plan\.md", "Plan Backup Blocked"),
+        (r"\.loop/rlcr(/[^/]+)?/plan\.md", "Plan Backup Blocked"),
         (r"goal-tracker\.md", "Goal Tracker Blocked"),
         (r"round-[0-9]+-prompt\.md", "Prompt Write Blocked"),
         (r"round-[0-9]+-summary\.md", "Summary Bash Write Blocked"),
@@ -385,7 +385,7 @@ def post_bash_hook(payload: Mapping[str, Any]) -> ValidationResult:
     root = _project_root()
     if not root:
         return ValidationResult.allow()
-    marker = root / ".humanize" / "last-setup-command.txt"
+    marker = root / ".loop" / "last-setup-command.txt"
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text(command + "\n", encoding="utf-8")
     return ValidationResult.allow()

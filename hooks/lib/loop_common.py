@@ -414,18 +414,23 @@ def is_cancel_authorized(active_loop_dir: str | Path, command: str) -> bool:
     return not original.is_symlink()
 
 
+def is_in_loop_dir(path: str) -> bool:
+    return ".loop/rlcr/" in path
+
+
 def is_in_humanize_loop_dir(path: str) -> bool:
+    """Return whether a path is inside the legacy runtime directory."""
     return ".humanize/rlcr/" in path
 
 
-def git_adds_humanize(command_lower: str, project_root: str | Path = ".") -> bool:
-    """Return whether a git add command would stage local humanize state."""
+def git_adds_loop(command_lower: str, project_root: str | Path = ".") -> bool:
+    """Return whether a git add command would stage local loop state."""
     for segment in re.split(r"&&|\|\||\||;", command_lower):
         if not re.search(r"(^|\s)git\s+([^\s]+\s+)*add(\s|$)", segment):
             continue
         add_args = re.sub(r".*\sadd\s*", "", segment)
         normalized = add_args.replace("'", "").replace('"', "")
-        if re.search(r"(^|\s|/)\.humanize($|/|\s)", normalized):
+        if re.search(r"(^|\s|/)\.loop($|/|\s)", normalized):
             return True
         has_force = bool(re.search(r"(^|\s)--force(\s|$)|(^|\s)-[a-z]*f[a-z]*(\s|$)", add_args))
         has_all = bool(re.search(r"(^|\s)--all(\s|$)|(^|\s)-[a-z]*a[a-z]*(\s|$)", add_args))
@@ -433,22 +438,32 @@ def git_adds_humanize(command_lower: str, project_root: str | Path = ".") -> boo
         if has_force and (has_all or has_broad_scope):
             return True
         root = Path(project_root)
-        if not (root / ".humanize").is_dir():
+        if not (root / ".loop").is_dir():
             continue
         if has_all:
             return True
         if has_broad_scope:
-            ignored = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", ".humanize"]).returncode == 0
+            ignored = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", ".loop"]).returncode == 0
             if not ignored:
                 return True
     return False
 
 
-def git_has_tracked_humanize_state(project_root: str | Path = ".") -> bool:
-    """Return whether .humanize state is tracked or staged."""
+def git_adds_humanize(command_lower: str, project_root: str | Path = ".") -> bool:
+    """Return whether a git add command would stage legacy local state."""
+    return git_adds_loop(command_lower, project_root)
+
+
+def git_has_tracked_loop_state(project_root: str | Path = ".") -> bool:
+    """Return whether .loop state is tracked or staged."""
     root = Path(project_root)
-    result = subprocess.run(["git", "-C", str(root), "ls-files", "--", ".humanize"], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    result = subprocess.run(["git", "-C", str(root), "ls-files", "--", ".loop"], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     return result.returncode == 0 and bool(result.stdout.strip())
+
+
+def git_has_tracked_humanize_state(project_root: str | Path = ".") -> bool:
+    """Return whether legacy .humanize state is tracked or staged."""
+    return git_has_tracked_loop_state(project_root)
 
 
 def command_modifies_file(command_lower: str, file_pattern: str) -> bool:

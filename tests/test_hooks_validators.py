@@ -32,7 +32,7 @@ class HookValidatorTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.root = Path(self.temp_dir.name)
-        self.loop_dir = self.root / ".humanize" / "rlcr" / "2026-01-01_00-00-00"
+        self.loop_dir = self.root / ".loop" / "rlcr" / "2026-01-01_00-00-00"
         self.loop_dir.mkdir(parents=True)
         (self.loop_dir / "state.md").write_text(
             "---\ncurrent_round: 2\nmax_iterations: 4\nreview_started: false\nbase_branch: main\nsession_id: sid\n---\n",
@@ -106,6 +106,11 @@ class HookValidatorTests(unittest.TestCase):
         result = validators.validate_bash(self.payload("Bash", command="bash hooks/loop-codex-stop-hook.sh"))
         self.assertFalse(result.allowed)
         self.assertIn("Hook Execution Blocked", result.message)
+
+    def test_bash_blocks_git_add_loop_runtime_state(self) -> None:
+        result = validators.validate_bash(self.payload("Bash", command="git add .loop"))
+        self.assertFalse(result.allowed)
+        self.assertIn(".loop", result.message)
 
     def test_methodology_phase_restricts_project_reads(self) -> None:
         (self.loop_dir / "state.md").rename(self.loop_dir / "methodology-analysis-state.md")

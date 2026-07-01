@@ -83,6 +83,18 @@ class LoopCommonTests(unittest.TestCase):
             newer.joinpath("complete-state.md").write_text("---\nsession_id: sid\ncurrent_round: 2\nmax_iterations: 2\n---\n", encoding="utf-8")
             self.assertIsNone(loop_common.find_active_loop(base, "sid"))
 
+    def test_loop_runtime_path_detection_uses_loop_directory(self) -> None:
+        self.assertTrue(loop_common.is_in_loop_dir("/workspace/.loop/rlcr/2026/state.md"))
+        self.assertFalse(loop_common.is_in_loop_dir("/workspace/.humanize/rlcr/2026/state.md"))
+
+    def test_git_add_blocks_loop_runtime_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / ".loop").mkdir()
+            self.assertTrue(loop_common.git_adds_loop("git add .loop", root))
+            self.assertTrue(loop_common.git_adds_loop("git add --all", root))
+            self.assertFalse(loop_common.git_adds_loop("git add README.md", root))
+
     def test_goal_tracker_immutable_must_be_preserved(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             tracker = Path(temp_dir) / "goal-tracker.md"
