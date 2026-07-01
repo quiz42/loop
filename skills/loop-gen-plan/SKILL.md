@@ -3,7 +3,7 @@ name: loop-gen-plan
 description: Generate a structured implementation plan from an idea file
 ---
 
-# Humanize Gen-Plan
+# Loop Gen-Plan
 
 Generate a structured, AI-driven implementation plan from a raw idea or requirements document. The output plan is used as the entry point for the RLCR loop.
 

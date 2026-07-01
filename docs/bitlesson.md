@@ -6,15 +6,15 @@ The Bitter Lesson workflow tracks small, concrete lessons learned during iterati
 
 | Path | Description |
 |------|-------------|
-| `.humanize/bitlesson/lessons.md` | The running log of lesson entries |
-| `.humanize/bitlesson/state.json` | Workflow state (current lesson index, last validated delta) |
+| `.loop/bitlesson/lessons.md` | The running log of lesson entries |
+| `.loop/bitlesson/state.json` | Workflow state (current lesson index, last validated delta) |
 | `templates/bitlesson.md` | Blank template to start a new log |
 
 ## Scripts
 
 | Script | Description |
 |--------|-------------|
-| `scripts/bitlesson-init.sh` | Creates the `.humanize/bitlesson/` directory and initial files |
+| `scripts/bitlesson-init.sh` | Creates the `.loop/bitlesson/` directory and initial files |
 | `scripts/bitlesson-select.sh` | Interactively selects or filters a lesson from the log |
 | `scripts/bitlesson-validate-delta.sh` | Validates that new entries conform to the expected format |
 
@@ -28,7 +28,7 @@ from bitlesson import init_workflow, select_lesson, validate_delta
 
 ### init_workflow(root)
 
-Initializes the Bitter Lesson workflow at `root`. Creates `.humanize/bitlesson/lessons.md` from `templates/bitlesson.md` and writes an empty `state.json`.
+Initializes the Bitter Lesson workflow at `root`. Creates `.loop/bitlesson/lessons.md` from `templates/bitlesson.md` and writes an empty `state.json`.
 
 ```python
 init_workflow("/path/to/project")
@@ -59,11 +59,11 @@ validate_delta("/path/to/project", new_entries_text)
 bash scripts/bitlesson-init.sh
 ```
 
-This creates `.humanize/bitlesson/lessons.md` and `.humanize/bitlesson/state.json` in your current directory.
+This creates `.loop/bitlesson/lessons.md` and `.loop/bitlesson/state.json` in your current directory.
 
 ### 2. Add your first lesson
 
-Open `.humanize/bitlesson/lessons.md` and add an entry under `## Entries`:
+Open `.loop/bitlesson/lessons.md` and add an entry under `## Entries`:
 
 ```
 ### 2026-06-25: Mocking external HTTP calls in tests

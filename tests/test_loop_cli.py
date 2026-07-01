@@ -1,4 +1,4 @@
-"""Tests for the main humanize command line entry point."""
+"""Tests for the main loop command line entry point."""
 
 from __future__ import annotations
 
@@ -22,18 +22,18 @@ def load_module(name: str, relative_path: str):
     return module
 
 
-humanize = load_module("humanize_cli", "scripts/loop.py")
+loop = load_module("loop_cli", "scripts/loop.py")
 
 
-class TestHumanizeCli(unittest.TestCase):
+class TestLoopCli(unittest.TestCase):
     def test_gen_idea_and_gen_plan_write_markdown_files(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             idea_file = root / "idea.md"
             plan_file = root / "plan.md"
 
-            idea_code = humanize.main(["gen-idea", "Add", "a", "monitor", "dashboard", "--output", str(idea_file)])
-            plan_code = humanize.main(["gen-plan", "--input", str(idea_file), "--output", str(plan_file)])
+            idea_code = loop.main(["gen-idea", "Add", "a", "monitor", "dashboard", "--output", str(idea_file)])
+            plan_code = loop.main(["gen-plan", "--input", str(idea_file), "--output", str(plan_file)])
 
             self.assertEqual(idea_code, 0)
             self.assertEqual(plan_code, 0)
@@ -47,7 +47,7 @@ class TestHumanizeCli(unittest.TestCase):
             output = Path(temp) / "idea.md"
             output.write_text("keep me", encoding="utf-8")
 
-            code = humanize.main(["gen-idea", "new idea", "--output", str(output)])
+            code = loop.main(["gen-idea", "new idea", "--output", str(output)])
 
             self.assertEqual(code, 1)
             self.assertEqual(output.read_text(encoding="utf-8"), "keep me")
@@ -55,8 +55,8 @@ class TestHumanizeCli(unittest.TestCase):
     def test_monitor_skill_filters_through_main_cli(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            codex = root / ".humanize" / "skill" / "2026-06-22_10-00-00"
-            gemini = root / ".humanize" / "skill" / "2026-06-22_11-00-00"
+            codex = root / ".loop" / "skill" / "2026-06-22_10-00-00"
+            gemini = root / ".loop" / "skill" / "2026-06-22_11-00-00"
             codex.mkdir(parents=True)
             gemini.mkdir(parents=True)
             codex.joinpath("input.md").write_text("- Tool: codex\n\n## Question\nReview this?\n", encoding="utf-8")
@@ -70,7 +70,7 @@ class TestHumanizeCli(unittest.TestCase):
                     "codex",
                     "--once",
                     "--skill-dir",
-                    str(root / ".humanize" / "skill"),
+                    str(root / ".loop" / "skill"),
                     "--project-root",
                     str(root),
                 ],
@@ -80,7 +80,7 @@ class TestHumanizeCli(unittest.TestCase):
                 check=True,
             )
 
-            self.assertIn("Humanize Skill Monitor [codex]", result.stdout)
+            self.assertIn("Loop Skill Monitor [codex]", result.stdout)
             self.assertIn("Review this?", result.stdout)
             self.assertNotIn("Plan this?", result.stdout)
 
@@ -107,7 +107,7 @@ class TestHumanizeCli(unittest.TestCase):
                 capture_output=True,
                 check=True,
             )
-            self.assertIn("Humanize RLCR Monitor", monitor.stdout)
+            self.assertIn("Loop RLCR Monitor", monitor.stdout)
             self.assertIn("Status:  active", monitor.stdout)
 
             cancel = subprocess.run(
@@ -118,7 +118,7 @@ class TestHumanizeCli(unittest.TestCase):
                 check=True,
             )
             self.assertIn("Cancelled RLCR session", cancel.stdout)
-            self.assertTrue(any((root / ".humanize" / "rlcr").glob("*/cancelled-state.md")))
+            self.assertTrue(any((root / ".loop" / "rlcr").glob("*/cancelled-state.md")))
 
     def test_help_includes_top_level_commands(self):
         result = subprocess.run(

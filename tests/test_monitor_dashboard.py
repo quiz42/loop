@@ -74,7 +74,7 @@ class TestMonitorSkill(unittest.TestCase):
     def test_skill_stats_best_file_and_once_rendering(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            skill_dir = root / ".humanize" / "skill"
+            skill_dir = root / ".loop" / "skill"
             first = skill_dir / "2026-06-22_10-00-00"
             second = skill_dir / "2026-06-22_11-00-00"
             first.mkdir(parents=True)
@@ -94,17 +94,17 @@ class TestMonitorSkill(unittest.TestCase):
             self.assertEqual(best.path, second)
             self.assertEqual(best.monitored_file, second / "cache/gemini-run.log")
             rendered = monitor_skill.render_once(skill_dir, project_root=root)
-            self.assertIn("Humanize Skill Monitor", rendered)
+            self.assertIn("Loop Skill Monitor", rendered)
             self.assertIn("still running", rendered)
 
     def test_shell_wrapper_outputs_once_dashboard(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            invocation = root / ".humanize" / "skill" / "2026-06-22_10-00-00"
+            invocation = root / ".loop" / "skill" / "2026-06-22_10-00-00"
             invocation.mkdir(parents=True)
             invocation.joinpath("input.md").write_text("- Tool: codex\n\n## Question\nHello?\n", encoding="utf-8")
             result = subprocess.run(
-                ["bash", "scripts/lib/monitor-skill.sh", "--once", "--skill-dir", str(root / ".humanize" / "skill"), "--project-root", str(root)],
+                ["bash", "scripts/lib/monitor-skill.sh", "--once", "--skill-dir", str(root / ".loop" / "skill"), "--project-root", str(root)],
                 cwd=PROJECT_ROOT,
                 text=True,
                 capture_output=True,
@@ -116,9 +116,9 @@ class TestMonitorSkill(unittest.TestCase):
 
 class TestStatuslineAndTimeout(unittest.TestCase):
     def test_statusline_renders_json_context_and_truncates(self):
-        payload = json.dumps({"cwd": str(PROJECT_ROOT), "CODEX_MODEL": "gpt-5.5", "HUMANIZE_LOOP_STATUS": "active"})
-        line = statusline.render_from_json(payload, width=40)
-        self.assertLessEqual(len(line), 40)
+        payload = json.dumps({"cwd": str(PROJECT_ROOT), "CODEX_MODEL": "gpt-5.5", "LOOP_STATUS": "active"})
+        line = statusline.render_from_json(payload, width=24)
+        self.assertLessEqual(len(line), 24)
         self.assertIn("...", line)
 
     def test_portable_timeout_success_and_timeout_exit_codes(self):
@@ -143,7 +143,7 @@ class TestStatuslineAndTimeout(unittest.TestCase):
             check=True,
         )
         self.assertIn("ok", timeout_result.stdout)
-        self.assertIn("workspace", status_result.stdout)
+        self.assertIn("loop", status_result.stdout)
         self.assertIn("model unset", status_result.stdout)
 
 

@@ -73,8 +73,11 @@ class TestRLCRLoopSetup(unittest.TestCase):
             self.assertIn("Ship the RLCR loop.", session.goal_tracker_file.read_text(encoding="utf-8"))
             self.assertIn("AC-1: Creates loop files", session.goal_tracker_file.read_text(encoding="utf-8"))
             self.assertIn("RLCR Round 0 Prompt", session.prompt_file.read_text(encoding="utf-8"))
-            self.assertTrue((root / ".humanize" / ".pending-session-id").is_file())
-            self.assertEqual(rlcr_loop.find_active_loop(root / ".humanize" / "rlcr"), session.loop_dir)
+            self.assertTrue((root / ".loop" / ".pending-session-id").is_file())
+            self.assertEqual(
+                rlcr_loop.find_active_loop(root / ".loop" / "rlcr").resolve(),
+                session.loop_dir.resolve(),
+            )
 
     def test_skip_impl_setup_does_not_require_plan(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -93,10 +96,10 @@ class TestRLCRLoopSetup(unittest.TestCase):
 
 class TestRLCRCancellation(unittest.TestCase):
     def make_loop(self, root: Path, state_name: str = "state.md") -> Path:
-        loop_dir = root / ".humanize" / "rlcr" / "2026-06-24_05-00-00"
+        loop_dir = root / ".loop" / "rlcr" / "2026-06-24_05-00-00"
         loop_dir.mkdir(parents=True)
         (loop_dir / state_name).write_text("current_round: 3\nmax_iterations: 9\n", encoding="utf-8")
-        (root / ".humanize" / ".pending-session-id").write_text("pending\n", encoding="utf-8")
+        (root / ".loop" / ".pending-session-id").write_text("pending\n", encoding="utf-8")
         return loop_dir
 
     def test_cancel_active_loop_moves_state_and_cleans_pending_signal(self):
@@ -111,7 +114,7 @@ class TestRLCRCancellation(unittest.TestCase):
             self.assertTrue((loop_dir / ".cancel-requested").is_file())
             self.assertTrue((loop_dir / "cancel-state.md").is_file())
             self.assertFalse((loop_dir / "state.md").exists())
-            self.assertFalse((root / ".humanize" / ".pending-session-id").exists())
+            self.assertFalse((root / ".loop" / ".pending-session-id").exists())
 
     def test_finalize_phase_requires_force(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -182,7 +185,7 @@ class TestRLCRStopGate(unittest.TestCase):
             self.assertTrue((loop_dir / "cancel-state.md").is_file())
 
     def make_loop_fixture(self, root: Path) -> Path:
-        loop_dir = root / ".humanize" / "rlcr" / "2026-06-24_06-00-00"
+        loop_dir = root / ".loop" / "rlcr" / "2026-06-24_06-00-00"
         loop_dir.mkdir(parents=True)
         (loop_dir / "state.md").write_text("current_round: 1\nmax_iterations: 2\n", encoding="utf-8")
         return loop_dir

@@ -27,7 +27,7 @@ The `drift-monitor` watches the implementation as it evolves across RLCR rounds 
 |--------|-------------|
 | Drift report | Per-round report listing detected deviations with severity and file references |
 | Drift severity | Single severity label consumed by the loop orchestrator |
-| Drift history log | Cumulative log across all rounds, available via `/humanize:monitor` |
+| Drift history log | Cumulative log across all rounds, available via `/loop:monitor` |
 
 ## Interaction with Other Agents
 
@@ -44,4 +44,4 @@ The `drift-monitor` runs automatically after each implementation round, before t
 implementer → drift-monitor → code-reviewer → loop signal
 ```
 
-Drift reports are also surfaced in real time by `/humanize:monitor rlcr` to give users visibility into how far the implementation has strayed from the plan.
+Drift reports are also surfaced in real time by `/loop:monitor rlcr` to give users visibility into how far the implementation has strayed from the plan.

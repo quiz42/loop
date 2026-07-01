@@ -1,17 +1,17 @@
-# Command: /humanize:monitor
+# Command: /loop:monitor
 
 Display live status information for running loop processes. Supports monitoring the RLCR loop, Codex reviewer activity, and Gemini-based tasks.
 
 ## Usage
 
 ```
-/humanize:monitor TARGET [options]
+/loop:monitor TARGET [options]
 ```
 
 Internally runs:
 
 ```
-humanize monitor rlcr|codex|gemini [--once]
+loop monitor rlcr|codex|gemini [--once]
 ```
 
 ## Arguments
@@ -46,16 +46,16 @@ The `rlcr` target pulls data from the `goal-tracker` (goal completion), the `dri
 
 ```
 # Watch the RLCR loop live
-/humanize:monitor rlcr
+/loop:monitor rlcr
 
 # Single snapshot of the RLCR loop (useful in scripts)
-/humanize:monitor rlcr --once
+/loop:monitor rlcr --once
 
 # Watch Codex reviewer activity
-/humanize:monitor codex
+/loop:monitor codex
 
 # Single Gemini status snapshot
-/humanize:monitor gemini --once
+/loop:monitor gemini --once
 ```
 
 ## Expected Output
@@ -63,7 +63,7 @@ The `rlcr` target pulls data from the `goal-tracker` (goal completion), the `dri
 ### `rlcr` target
 
 ```
-[humanize:monitor] RLCR Loop — Round 3 / max 42
+[loop:monitor] RLCR Loop — Round 3 / max 42
 Goals:      ████████░░░░░░░░  4 / 7 complete
 Drift:      minor (round 2: 1 deviation)
 Last review: NEEDS_REVISION (2 blocking issues)
@@ -73,14 +73,14 @@ Agents:     implementer=running  code-reviewer=idle  goal-tracker=active  drift-
 ### `rlcr --once` target
 
 ```
-[humanize:monitor] RLCR Loop snapshot @ 2026-06-25T13:37:41Z
+[loop:monitor] RLCR Loop snapshot @ 2026-06-25T13:37:41Z
 Round: 3 / 42 | Goals: 4/7 | Drift: minor | Last review: NEEDS_REVISION
 ```
 
 ### `codex` target
 
 ```
-[humanize:monitor] Codex Reviewer
+[loop:monitor] Codex Reviewer
 Model:  gpt-5.5  |  Effort: high
 Status: reviewing round 3 diff...
 Last result: NEEDS_REVISION — 2 blocking, 1 non-blocking

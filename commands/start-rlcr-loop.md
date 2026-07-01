@@ -1,17 +1,17 @@
-# Command: /humanize:start-rlcr-loop
+# Command: /loop:start-rlcr-loop
 
 Start an RLCR (Ralph-Loop with Codex Review) iterative development loop. Claude implements the plan, Codex reviews the result, and the cycle repeats until all goals are met or the iteration limit is reached.
 
 ## Usage
 
 ```
-/humanize:start-rlcr-loop PLAN.md [options]
+/loop:start-rlcr-loop PLAN.md [options]
 ```
 
 Internally runs:
 
 ```
-humanize start-rlcr-loop PLAN.md [--codex-model MODEL] [--codex-effort LEVEL] \
+loop start-rlcr-loop PLAN.md [--codex-model MODEL] [--codex-effort LEVEL] \
   [--max-iterations N] [--agent-teams] [--track-plan-file] [--push-every-round]
 ```
 
@@ -47,28 +47,28 @@ humanize start-rlcr-loop PLAN.md [--codex-model MODEL] [--codex-effort LEVEL] \
 
 ```
 # Minimal — start a loop with defaults
-/humanize:start-rlcr-loop PLAN.md
+/loop:start-rlcr-loop PLAN.md
 
 # Use a specific Codex model with agent teams and auto-push
-/humanize:start-rlcr-loop PLAN.md --codex-model gpt-5.5 --codex-effort high \
+/loop:start-rlcr-loop PLAN.md --codex-model gpt-5.5 --codex-effort high \
   --agent-teams --push-every-round
 
 # Cap iterations and track progress in the plan file
-/humanize:start-rlcr-loop PLAN.md --max-iterations 10 --track-plan-file
+/loop:start-rlcr-loop PLAN.md --max-iterations 10 --track-plan-file
 ```
 
 ## Expected Output
 
 ```
-[humanize] Starting RLCR loop from PLAN.md
-[humanize] Goals detected: 7
-[humanize] Round 1 — implementing...
-[humanize] Round 1 — reviewing (codex/gpt-5.5, effort=high)...
-[humanize] Round 1 — review result: NEEDS_REVISION (3 blocking issues)
-[humanize] Round 2 — implementing...
-[humanize] Round 2 — reviewing...
-[humanize] Round 2 — review result: APPROVED
-[humanize] All goals met. Loop complete after 2 rounds.
+[loop] Starting RLCR loop from PLAN.md
+[loop] Goals detected: 7
+[loop] Round 1 — implementing...
+[loop] Round 1 — reviewing (codex/gpt-5.5, effort=high)...
+[loop] Round 1 — review result: NEEDS_REVISION (3 blocking issues)
+[loop] Round 2 — implementing...
+[loop] Round 2 — reviewing...
+[loop] Round 2 — review result: APPROVED
+[loop] All goals met. Loop complete after 2 rounds.
 ```
 
 When `--track-plan-file` is set, `PLAN.md` is updated with `[x]` checkboxes as goals are completed.

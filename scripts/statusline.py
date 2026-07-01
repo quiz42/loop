@@ -34,8 +34,8 @@ def render_status_line(cwd: str | Path = ".", width: int | None = None, env: dic
     path = Path(cwd).resolve()
     branch = git_branch(path)
     branch_part = f" {branch}{'*' if git_dirty(path) else ''}" if branch else "no git"
-    model = values.get("HUMANIZE_MODEL") or values.get("CODEX_MODEL") or values.get("ANTHROPIC_MODEL") or "model unset"
-    loop_status = values.get("HUMANIZE_LOOP_STATUS", "idle")
+    model = values.get("LOOP_MODEL") or values.get("HUMANIZE_MODEL") or values.get("CODEX_MODEL") or values.get("ANTHROPIC_MODEL") or "model unset"
+    loop_status = values.get("LOOP_STATUS") or values.get("HUMANIZE_LOOP_STATUS") or "idle"
     parts = [path.name or str(path), branch_part, model, loop_status]
     line = " | ".join(parts)
     target_width = width or int(values.get("COLUMNS", "0") or "0")
@@ -49,7 +49,7 @@ def render_from_json(payload: str, width: int | None = None) -> str:
     data = json.loads(payload or "{}")
     cwd = data.get("cwd") or data.get("workspace") or "."
     env = dict(os.environ)
-    for key in ("HUMANIZE_MODEL", "CODEX_MODEL", "ANTHROPIC_MODEL", "HUMANIZE_LOOP_STATUS"):
+    for key in ("LOOP_MODEL", "HUMANIZE_MODEL", "CODEX_MODEL", "ANTHROPIC_MODEL", "LOOP_STATUS", "HUMANIZE_LOOP_STATUS"):
         if key in data:
             env[key] = str(data[key])
     return render_status_line(cwd, width=width, env=env)

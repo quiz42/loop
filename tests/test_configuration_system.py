@@ -43,7 +43,7 @@ class TestConfigurationFiles(unittest.TestCase):
         self.assertEqual(command_hook["type"], "command")
         self.assertEqual(
             command_hook["command"],
-            "{{HUMANIZE_RUNTIME_ROOT}}/hooks/loop-codex-stop-hook.sh",
+            "{{LOOP_RUNTIME_ROOT}}/hooks/loop-codex-stop-hook.sh",
         )
         self.assertEqual(command_hook["timeout"], 7200)
 
@@ -55,8 +55,8 @@ class TestConfigLoader(unittest.TestCase):
         self.plugin_root = self.root / "plugin"
         self.project_root = self.root / "project"
         (self.plugin_root / "config").mkdir(parents=True)
-        (self.project_root / ".humanize").mkdir(parents=True)
-        (self.root / "user" / "humanize").mkdir(parents=True)
+        (self.project_root / ".loop").mkdir(parents=True)
+        (self.root / "user" / "loop").mkdir(parents=True)
         (self.plugin_root / "config" / "default_config.json").write_text(
             json.dumps(
                 {
@@ -73,7 +73,7 @@ class TestConfigLoader(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_load_merged_config_applies_hierarchy_and_strips_nulls(self):
-        user_config = self.root / "user" / "humanize" / "config.json"
+        user_config = self.root / "user" / "loop" / "config.json"
         user_config.write_text(
             json.dumps(
                 {
@@ -83,7 +83,7 @@ class TestConfigLoader(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        project_config = self.project_root / ".humanize" / "config.json"
+        project_config = self.project_root / ".loop" / "config.json"
         project_config.write_text(
             json.dumps(
                 {
@@ -109,18 +109,18 @@ class TestConfigLoader(unittest.TestCase):
         self.assertEqual(config["list_value"], ["default"])
         self.assertTrue(config["project_only"])
 
-    def test_humanize_config_overrides_project_default_path(self):
+    def test_loop_config_overrides_project_default_path(self):
         override_config = self.root / "override.json"
         override_config.write_text(json.dumps({"codex_model": "gpt-4o"}), encoding="utf-8")
         config = config_loader.load_merged_config(
             self.plugin_root,
             self.project_root,
-            env={"HUMANIZE_CONFIG": str(override_config)},
+            env={"LOOP_CONFIG": str(override_config)},
         )
         self.assertEqual(config["codex_model"], "gpt-4o")
 
     def test_malformed_optional_config_is_ignored(self):
-        user_config = self.root / "user" / "humanize" / "config.json"
+        user_config = self.root / "user" / "loop" / "config.json"
         user_config.write_text("not json", encoding="utf-8")
         config = config_loader.load_merged_config(
             self.plugin_root,
@@ -135,8 +135,8 @@ class TestConfigLoader(unittest.TestCase):
             config_loader.load_merged_config(self.plugin_root, self.project_root, env={})
 
     def test_get_config_value_formats_shell_friendly_values(self):
-        config = {"name": "humanize", "enabled": False, "count": 3, "items": ["a"]}
-        self.assertEqual(config_loader.get_config_value(config, "name"), "humanize")
+        config = {"name": "loop", "enabled": False, "count": 3, "items": ["a"]}
+        self.assertEqual(config_loader.get_config_value(config, "name"), "loop")
         self.assertEqual(config_loader.get_config_value(config, "enabled"), "false")
         self.assertEqual(config_loader.get_config_value(config, "count"), "3")
         self.assertEqual(config_loader.get_config_value(config, "items"), '["a"]')

@@ -18,7 +18,7 @@ The standard workflow proceeds in four steps:
 /gen-idea
 ```
 
-Prompts you to describe a feature or problem. Claude Code generates a structured idea document in `.humanize/ideas/`.
+Prompts you to describe a feature or problem. Claude Code generates a structured idea document in `.loop/ideas/`.
 
 ### 2. Generate a plan
 
@@ -26,7 +26,7 @@ Prompts you to describe a feature or problem. Claude Code generates a structured
 /gen-plan
 ```
 
-Takes the current idea and produces a step-by-step implementation plan. The plan is saved to `.humanize/plans/`.
+Takes the current idea and produces a step-by-step implementation plan. The plan is saved to `.loop/plans/`.
 
 ### 3. Start the RLCR loop
 

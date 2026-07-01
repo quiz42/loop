@@ -28,7 +28,10 @@ class ProjectRootTests(unittest.TestCase):
             parent = Path(temp_dir) / "parent"
             parent.mkdir()
             target = parent / "missing.txt"
-            self.assertEqual(project_root.canonicalize_path_prefix(target), str(target))
+            self.assertEqual(
+                project_root.canonicalize_path_prefix(target),
+                str(parent.resolve(strict=True) / target.name),
+            )
 
 
 class TemplateLoaderTests(unittest.TestCase):

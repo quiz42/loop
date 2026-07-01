@@ -73,6 +73,8 @@ def user_config_path(env: Mapping[str, str] | None = None) -> Path:
 
 def project_config_path(project_root: str | Path, env: Mapping[str, str] | None = None) -> Path:
     values = os.environ if env is None else env
+    if values.get("LOOP_CONFIG"):
+        return Path(values["LOOP_CONFIG"])
     if values.get("HUMANIZE_CONFIG"):
         return Path(values["HUMANIZE_CONFIG"])
     return Path(project_root) / ".loop" / "config.json"

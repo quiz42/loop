@@ -1,17 +1,17 @@
-# Command: /humanize:gen-idea
+# Command: /loop:gen-idea
 
-Generate a structured idea document from a plain-language description. The output is a markdown file that captures the concept, motivation, and high-level approach — ready to be refined into a full plan with `/humanize:gen-plan`.
+Generate a structured idea document from a plain-language description. The output is a markdown file that captures the concept, motivation, and high-level approach — ready to be refined into a full plan with `/loop:gen-plan`.
 
 ## Usage
 
 ```
-/humanize:gen-idea DESCRIPTION [options]
+/loop:gen-idea DESCRIPTION [options]
 ```
 
 Internally runs:
 
 ```
-humanize gen-idea DESCRIPTION [--output FILE] [--title TITLE]
+loop gen-idea DESCRIPTION [--output FILE] [--title TITLE]
 ```
 
 ## Arguments
@@ -33,16 +33,16 @@ humanize gen-idea DESCRIPTION [--output FILE] [--title TITLE]
 2. The document includes: title, summary, motivation/problem statement, proposed approach, and open questions.
 3. Writes the result to `--output` (default `IDEA.md`).
 
-The generated idea document is the expected input for `/humanize:gen-plan`.
+The generated idea document is the expected input for `/loop:gen-plan`.
 
 ## Example Usage
 
 ```
 # Quick idea from a short phrase
-/humanize:gen-idea "add dark mode support to the dashboard"
+/loop:gen-idea "add dark mode support to the dashboard"
 
 # Provide an explicit title and output path
-/humanize:gen-idea "refactor auth layer to use JWT refresh tokens" \
+/loop:gen-idea "refactor auth layer to use JWT refresh tokens" \
   --title "JWT Refresh Token Auth Refactor" \
   --output ideas/auth-refactor.md
 ```
@@ -50,8 +50,8 @@ The generated idea document is the expected input for `/humanize:gen-plan`.
 ## Expected Output
 
 ```
-[humanize] Generating idea document...
-[humanize] Idea written to IDEA.md
+[loop] Generating idea document...
+[loop] Idea written to IDEA.md
 ```
 
 **IDEA.md** (example structure):

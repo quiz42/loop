@@ -218,7 +218,7 @@ def render_rlcr_once(loop_dir: Path) -> str:
 
     lines = [
         "==========================================",
-        " loop RLCR Monitor",
+        " Loop RLCR Monitor",
         "==========================================",
         "",
         f"Session: {session.path.name}",

@@ -1,9 +1,9 @@
 ---
-name: humanize
-description: Main loop plugin skill covering all humanize commands
+name: loop
+description: Main loop plugin skill covering all loop commands
 ---
 
-# Humanize
+# Loop
 
 The loop plugin drives iterative AI-assisted development through a structured workflow: generate a plan, refine it, then run the RLCR (Ralph-Loop with Codex Review) loop until all plan steps pass automated review.
 

@@ -48,4 +48,4 @@ implementer → code-reviewer → (loop signal)
               loop terminates
 ```
 
-The Codex model used is controlled by `--codex-model` (default: `gpt-5.5`) and the effort level by `--codex-effort` (default: `high`), both supplied to `/humanize:start-rlcr-loop`.
+The Codex model used is controlled by `--codex-model` (default: `gpt-5.5`) and the effort level by `--codex-effort` (default: `high`), both supplied to `/loop:start-rlcr-loop`.

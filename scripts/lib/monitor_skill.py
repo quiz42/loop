@@ -221,7 +221,7 @@ def best_invocation(skill_dir: str | Path = ".loop/skill", tool_filter: str = ""
 def render_once(skill_dir: str | Path = ".loop/skill", tool_filter: str = "", project_root: str | Path | None = None) -> str:
     """Render a one-shot text dashboard."""
     focus = best_invocation(skill_dir, tool_filter, project_root)
-    title = " Humanize Skill Monitor" + (f" [{tool_filter}]" if tool_filter else "")
+    title = " Loop Skill Monitor" + (f" [{tool_filter}]" if tool_filter else "")
     if focus is None:
         suffix = f" (filter: {tool_filter})" if tool_filter else ""
         return f"No skill invocations found in {skill_dir}{suffix}\n"

@@ -10,7 +10,7 @@ The `goal-tracker` monitors and maintains the completion state of every goal def
 - Update goal status after each implementation round based on the round summary and review report
 - Detect when all goals are satisfied and signal the loop orchestrator that the work is done
 - Persist goal state between rounds so partial progress survives interruptions
-- Surface a human-readable progress summary on demand (used by `/humanize:monitor`)
+- Surface a human-readable progress summary on demand (used by `/loop:monitor`)
 
 ## Inputs
 
@@ -38,6 +38,6 @@ The `goal-tracker` monitors and maintains the completion state of every goal def
 
 ## Invocation
 
-The `goal-tracker` runs passively throughout the RLCR loop — it is updated at the end of each round after both the implementer and reviewer have completed their work. It is also queried directly by the `/humanize:monitor` command to produce live status output.
+The `goal-tracker` runs passively throughout the RLCR loop — it is updated at the end of each round after both the implementer and reviewer have completed their work. It is also queried directly by the `/loop:monitor` command to produce live status output.
 
-When `--track-plan-file` is passed to `/humanize:start-rlcr-loop`, the goal-tracker writes updated checkbox state back into `PLAN.md` so progress is visible in the file itself.
+When `--track-plan-file` is passed to `/loop:start-rlcr-loop`, the goal-tracker writes updated checkbox state back into `PLAN.md` so progress is visible in the file itself.

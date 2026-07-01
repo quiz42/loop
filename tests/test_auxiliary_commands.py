@@ -42,7 +42,7 @@ class TestBitlessonWorkflow(unittest.TestCase):
     def test_init_creates_workflow_files_and_preserves_existing_log(self):
         path = bitlesson.init_workflow(self.root)
         self.assertTrue(path.exists())
-        state = json.loads((self.root / ".humanize/bitlesson/state.json").read_text())
+        state = json.loads((self.root / ".loop/bitlesson/state.json").read_text())
         self.assertIsNone(state["active_lesson"])
         path.write_text("custom", encoding="utf-8")
         bitlesson.init_workflow(self.root)
@@ -50,7 +50,7 @@ class TestBitlessonWorkflow(unittest.TestCase):
 
     def test_select_lesson_matches_query_or_uses_latest(self):
         bitlesson.init_workflow(self.root)
-        path = self.root / ".humanize/bitlesson/lessons.md"
+        path = self.root / ".loop/bitlesson/lessons.md"
         path.write_text(
             "# Bitter Lesson Log\n\n## Entries\n\n### First\nUse tests.\n\n### Second\nPrefer small deltas.\n",
             encoding="utf-8",
@@ -117,7 +117,7 @@ class TestInstallTools(unittest.TestCase):
         destination = self.root / "installed-skills"
         copied = install_tools.install_skills(self.plugin, destination, "codex")
         self.assertTrue(destination / "demo" / "SKILL.md")
-        manifest = destination / "humanize-codex-skills.json"
+        manifest = destination / "loop-codex-skills.json"
         self.assertIn(manifest, copied)
         self.assertEqual(json.loads(manifest.read_text())["profile"], "codex")
 

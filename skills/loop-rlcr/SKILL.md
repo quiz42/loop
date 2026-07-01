@@ -3,7 +3,7 @@ name: loop-rlcr
 description: Start, cancel, and monitor the RLCR iterative development loop
 ---
 
-# Humanize RLCR
+# Loop RLCR
 
 Run the RLCR (Ralph-Loop with Codex Review) loop for iterative AI-driven development. Each iteration applies changes according to the plan, then submits them for Codex review before advancing.
 

@@ -1,11 +1,13 @@
 # Scratchpad
 temp
+private/
 
 # Local Claude client settings
 /.claude/settings.json
 /.claude/scheduled_tasks.lock
 
-# Humanize state directories (runtime-generated, project-local)
+# Loop state directories (runtime-generated, project-local)
+.loop/
 .humanize/
 .claude-flow/
 .swarm/

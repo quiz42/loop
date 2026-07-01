@@ -1,17 +1,17 @@
-# Command: /humanize:cancel-rlcr-loop
+# Command: /loop:cancel-rlcr-loop
 
 Cancel a running RLCR loop. The current implementation round is allowed to finish cleanly before the loop is stopped, ensuring no partial changes are left in an inconsistent state.
 
 ## Usage
 
 ```
-/humanize:cancel-rlcr-loop [options]
+/loop:cancel-rlcr-loop [options]
 ```
 
 Internally runs:
 
 ```
-humanize cancel-rlcr-loop [--reason REASON]
+loop cancel-rlcr-loop [--reason REASON]
 ```
 
 ## Options
@@ -33,24 +33,24 @@ If no loop is currently running, the command exits immediately with an informati
 
 ```
 # Cancel with no reason
-/humanize:cancel-rlcr-loop
+/loop:cancel-rlcr-loop
 
 # Cancel with an explanation
-/humanize:cancel-rlcr-loop --reason "Changing approach — plan needs to be revised"
+/loop:cancel-rlcr-loop --reason "Changing approach — plan needs to be revised"
 ```
 
 ## Expected Output
 
 ```
-[humanize] Cancellation requested. Waiting for current round to finish...
-[humanize] Round 3 complete. Stopping loop.
-[humanize] Loop cancelled after 3 rounds.
-[humanize] Goals completed: 4 / 7
-[humanize] Reason: Changing approach — plan needs to be revised
+[loop] Cancellation requested. Waiting for current round to finish...
+[loop] Round 3 complete. Stopping loop.
+[loop] Loop cancelled after 3 rounds.
+[loop] Goals completed: 4 / 7
+[loop] Reason: Changing approach — plan needs to be revised
 ```
 
 If no loop is active:
 
 ```
-[humanize] No active RLCR loop found. Nothing to cancel.
+[loop] No active RLCR loop found. Nothing to cancel.
 ```

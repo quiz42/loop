@@ -131,7 +131,7 @@ The plugin ships with a default configuration at `config/default_config.json`. R
 bash scripts/bitlesson-init.sh
 ```
 
-This creates `.humanize/bitlesson/lessons.md` and `.humanize/bitlesson/state.json` in your project root.
+This creates `.loop/bitlesson/lessons.md` and `.loop/bitlesson/state.json` in your project root.
 
 ## Updating the plugin
 
@@ -147,7 +147,7 @@ To update to the latest version, re-run the install command:
 /plugin remove loop
 ```
 
-This removes the plugin and its registered commands. Project files under `.humanize/` and `config/` are not deleted.
+This removes the plugin and its registered commands. Project files under `.loop/` and `config/` are not deleted.
 
 ## Troubleshooting
 

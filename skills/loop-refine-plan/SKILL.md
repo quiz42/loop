@@ -3,7 +3,7 @@ name: loop-refine-plan
 description: Refine and iterate on a plan using RLCR loop feedback
 ---
 
-# Humanize Refine-Plan
+# Loop Refine-Plan
 
 Refine an existing implementation plan by incorporating feedback from the RLCR loop, Codex review, or manual review. This is not a standalone CLI command — it is a workflow practice of editing the plan file and re-running the loop with the updated plan.
 
