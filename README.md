@@ -2,20 +2,22 @@
 
 **Version: 0.1.0**
 
-An iterative development plugin for Claude Code implementing the RLCR (Ralph-Loop with Codex Review) workflow. Humanize leverages continuous feedback loops where AI-generated code is refined through independent review.
+An iterative development plugin for Claude Code and Codex implementing the RLCR (Ralph-Loop with Codex Review) workflow. Loop leverages continuous feedback loops where AI-generated code is refined through independent review.
 
 ## Core Concepts
 
-- **Iteration over Perfection** -- Instead of expecting perfect output in one shot, Humanize leverages continuous feedback loops where issues are caught early and refined incrementally.
-- **One Build + One Review** -- Claude implements, Codex independently reviews. No blind spots.
-- **Ralph Loop** -- Iterative refinement continues until all acceptance criteria are met.
-- **Begin with the End in Mind** -- Before the loop starts, Humanize ensures the plan is fully understood before execution begins.
+- **Iteration over Perfection** — Instead of expecting perfect output in one shot, loop leverages continuous feedback loops where issues are caught early and refined incrementally.
+- **One Build + One Review** — Claude implements, Codex independently reviews. No blind spots.
+- **Ralph Loop** — Iterative refinement continues until all acceptance criteria are met.
+- **Begin with the End in Mind** — Before the loop starts, loop ensures the plan is fully understood before execution begins.
 
 ## How It Works
 
 The loop has two phases: **Implementation** (Claude works, Codex reviews summaries) and **Code Review** (Codex checks code quality with severity markers). Issues feed back into implementation until resolved.
 
-## Install
+## Installation
+
+### Method 1: Marketplace installation (Claude Code only)
 
 ```bash
 # Add the marketplace source
@@ -25,48 +27,219 @@ The loop has two phases: **Implementation** (Claude works, Codex reviews summari
 /plugin install loop@FrankDan77
 ```
 
-Requires Claude Code CLI and [Codex CLI](https://github.com/openai/codex) for review functionality.
+### Method 2: Local/GitHub installation (Claude Code + Codex)
+
+**One-click install from GitHub:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/FrankDan77/loop/main/scripts/install-local.sh | bash
+```
+
+**Or clone and install:**
+
+```bash
+git clone https://github.com/FrankDan77/loop.git
+cd loop
+bash scripts/install-local.sh
+```
+
+The installer automatically detects and installs the plugin for both Claude Code and Codex (if installed).
+
+**Uninstall:**
+
+```bash
+bash scripts/uninstall-local.sh
+```
+
+### Prerequisites
+
+- **Claude Code CLI** — Required for Claude-based implementation
+- **[Codex CLI](https://github.com/openai/codex)** — Required for independent code review
+- **OpenAI API key** — Set as `OPENAI_API_KEY` environment variable
+
+For detailed installation instructions, see:
+- [Installing loop for Claude Code](docs/install-claude.md)
+- [Installing loop for Codex](docs/install-codex.md)
 
 ## Quick Start
 
-1. Generate an idea draft:
-   ```bash
-   humanize gen-idea "your idea description"
-   ```
+### 1. Verify installation
 
-2. Generate a plan from your draft:
-   ```bash
-   humanize gen-plan --input draft.md --output docs/plan.md
-   ```
+After installation, restart Claude Code and run:
 
-3. Run the loop:
-   ```bash
-   humanize start-rlcr-loop docs/plan.md
-   ```
+```bash
+/monitor
+```
+
+You should see the loop status dashboard.
+
+### 2. Initialize configuration (optional)
+
+```bash
+# Create default config if not present
+/monitor
+```
+
+Edit `config/default_config.json` to customize model settings, effort levels, and hooks.
+
+### 3. Generate an idea draft
+
+```bash
+loop gen-idea "Build a CLI tool for managing TODO lists with SQLite backend"
+```
+
+This creates an idea draft with project overview, goals, and constraints.
+
+### 4. Create a plan
+
+```bash
+loop gen-plan --input draft.md --output docs/plan.md
+```
+
+This generates a detailed implementation plan with milestones, tasks, and acceptance criteria.
+
+### 5. Start the RLCR loop
+
+```bash
+loop start-rlcr-loop docs/plan.md
+```
+
+The loop runs until all tasks are complete and all acceptance criteria are met.
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `loop gen-idea <description>` | Generate an idea draft from a description |
+| `loop gen-plan --input <draft> --output <plan>` | Convert idea draft to detailed plan |
+| `loop start-rlcr-loop <plan>` | Start the RLCR implementation loop |
+| `loop monitor` | Show loop status dashboard |
+| `loop cancel-rlcr-loop` | Stop a running loop |
+
+For Claude Code, prefix with `/` (e.g., `/monitor`).
+
+For full command documentation, see [`commands/`](commands/) directory.
+
+## Configuration
+
+Loop behavior is controlled via `config/default_config.json`:
+
+```json
+{
+  "codex_model": "gpt-5.5",
+  "codex_effort": "high",
+  "claude_model": "claude-sonnet-4",
+  "max_iterations": 10,
+  "hooks": {
+    "pre_commit": "hooks/validators.py",
+    "post_review": "hooks/lib/loop_common.py"
+  }
+}
+```
+
+**Key settings:**
+- `codex_model` — Model used by Codex for code review
+- `codex_effort` — Review effort: `low`, `medium`, `high`
+- `max_iterations` — Maximum loop iterations before timeout
+- `hooks` — Custom validation and lifecycle hooks
+
+See [Configuration Guide](docs/usage.md#configuration) for details.
+
+## Skills
+
+Loop includes pre-built skills for common workflows:
+
+- **[loop](skills/loop/SKILL.md)** — Core RLCR workflow
+- **[loop-gen-plan](skills/loop-gen-plan/SKILL.md)** — Plan generation
+- **[loop-refine-plan](skills/loop-refine-plan/SKILL.md)** — Plan refinement
+- **[loop-rlcr](skills/loop-rlcr/SKILL.md)** — RLCR loop orchestration
+
+Skills are Markdown documents that agents use as context for specific tasks.
+
+## Agents
+
+Loop uses specialized agents for different phases:
+
+- **[goal-tracker.md](agents/goal-tracker.md)** — Tracks progress against acceptance criteria
+- **[drift-monitor.md](agents/drift-monitor.md)** — Detects scope creep and plan deviation
+- **[code-reviewer.md](agents/code-reviewer.md)** — Performs independent code review via Codex
+
+## Documentation
+
+- **[Usage Guide](docs/usage.md)** — Complete usage documentation
+- **[Installing for Claude Code](docs/install-claude.md)** — Detailed Claude Code setup
+- **[Installing for Codex](docs/install-codex.md)** — Detailed Codex setup
+- **[Bitter Lesson Workflow](docs/bitlesson.md)** — Optional research-oriented workflow
 
 ## Project Structure
 
 ```
-agents/            Agent definition files
-commands/          Command documentation files
-config/            Configuration files
-docs/              User documentation and guides
-hooks/             Plugin hooks (validators, lifecycle)
-prompt-template/   Prompt templates for various subsystems
-scripts/           CLI scripts and library modules
-skills/            SKILL.md definitions
-templates/         Additional templates
-tests/             Test suite
+loop/
+├── agents/              # Agent definition files
+├── commands/            # Command documentation
+├── config/              # Configuration files
+│   └── codex-hooks.json
+├── docs/                # User documentation
+│   ├── install-claude.md
+│   ├── install-codex.md
+│   ├── usage.md
+│   └── bitlesson.md
+├── hooks/               # Plugin hooks (validators, lifecycle)
+│   ├── lib/
+│   └── validators.py
+├── prompt-template/     # Prompt templates for subsystems
+│   ├── block/
+│   ├── claude/
+│   ├── codex/
+│   ├── idea/
+│   └── plan/
+├── scripts/             # CLI scripts and library modules
+│   ├── loop.sh          # Main CLI entry point
+│   ├── loop.py          # Python implementation
+│   ├── install-local.sh # Local installer
+│   └── lib/             # Shared libraries
+├── skills/              # SKILL.md definitions
+│   ├── loop/
+│   ├── loop-gen-plan/
+│   ├── loop-refine-plan/
+│   └── loop-rlcr/
+└── tests/               # Test suite
 ```
 
 ## Testing
 
-Run the local test suite with:
+Run the test suite:
 
 ```bash
+# Run all tests
+bash tests/run-all-tests.sh
+
+# Or use unittest directly
 python3 -m unittest discover -s tests
 ```
 
+Tests cover:
+- CLI command parsing
+- Configuration loading
+- Hook validation
+- Monitor dashboard
+- RLCR loop orchestration
+
+## Contributing
+
+Contributions welcome! Please:
+1. Fork the repository
+2. Create a feature branch
+3. Add tests for new functionality
+4. Ensure all tests pass
+5. Submit a pull request
+
 ## License
 
-MIT
+MIT License - see LICENSE file for details.
+
+## Links
+
+- **Repository:** https://github.com/FrankDan77/loop
+- **Codex CLI:** https://github.com/openai/codex
+- **Claude Code:** https://claude.ai/code
