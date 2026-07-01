@@ -26,10 +26,9 @@ Repository = "https://github.com/FrankDan77/loop"
 # Common commands:
 #   uv sync                  Install all dependencies into a local .venv
 #   uv sync --extra dev      Include dev dependencies (pytest etc.)
-#   uv run loop.py           Run a script inside the managed environment
+#   uv run python scripts/loop.py   Run a script inside the managed environment
 #   uv add <package>         Add a new dependency
 #   uv add --dev <package>   Add a dev-only dependency
 
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+# This project is script-based, not a package — no build backend needed
+# The loop CLI is symlinked to ~/.local/bin/loop by install-local.sh

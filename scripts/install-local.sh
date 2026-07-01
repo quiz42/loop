@@ -26,11 +26,12 @@ if ! command -v uv &> /dev/null; then
     echo "✓ uv installed"
 fi
 
-# Initialize uv environment (creates .venv if doesn't exist)
+# Initialize uv environment (creates .venv if it doesn't exist)
 echo ""
 echo "Setting up Python environment with uv..."
 cd "$PLUGIN_ROOT"
-uv sync
+uv venv
+uv sync --no-install-project
 echo "✓ Python environment ready"
 
 # Add loop CLI to PATH via symlink
