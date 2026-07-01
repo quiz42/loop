@@ -1,5 +1,5 @@
 {
-  "description": "Humanize plugin hooks for loop validation and stop handling",
+  "description": "Loop plugin hooks for loop validation and stop handling",
   "hooks": {
     "UserPromptSubmit": [
       {

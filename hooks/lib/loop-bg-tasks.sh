@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Compatibility wrapper for Python loop background-task helpers.
 
-_HUMANIZE_HOOK_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+_LOOP_HOOK_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
 expand_leading_tilde() {
     python3 - "$1" <<'PY'
@@ -17,19 +17,19 @@ PY
 }
 
 extract_transcript_path() {
-    python3 "$_HUMANIZE_HOOK_LIB_DIR/loop_bg_tasks.py" extract-transcript "$1"
+    python3 "$_LOOP_HOOK_LIB_DIR/loop_bg_tasks.py" extract-transcript "$1"
 }
 
 derive_loop_start_iso_ts() {
-    python3 "$_HUMANIZE_HOOK_LIB_DIR/loop_bg_tasks.py" loop-start "$1"
+    python3 "$_LOOP_HOOK_LIB_DIR/loop_bg_tasks.py" loop-start "$1"
 }
 
 derive_tasks_dir_from_transcript() {
-    python3 "$_HUMANIZE_HOOK_LIB_DIR/loop_bg_tasks.py" tasks-dir "$1"
+    python3 "$_LOOP_HOOK_LIB_DIR/loop_bg_tasks.py" tasks-dir "$1"
 }
 
 list_pending_background_task_ids() {
-    python3 "$_HUMANIZE_HOOK_LIB_DIR/loop_bg_tasks.py" pending "$1" "${2:-}"
+    python3 "$_LOOP_HOOK_LIB_DIR/loop_bg_tasks.py" pending "$1" "${2:-}"
 }
 
 has_pending_background_tasks() {

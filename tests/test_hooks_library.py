@@ -58,6 +58,22 @@ class TemplateLoaderTests(unittest.TestCase):
         result = subprocess.run(["bash", "-lc", command], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
         self.assertEqual(result.stdout, "Hi Sam")
 
+    def test_hook_shell_wrappers_use_loop_naming(self) -> None:
+        files = [
+            ROOT / "hooks" / "hooks.json",
+            ROOT / "hooks" / "lib" / "template-loader.sh",
+            ROOT / "hooks" / "lib" / "loop-bg-tasks.sh",
+            ROOT / "hooks" / "lib" / "project-root.sh",
+            ROOT / "hooks" / "lib" / "loop-common.sh",
+            ROOT / "hooks" / "lib" / "methodology-analysis.sh",
+        ]
+        for path in files:
+            with self.subTest(path=path.relative_to(ROOT)):
+                content = path.read_text(encoding="utf-8")
+                self.assertNotIn("HUMANIZE", content)
+                self.assertNotIn("Humanize", content)
+                self.assertNotIn("humanize", content)
+
 
 class LoopCommonTests(unittest.TestCase):
     def test_parse_state_file_defaults_and_strict_validation(self) -> None:

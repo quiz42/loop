@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Compatibility wrapper for Python shared loop helpers.
 
-_HUMANIZE_HOOK_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-source "$_HUMANIZE_HOOK_LIB_DIR/project-root.sh"
-source "$_HUMANIZE_HOOK_LIB_DIR/template-loader.sh"
-source "$_HUMANIZE_HOOK_LIB_DIR/loop-bg-tasks.sh"
+_LOOP_HOOK_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+source "$_LOOP_HOOK_LIB_DIR/project-root.sh"
+source "$_LOOP_HOOK_LIB_DIR/template-loader.sh"
+source "$_LOOP_HOOK_LIB_DIR/loop-bg-tasks.sh"
 
 FIELD_CURRENT_ROUND="current_round"
 FIELD_MAX_ITERATIONS="max_iterations"
@@ -28,18 +28,18 @@ PY
 }
 
 resolve_active_state_file() {
-    python3 "$_HUMANIZE_HOOK_LIB_DIR/loop_common.py" active-state "$1"
+    python3 "$_LOOP_HOOK_LIB_DIR/loop_common.py" active-state "$1"
 }
 
 get_current_round() {
-    python3 "$_HUMANIZE_HOOK_LIB_DIR/loop_common.py" current-round "$1"
+    python3 "$_LOOP_HOOK_LIB_DIR/loop_common.py" current-round "$1"
 }
 
 extract_mainline_progress_verdict() {
     local tmp
     tmp=$(mktemp)
     printf '%s' "$1" > "$tmp"
-    python3 "$_HUMANIZE_HOOK_LIB_DIR/loop_common.py" verdict "$tmp"
+    python3 "$_LOOP_HOOK_LIB_DIR/loop_common.py" verdict "$tmp"
     rm -f "$tmp"
 }
 
