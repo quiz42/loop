@@ -6,6 +6,57 @@ loop uses the Codex CLI as the code review engine inside the RLCR loop. This gui
 
 Codex CLI is an open-source command-line tool by OpenAI that runs AI-powered code tasks in your terminal. Repository: https://github.com/openai/codex
 
+## Installing loop for Codex
+
+### Method 1: One-click install (local/GitHub)
+
+The same `install-local.sh` script installs loop for both Claude Code and Codex simultaneously:
+
+```bash
+# From cloned repository
+git clone https://github.com/FrankDan77/loop.git
+cd loop
+bash scripts/install-local.sh
+```
+
+Or directly from GitHub:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/FrankDan77/loop/main/scripts/install-local.sh | bash
+```
+
+The installer detects your Codex plugin directory (`~/.codex/plugins/` or `~/.config/codex/plugins/`) and creates a symlink automatically.
+
+### Method 2: Manual Codex installation
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/FrankDan77/loop.git ~/loop
+   ```
+
+2. Find or create your Codex plugin directory:
+   ```bash
+   mkdir -p ~/.codex/plugins
+   ```
+
+3. Create a symlink:
+   ```bash
+   ln -s ~/loop ~/.codex/plugins/loop
+   ```
+
+4. Make scripts executable:
+   ```bash
+   chmod +x ~/loop/scripts/*.sh ~/loop/scripts/*.py
+   ```
+
+### Uninstalling from Codex
+
+```bash
+cd loop && bash scripts/uninstall-local.sh
+# or manually:
+rm ~/.codex/plugins/loop
+```
+
 ## Prerequisites
 
 - Node.js 18 or later
