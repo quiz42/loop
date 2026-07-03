@@ -192,6 +192,8 @@ Loop behavior is controlled via `config/default_config.json`:
 
 See [Configuration Guide](docs/usage.md#configuration) for details.
 
+Runtime state is written under `.loop/` and should stay untracked. Project-specific overrides can be placed in `.loop/config.json`, or you can point `LOOP_CONFIG` at another JSON file. The optional status line reads `LOOP_MODEL` and `LOOP_STATUS` from the environment when present.
+
 ## Dependency Management with uv
 
 This project uses [uv](https://docs.astral.sh/uv/) for fast, reliable Python dependency management.

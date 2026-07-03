@@ -25,6 +25,19 @@ def public_markdown_files() -> list[Path]:
     return files
 
 
+def runtime_surface_files() -> list[Path]:
+    roots = ["scripts", "hooks"]
+    files: list[Path] = []
+    for root in roots:
+        files.extend(
+            path
+            for path in sorted((PROJECT_ROOT / root).rglob("*"))
+            if path.is_file() and path.suffix in {".py", ".sh", ".json"}
+        )
+    files.append(PROJECT_ROOT / ".gitignore")
+    return files
+
+
 class TestLoopParitySurface(unittest.TestCase):
     def test_private_directory_is_ignored_for_local_planning(self) -> None:
         gitignore = read(".gitignore")
@@ -43,7 +56,8 @@ class TestLoopParitySurface(unittest.TestCase):
         offenders: list[str] = []
         for path in public_markdown_files():
             content = path.read_text(encoding="utf-8")
-            for forbidden in ("/humanize:", " humanize ", "`humanize ", "[humanize]"):
+            legacy_name = "human" + "ize"
+            for forbidden in (f"/{legacy_name}:", f" {legacy_name} ", f"`{legacy_name} ", f"[{legacy_name}]"):
                 if forbidden in content:
                     offenders.append(f"{path.relative_to(PROJECT_ROOT)} contains {forbidden!r}")
         self.assertEqual([], offenders)
@@ -63,7 +77,22 @@ class TestLoopParitySurface(unittest.TestCase):
             with self.subTest(agent=agent):
                 path = PROJECT_ROOT / "agents" / agent
                 self.assertTrue(path.is_file())
-                self.assertNotIn(".humanize", path.read_text(encoding="utf-8"))
+                self.assertNotIn("." + "human" + "ize", path.read_text(encoding="utf-8"))
+
+    def test_runtime_surface_uses_loop_only(self) -> None:
+        forbidden_tokens = (
+            "HUM" + "ANIZE",
+            "Hum" + "anize",
+            "human" + "ize",
+            "." + "human" + "ize",
+        )
+        offenders: list[str] = []
+        for path in runtime_surface_files():
+            content = path.read_text(encoding="utf-8")
+            for token in forbidden_tokens:
+                if token in content:
+                    offenders.append(f"{path.relative_to(PROJECT_ROOT)} contains legacy token")
+        self.assertEqual([], offenders)
 
 
 if __name__ == "__main__":

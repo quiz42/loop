@@ -8,7 +8,6 @@ private/
 
 # Loop state directories (runtime-generated, project-local)
 .loop/
-.humanize/
 .claude-flow/
 .swarm/
 

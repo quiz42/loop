@@ -82,7 +82,7 @@ class TestRootFiles(unittest.TestCase):
             content = f.read()
 
         self.assertIn("__pycache__", content, ".gitignore missing __pycache__")
-        self.assertIn(".humanize", content, ".gitignore missing .humanize")
+        self.assertIn(".loop/", content, ".gitignore missing .loop/")
         self.assertIn(".DS_Store", content, ".gitignore missing .DS_Store")
 
     def test_license_exists_and_is_mit(self):

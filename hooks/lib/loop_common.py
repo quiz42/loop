@@ -418,11 +418,6 @@ def is_in_loop_dir(path: str) -> bool:
     return ".loop/rlcr/" in path
 
 
-def is_in_humanize_loop_dir(path: str) -> bool:
-    """Return whether a path is inside the legacy runtime directory."""
-    return ".humanize/rlcr/" in path
-
-
 def git_adds_loop(command_lower: str, project_root: str | Path = ".") -> bool:
     """Return whether a git add command would stage local loop state."""
     for segment in re.split(r"&&|\|\||\||;", command_lower):
@@ -449,21 +444,11 @@ def git_adds_loop(command_lower: str, project_root: str | Path = ".") -> bool:
     return False
 
 
-def git_adds_humanize(command_lower: str, project_root: str | Path = ".") -> bool:
-    """Return whether a git add command would stage legacy local state."""
-    return git_adds_loop(command_lower, project_root)
-
-
 def git_has_tracked_loop_state(project_root: str | Path = ".") -> bool:
     """Return whether .loop state is tracked or staged."""
     root = Path(project_root)
     result = subprocess.run(["git", "-C", str(root), "ls-files", "--", ".loop"], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     return result.returncode == 0 and bool(result.stdout.strip())
-
-
-def git_has_tracked_humanize_state(project_root: str | Path = ".") -> bool:
-    """Return whether legacy .humanize state is tracked or staged."""
-    return git_has_tracked_loop_state(project_root)
 
 
 def command_modifies_file(command_lower: str, file_pattern: str) -> bool:

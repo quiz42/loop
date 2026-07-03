@@ -79,6 +79,8 @@ Configuration lives in `config/default_config.json`:
 
 Edit this file before starting a loop to change behavior for the entire session.
 
+Project-local runtime files are stored under `.loop/` and are ignored by git. To override configuration for one project, create `.loop/config.json`; to use an explicit config file elsewhere, set `LOOP_CONFIG=/path/to/config.json`. The terminal status line reads `LOOP_MODEL` and `LOOP_STATUS` when those environment variables are set.
+
 ## Common Workflows
 
 ### Start fresh from an idea
