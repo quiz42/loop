@@ -1,0 +1,41 @@
+name: Template Loader Tests
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "prompt-template/**"
+      - "hooks/**"
+      - "tests/test_hooks_library.py"
+      - "tests/test_prompt_templates.py"
+      - ".github/workflows/template-test.yml"
+  pull_request:
+    branches: ["**"]
+    paths:
+      - "prompt-template/**"
+      - "hooks/**"
+      - "tests/test_hooks_library.py"
+      - "tests/test_prompt_templates.py"
+      - ".github/workflows/template-test.yml"
+
+jobs:
+  template-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run template and hook library tests
+        run: python3 -m unittest tests.test_hooks_library tests.test_prompt_templates -v
+
+      - name: Check hook script syntax
+        run: |
+          for script in hooks/loop-*.sh; do
+            echo "Checking $script"
+            bash -n "$script"
+          done

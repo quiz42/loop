@@ -1,0 +1,78 @@
+name: Version Bump Check
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  version-bump-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check version bump
+        run: |
+          git fetch origin main:refs/remotes/origin/main
+
+          validate_version_bump() {
+            local main_ver="$1"
+            local pr_ver="$2"
+            BUMP_ERROR=""
+
+            local main_x main_y main_z pr_x pr_y pr_z
+            IFS='.' read -r main_x main_y main_z <<< "$main_ver"
+            IFS='.' read -r pr_x pr_y pr_z <<< "$pr_ver"
+
+            if [ "$pr_x" -eq $((main_x + 1)) ] && [ "$pr_y" -eq 0 ] && [ "$pr_z" -eq 0 ]; then
+              return 0
+            fi
+            if [ "$pr_x" -eq "$main_x" ] && [ "$pr_y" -eq $((main_y + 1)) ] && [ "$pr_z" -eq 0 ]; then
+              return 0
+            fi
+            if [ "$pr_x" -eq "$main_x" ] && [ "$pr_y" -eq "$main_y" ] && [ "$pr_z" -eq $((main_z + 1)) ]; then
+              return 0
+            fi
+
+            BUMP_ERROR="Version must increase by exactly one valid semantic version step."
+            return 1
+          }
+
+          files=(
+            ".claude-plugin/plugin.json"
+            ".claude-plugin/marketplace.json"
+            "README.md"
+          )
+
+          exit_code=0
+          for file in "${files[@]}"; do
+            echo "Checking $file"
+            if [ "$file" = "README.md" ]; then
+              main_version=$(git show origin/main:"$file" 2>/dev/null | grep -oP '\*\*Version: \K[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+              pr_version=$(grep -oP '\*\*Version: \K[0-9]+\.[0-9]+\.[0-9]+' "$file" | head -1)
+            else
+              main_version=$(git show origin/main:"$file" 2>/dev/null | grep -oP '"version":\s*"\K[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+              pr_version=$(grep -oP '"version":\s*"\K[0-9]+\.[0-9]+\.[0-9]+' "$file" | head -1)
+            fi
+
+            if [ -z "$main_version" ]; then
+              echo "Skipping $file because no version exists on main."
+              continue
+            fi
+            if [ -z "$pr_version" ]; then
+              echo "Could not find version in $file."
+              exit_code=1
+              continue
+            fi
+
+            if validate_version_bump "$main_version" "$pr_version"; then
+              echo "Valid version bump: $main_version -> $pr_version"
+            else
+              echo "$BUMP_ERROR Current: $main_version Proposed: $pr_version"
+              exit_code=1
+            fi
+          done
+
+          exit "$exit_code"

@@ -1,0 +1,44 @@
+name: Plan File Validation Tests
+
+on:
+  push:
+    paths:
+      - "scripts/setup-rlcr-loop.sh"
+      - "scripts/rlcr_loop.py"
+      - "hooks/loop-plan-file-validator.sh"
+      - "hooks/loop-codex-stop-hook.sh"
+      - "hooks/loop-write-validator.sh"
+      - "hooks/loop-edit-validator.sh"
+      - "hooks/loop-bash-validator.sh"
+      - "hooks/lib/**"
+      - "tests/test_rlcr_loop.py"
+      - "tests/test_hooks_validators.py"
+      - "commands/cancel-rlcr-loop.md"
+  pull_request:
+    paths:
+      - "scripts/setup-rlcr-loop.sh"
+      - "scripts/rlcr_loop.py"
+      - "hooks/loop-plan-file-validator.sh"
+      - "hooks/loop-codex-stop-hook.sh"
+      - "hooks/loop-write-validator.sh"
+      - "hooks/loop-edit-validator.sh"
+      - "hooks/loop-bash-validator.sh"
+      - "hooks/lib/**"
+      - "tests/test_rlcr_loop.py"
+      - "tests/test_hooks_validators.py"
+      - "commands/cancel-rlcr-loop.md"
+
+jobs:
+  plan-file-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run plan file and RLCR tests
+        run: python3 -m unittest tests.test_rlcr_loop tests.test_hooks_validators -v

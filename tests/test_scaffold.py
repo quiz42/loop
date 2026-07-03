@@ -39,6 +39,15 @@ CONFIG_FILES = [
     "config/codex-hooks.json",
 ]
 
+WORKFLOW_FILES = [
+    ".github/workflows/plan-file-test.yml",
+    ".github/workflows/pr-target-check.yml",
+    ".github/workflows/run-all-tests.yml",
+    ".github/workflows/shell-syntax-check.yml",
+    ".github/workflows/template-test.yml",
+    ".github/workflows/version-bump-check.yml",
+]
+
 
 class TestProjectScaffold(unittest.TestCase):
     """Test that the project directory structure is properly scaffolded."""
@@ -217,6 +226,23 @@ class TestConfigurationFiles(unittest.TestCase):
         ]
         for key in expected_keys:
             self.assertIn(key, data, f"Missing config key: {key}")
+
+
+class TestGitHubWorkflows(unittest.TestCase):
+    """Test GitHub Actions workflow parity."""
+
+    def test_workflow_files_exist_and_use_loop_branding(self):
+        legacy_name = "human" + "ize"
+        for workflow_file in WORKFLOW_FILES:
+            workflow_path = os.path.join(PROJECT_ROOT, workflow_file)
+            self.assertTrue(
+                os.path.isfile(workflow_path),
+                f"Workflow file '{workflow_file}' does not exist",
+            )
+            with open(workflow_path) as f:
+                content = f.read()
+            self.assertIn("name:", content)
+            self.assertNotIn(legacy_name, content)
 
 
 class TestReadmeVersionConsistency(unittest.TestCase):

@@ -309,6 +309,8 @@ Tests cover:
 - Monitor dashboard
 - RLCR loop orchestration
 
+GitHub Actions workflows under `.github/workflows/` run the same core checks in CI, including the full unittest suite, shell syntax validation, template coverage, plan-file validation, and release version bump checks.
+
 ## Contributing
 
 Contributions welcome! Please:
