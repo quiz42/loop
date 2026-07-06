@@ -49,7 +49,12 @@ class TestTemplateStructure(unittest.TestCase):
             "round-contract-missing.md",
             "plan-file-modified.md",
             "incomplete-todos.md",
-            "work-summary-missing.md"
+            "work-summary-missing.md",
+            "bitlesson-delta-empty-kb.md",
+            "bitlesson-delta-inconsistent.md",
+            "bitlesson-delta-invalid.md",
+            "bitlesson-delta-missing-notes.md",
+            "bitlesson-delta-missing.md",
         ]
         block_dir = self.template_root / "block"
         for template in block_templates:
@@ -165,6 +170,28 @@ class TestTemplateContent(unittest.TestCase):
             with self.subTest(variable=var):
                 self.assertIn(var, content,
                              f"next-round-prompt.md missing {var}")
+
+    def test_bitlesson_block_templates_use_loop_paths(self):
+        """Bitlesson block templates must reference loop runtime paths."""
+        block_dir = self.template_root / "block"
+        templates = [
+            "bitlesson-delta-empty-kb.md",
+            "bitlesson-delta-inconsistent.md",
+            "bitlesson-delta-invalid.md",
+            "bitlesson-delta-missing-notes.md",
+            "bitlesson-delta-missing.md",
+        ]
+        legacy_path = "." + "human" + "ize"
+        templates_requiring_path = {
+            "bitlesson-delta-empty-kb.md",
+            "bitlesson-delta-inconsistent.md",
+        }
+        for template in templates:
+            with self.subTest(template=template):
+                content = (block_dir / template).read_text(encoding="utf-8")
+                self.assertNotIn(legacy_path, content)
+                if template in templates_requiring_path:
+                    self.assertIn(".loop/bitlesson/lessons.md", content)
 
 
 class TestTemplateIntegration(unittest.TestCase):

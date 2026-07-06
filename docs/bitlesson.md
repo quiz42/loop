@@ -118,3 +118,16 @@ Each entry must follow this structure exactly for `validate_delta` to pass:
 When `bitlesson_model` is set in `config/default_config.json`, the loop automatically summarizes the Bitter Lesson log at the start of each iteration and injects the most relevant lesson into the review prompt. This helps Codex (or Kimi) avoid known pitfalls from earlier iterations.
 
 To disable this behavior, set `bitlesson_model` to `null` in the config.
+
+## BitLesson Delta in round summaries
+
+Round summaries can include a `## BitLesson Delta` section so the loop can verify whether a reusable lesson was added, updated, or intentionally skipped:
+
+```markdown
+## BitLesson Delta
+- Action: none|add|update
+- Lesson ID(s): <IDs or NONE>
+- Notes: <what changed and why>
+```
+
+The block templates in `prompt-template/block/` explain validation failures for missing delta sections, invalid actions, inconsistent lesson IDs, missing notes, and attempts to use `Action: none` before `.loop/bitlesson/lessons.md` contains any concrete lesson entries.
