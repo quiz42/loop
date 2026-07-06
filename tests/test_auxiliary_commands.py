@@ -171,5 +171,18 @@ class TestShellWrappers(unittest.TestCase):
                 self.assertTrue(result.stdout or result.stderr)
 
 
+class TestShellTestAssets(unittest.TestCase):
+    def test_template_loader_shell_regression_assets_exist(self):
+        for relative in ("tests/test-helpers.sh", "tests/test-template-loader.sh"):
+            with self.subTest(relative=relative):
+                path = PROJECT_ROOT / relative
+                self.assertTrue(path.exists())
+                self.assertTrue(path.stat().st_mode & 0o111)
+
+    def test_run_all_tests_includes_shell_regression(self):
+        content = (PROJECT_ROOT / "tests" / "run-all-tests.sh").read_text(encoding="utf-8")
+        self.assertIn("test-template-loader.sh", content)
+
+
 if __name__ == "__main__":
     unittest.main()

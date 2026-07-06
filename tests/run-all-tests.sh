@@ -9,3 +9,6 @@ cd "$PROJECT_ROOT"
 
 echo "Running loop test suite..."
 python3 -m unittest discover -s tests -p "test_*.py" -v
+
+echo "Running loop shell regression: test-template-loader.sh"
+bash tests/test-template-loader.sh
