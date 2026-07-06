@@ -5,8 +5,8 @@ loop is a Claude Code plugin that implements the RLCR (Ralph-Loop with Codex Rev
 ## Prerequisites
 
 - Claude Code CLI installed and authenticated
-- Codex CLI installed (see [install-codex.md](install-codex.md))
-- Plugin installed (see [install-claude.md](install-claude.md))
+- Codex CLI installed (see [install-for-codex.md](install-for-codex.md))
+- Plugin installed (see [install-for-claude.md](install-for-claude.md))
 
 ## Quick Start
 

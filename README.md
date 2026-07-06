@@ -15,6 +15,8 @@ An iterative development plugin for Claude Code and Codex implementing the RLCR 
 
 The loop has two phases: **Implementation** (Claude works, Codex reviews summaries) and **Code Review** (Codex checks code quality with severity markers). Issues feed back into implementation until resolved.
 
+![RLCR workflow](docs/images/rlcr-workflow.svg)
+
 ## Prerequisites
 
 - **Python 3.10+** — Required for running loop scripts
@@ -105,8 +107,9 @@ bash scripts/uninstall-local.sh
 - **OpenAI API key** — Set as `OPENAI_API_KEY` environment variable
 
 For detailed installation instructions, see:
-- [Installing loop for Claude Code](docs/install-claude.md)
-- [Installing loop for Codex](docs/install-codex.md)
+- [Installing loop for Claude Code](docs/install-for-claude.md)
+- [Installing loop for Codex](docs/install-for-codex.md)
+- [Installing loop for Kimi](docs/install-for-kimi.md)
 
 ## Quick Start
 
@@ -119,6 +122,8 @@ After installation, restart Claude Code and run:
 ```
 
 You should see the loop status dashboard.
+
+![Loop monitor dashboard](docs/images/monitor.png)
 
 ### 2. Initialize configuration (optional)
 
@@ -251,8 +256,9 @@ Loop uses specialized agents for different phases:
 ## Documentation
 
 - **[Usage Guide](docs/usage.md)** — Complete usage documentation
-- **[Installing for Claude Code](docs/install-claude.md)** — Detailed Claude Code setup
-- **[Installing for Codex](docs/install-codex.md)** — Detailed Codex setup
+- **[Installing for Claude Code](docs/install-for-claude.md)** — Detailed Claude Code setup
+- **[Installing for Codex](docs/install-for-codex.md)** — Detailed Codex setup
+- **[Installing for Kimi](docs/install-for-kimi.md)** — Detailed Kimi setup
 - **[Bitter Lesson Workflow](docs/bitlesson.md)** — Optional research-oriented workflow
 
 ## Project Structure
@@ -264,8 +270,10 @@ loop/
 ├── config/              # Configuration files
 │   └── codex-hooks.json
 ├── docs/                # User documentation
-│   ├── install-claude.md
-│   ├── install-codex.md
+│   ├── images/
+│   ├── install-for-claude.md
+│   ├── install-for-codex.md
+│   ├── install-for-kimi.md
 │   ├── usage.md
 │   └── bitlesson.md
 ├── hooks/               # Plugin hooks (validators, lifecycle)

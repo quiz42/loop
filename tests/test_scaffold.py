@@ -39,6 +39,14 @@ CONFIG_FILES = [
     "config/codex-hooks.json",
 ]
 
+DOC_FILES = [
+    "docs/install-for-claude.md",
+    "docs/install-for-codex.md",
+    "docs/install-for-kimi.md",
+    "docs/images/monitor.png",
+    "docs/images/rlcr-workflow.svg",
+]
+
 WORKFLOW_FILES = [
     ".github/workflows/plan-file-test.yml",
     ".github/workflows/pr-target-check.yml",
@@ -226,6 +234,32 @@ class TestConfigurationFiles(unittest.TestCase):
         ]
         for key in expected_keys:
             self.assertIn(key, data, f"Missing config key: {key}")
+
+
+class TestDocumentationParity(unittest.TestCase):
+    """Test documentation files expected from the upstream surface."""
+
+    def test_install_guides_and_images_exist(self):
+        legacy_name = "human" + "ize"
+        for doc_file in DOC_FILES:
+            doc_path = os.path.join(PROJECT_ROOT, doc_file)
+            self.assertTrue(
+                os.path.isfile(doc_path),
+                f"Documentation file '{doc_file}' does not exist",
+            )
+            if doc_file.endswith(".md"):
+                with open(doc_path) as f:
+                    content = f.read()
+                self.assertIn("loop", content.lower())
+                self.assertNotIn(legacy_name, content.lower())
+
+    def test_readme_links_to_parity_install_guides(self):
+        readme_path = os.path.join(PROJECT_ROOT, "README.md")
+        with open(readme_path) as f:
+            content = f.read()
+        self.assertIn("docs/install-for-claude.md", content)
+        self.assertIn("docs/install-for-codex.md", content)
+        self.assertIn("docs/install-for-kimi.md", content)
 
 
 class TestGitHubWorkflows(unittest.TestCase):
