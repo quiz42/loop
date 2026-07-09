@@ -100,6 +100,8 @@ class TestRootFiles(unittest.TestCase):
 
         self.assertIn("__pycache__", content, ".gitignore missing __pycache__")
         self.assertIn(".loop/", content, ".gitignore missing .loop/")
+        self.assertIn(".venv/", content, ".gitignore missing .venv/")
+        self.assertIn("uv.lock", content, ".gitignore missing uv.lock")
         self.assertIn(".DS_Store", content, ".gitignore missing .DS_Store")
 
     def test_license_exists_and_is_mit(self):

@@ -11,6 +11,10 @@ private/
 .claude-flow/
 .swarm/
 
+# Local Python environment and generated lockfile
+.venv/
+uv.lock
+
 # Python cache
 __pycache__/
 *.pyc
