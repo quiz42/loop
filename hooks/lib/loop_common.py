@@ -491,6 +491,9 @@ def _parse_args() -> argparse.Namespace:
     verdict.add_argument("review_file")
     active = subparsers.add_parser("active-state")
     active.add_argument("loop_dir")
+    git_adds = subparsers.add_parser("git-adds-loop")
+    git_adds.add_argument("command_lower")
+    git_adds.add_argument("project_root", nargs="?", default=".")
     return parser.parse_args()
 
 
@@ -508,6 +511,8 @@ def main() -> int:
             print(path)
             return 0
         return 1
+    if args.command == "git-adds-loop":
+        return 0 if git_adds_loop(args.command_lower, args.project_root) else 1
     return 1
 
 

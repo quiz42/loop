@@ -112,6 +112,20 @@ class LoopCommonTests(unittest.TestCase):
             self.assertTrue(loop_common.git_adds_loop("git add --all", root))
             self.assertFalse(loop_common.git_adds_loop("git add README.md", root))
 
+    def test_shell_wrapper_exposes_git_adds_loop(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / ".loop").mkdir()
+            script = ROOT / "hooks" / "lib" / "loop-common.sh"
+            command = f"source {script}; git_adds_loop 'git add .loop' {root}"
+            result = subprocess.run(
+                ["bash", "-lc", command],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_goal_tracker_immutable_must_be_preserved(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             tracker = Path(temp_dir) / "goal-tracker.md"

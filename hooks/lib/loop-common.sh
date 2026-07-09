@@ -35,6 +35,10 @@ get_current_round() {
     python3 "$_LOOP_HOOK_LIB_DIR/loop_common.py" current-round "$1"
 }
 
+git_adds_loop() {
+    python3 "$_LOOP_HOOK_LIB_DIR/loop_common.py" git-adds-loop "$1" "${2:-.}"
+}
+
 extract_mainline_progress_verdict() {
     local tmp
     tmp=$(mktemp)
