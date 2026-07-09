@@ -15,3 +15,6 @@ bash tests/test-template-loader.sh
 
 echo "Running loop shell regression: test-loop-escape.sh"
 bash tests/test-loop-escape.sh
+
+echo "Running loop shell regression: test-bash-validator-patterns.sh"
+bash tests/test-bash-validator-patterns.sh

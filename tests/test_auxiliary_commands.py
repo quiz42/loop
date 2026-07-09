@@ -173,7 +173,12 @@ class TestShellWrappers(unittest.TestCase):
 
 class TestShellTestAssets(unittest.TestCase):
     def test_template_loader_shell_regression_assets_exist(self):
-        for relative in ("tests/test-helpers.sh", "tests/test-template-loader.sh", "tests/test-loop-escape.sh"):
+        for relative in (
+            "tests/test-helpers.sh",
+            "tests/test-template-loader.sh",
+            "tests/test-loop-escape.sh",
+            "tests/test-bash-validator-patterns.sh",
+        ):
             with self.subTest(relative=relative):
                 path = PROJECT_ROOT / relative
                 self.assertTrue(path.exists())
@@ -183,6 +188,7 @@ class TestShellTestAssets(unittest.TestCase):
         content = (PROJECT_ROOT / "tests" / "run-all-tests.sh").read_text(encoding="utf-8")
         self.assertIn("test-template-loader.sh", content)
         self.assertIn("test-loop-escape.sh", content)
+        self.assertIn("test-bash-validator-patterns.sh", content)
 
 
 if __name__ == "__main__":

@@ -126,6 +126,17 @@ class LoopCommonTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_shell_wrapper_exposes_command_modifies_file(self) -> None:
+        script = ROOT / "hooks" / "lib" / "loop-common.sh"
+        command = f"source {script}; command_modifies_file 'echo x > goal-tracker.md' 'goal-tracker\\.md'"
+        result = subprocess.run(
+            ["bash", "-lc", command],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_goal_tracker_immutable_must_be_preserved(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             tracker = Path(temp_dir) / "goal-tracker.md"

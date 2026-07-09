@@ -318,6 +318,7 @@ Tests cover:
 - RLCR loop orchestration
 - Shell template loading and rendering regressions
 - Shell guards that prevent `.loop/` runtime state from being staged
+- Shell command pattern detection for protected runtime files
 
 GitHub Actions workflows under `.github/workflows/` run the same core checks in CI, including the full unittest suite, shell syntax validation, template coverage, plan-file validation, and release version bump checks.
 

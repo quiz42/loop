@@ -39,6 +39,10 @@ git_adds_loop() {
     python3 "$_LOOP_HOOK_LIB_DIR/loop_common.py" git-adds-loop "$1" "${2:-.}"
 }
 
+command_modifies_file() {
+    python3 "$_LOOP_HOOK_LIB_DIR/loop_common.py" command-modifies-file "$1" "$2"
+}
+
 extract_mainline_progress_verdict() {
     local tmp
     tmp=$(mktemp)

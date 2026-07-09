@@ -494,6 +494,9 @@ def _parse_args() -> argparse.Namespace:
     git_adds = subparsers.add_parser("git-adds-loop")
     git_adds.add_argument("command_lower")
     git_adds.add_argument("project_root", nargs="?", default=".")
+    modifies = subparsers.add_parser("command-modifies-file")
+    modifies.add_argument("command_lower")
+    modifies.add_argument("file_pattern")
     return parser.parse_args()
 
 
@@ -513,6 +516,8 @@ def main() -> int:
         return 1
     if args.command == "git-adds-loop":
         return 0 if git_adds_loop(args.command_lower, args.project_root) else 1
+    if args.command == "command-modifies-file":
+        return 0 if command_modifies_file(args.command_lower, args.file_pattern) else 1
     return 1
 
 
