@@ -132,6 +132,59 @@ class TestLoopCli(unittest.TestCase):
         self.assertIn("gen-idea", result.stdout)
         self.assertIn("gen-plan", result.stdout)
         self.assertIn("monitor", result.stdout)
+        self.assertIn("refine-plan", result.stdout)
+
+    def test_refine_plan_direct_mode_writes_refined_plan_and_qa_ledger(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            plan = root / "docs" / "plan.md"
+            plan.parent.mkdir()
+            plan.write_text(
+                """# Demo Plan
+
+## Implementation Steps
+1. Add the first behavior.
+CMT:
+Clarify the first task.
+ENDCMT
+
+## Acceptance Criteria
+- AC-1: Ship the first behavior. <cmt>Need a failure-path assertion.</cmt>
+""",
+                encoding="utf-8",
+            )
+            output = root / "docs" / "plan.refined.md"
+            qa_dir = root / ".loop" / "plan_qa"
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(PROJECT_ROOT / "scripts/loop.py"),
+                    "refine-plan",
+                    "--input",
+                    str(plan),
+                    "--output",
+                    str(output),
+                    "--qa-dir",
+                    str(qa_dir),
+                    "--direct",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("Wrote refined plan", result.stdout)
+            self.assertIn("Wrote QA ledger", result.stdout)
+            self.assertTrue(output.is_file())
+            self.assertTrue((qa_dir / "plan-qa.md").is_file())
+            refined = output.read_text(encoding="utf-8")
+            qa = (qa_dir / "plan-qa.md").read_text(encoding="utf-8")
+            self.assertNotIn("CMT:", refined)
+            self.assertNotIn("<cmt>", refined)
+            self.assertIn("Clarify the first task.", qa)
+            self.assertIn("Need a failure-path assertion.", qa)
 
 
 if __name__ == "__main__":

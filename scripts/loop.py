@@ -36,6 +36,16 @@ class LoopSession:
     goal_tracker: Path | None
 
 
+@dataclass(frozen=True)
+class PlanComment:
+    """Reviewer comment extracted from an annotated plan."""
+
+    index: int
+    marker: str
+    body: str
+    category: str
+
+
 def project_root(start: Path | None = None) -> Path:
     """Return the git project root or the current working directory."""
     root_start = start or Path.cwd()
@@ -74,6 +84,169 @@ def write_text(path: Path, content: str, force: bool = False) -> None:
         raise FileExistsError(f"Refusing to overwrite existing file: {path}. Pass --force to replace it.")
     ensure_parent(path)
     path.write_text(content, encoding="utf-8")
+
+
+def protected_markdown_ranges(markdown: str) -> list[tuple[int, int]]:
+    """Return ranges where comment markers should be ignored."""
+    ranges: list[tuple[int, int]] = []
+    in_fence = False
+    fence_start = 0
+    offset = 0
+    for line in markdown.splitlines(keepends=True):
+        stripped = line.lstrip()
+        if stripped.startswith(("```", "~~~")):
+            if in_fence:
+                ranges.append((fence_start, offset + len(line)))
+                in_fence = False
+            else:
+                fence_start = offset
+                in_fence = True
+        offset += len(line)
+    if in_fence:
+        ranges.append((fence_start, len(markdown)))
+
+    for match in re.finditer(r"<!--.*?-->", markdown, flags=re.DOTALL):
+        ranges.append(match.span())
+    return ranges
+
+
+def _range_is_protected(start: int, end: int, ranges: list[tuple[int, int]]) -> bool:
+    return any(start < protected_end and end > protected_start for protected_start, protected_end in ranges)
+
+
+def classify_plan_comment(body: str) -> str:
+    """Classify a reviewer comment for the QA ledger."""
+    lowered = body.lower()
+    if "?" in body or any(word in lowered for word in ("clarify", "question", "whether")):
+        return "question"
+    if any(word in lowered for word in ("research", "investigate", "verify", "confirm")):
+        return "research request"
+    if any(word in lowered for word in ("add", "change", "remove", "update", "rewrite", "include")):
+        return "change request"
+    return "deferred decision"
+
+
+def extract_plan_comments(markdown: str) -> tuple[str, list[PlanComment]]:
+    """Remove reviewer comment markup and return extracted non-empty comments."""
+    protected_ranges = protected_markdown_ranges(markdown)
+    patterns = [
+        ("CMT", re.compile(r"(?m)^[ \t]*CMT:[ \t]*\n(?P<body>.*?)(?:\n[ \t]*ENDCMT[ \t]*(?:\n|$))", re.DOTALL)),
+        ("cmt", re.compile(r"<cmt>(?P<body>.*?)</cmt>", re.IGNORECASE | re.DOTALL)),
+        ("comment", re.compile(r"<comment>(?P<body>.*?)</comment>", re.IGNORECASE | re.DOTALL)),
+    ]
+    matches: list[tuple[int, int, str, str]] = []
+    for marker, pattern in patterns:
+        for match in pattern.finditer(markdown):
+            if _range_is_protected(match.start(), match.end(), protected_ranges):
+                continue
+            matches.append((match.start(), match.end(), marker, match.group("body").strip()))
+    matches.sort(key=lambda item: item[0])
+
+    refined_parts: list[str] = []
+    comments: list[PlanComment] = []
+    cursor = 0
+    for start, end, marker, body in matches:
+        if start < cursor:
+            continue
+        refined_parts.append(markdown[cursor:start])
+        if body:
+            comments.append(
+                PlanComment(
+                    index=len(comments) + 1,
+                    marker=marker,
+                    body=body,
+                    category=classify_plan_comment(body),
+                )
+            )
+        cursor = end
+    refined_parts.append(markdown[cursor:])
+    refined = re.sub(r"\n{3,}", "\n\n", "".join(refined_parts)).strip() + "\n"
+    return refined, comments
+
+
+def validate_refine_plan_content(path: Path, content: str, comments: list[PlanComment]) -> None:
+    """Validate required refine-plan input content."""
+    missing = [section for section in ("## Implementation Steps", "## Acceptance Criteria") if section not in content]
+    if missing:
+        raise ValueError(f"Missing required sections in {path}: {', '.join(missing)}")
+    if not comments:
+        raise ValueError(f"No reviewer comment blocks found in {path}")
+
+
+def render_qa_ledger(input_path: Path, output_path: Path, comments: list[PlanComment], mode: str, alt_language: str | None) -> str:
+    """Render a deterministic QA ledger for plan refinement."""
+    lines = [
+        f"# Plan QA Ledger: {input_path.name}",
+        "",
+        "## Summary",
+        "",
+        f"- Input plan: `{input_path}`",
+        f"- Refined plan: `{output_path}`",
+        f"- Comments processed: {len(comments)}",
+        f"- Mode: {mode}",
+    ]
+    if alt_language:
+        lines.append(f"- Alternate language requested: `{alt_language}`")
+    lines.extend(["", "## Comment Ledger", ""])
+    for comment in comments:
+        lines.extend(
+            [
+                f"### Comment {comment.index}",
+                "",
+                f"- Marker: `{comment.marker}`",
+                f"- Category: {comment.category}",
+                "",
+                comment.body,
+                "",
+            ]
+        )
+
+    answers = [comment for comment in comments if comment.category == "question"]
+    research = [comment for comment in comments if comment.category == "research request"]
+    changes = [comment for comment in comments if comment.category == "change request"]
+    deferred = [comment for comment in comments if comment.category == "deferred decision"]
+
+    lines.extend(["## Answers", ""])
+    if answers:
+        for comment in answers:
+            lines.append(f"- Comment {comment.index}: Requires owner confirmation or direct-mode conservative handling.")
+    else:
+        lines.append("- No direct questions were found.")
+    lines.extend(["", "## Research Findings", ""])
+    if research:
+        for comment in research:
+            lines.append(f"- Comment {comment.index}: Research request recorded for follow-up.")
+    else:
+        lines.append("- No research requests were found.")
+    lines.extend(["", "## Plan Changes Applied", ""])
+    if changes:
+        for comment in changes:
+            lines.append(f"- Comment {comment.index}: Comment markup removed; requested change recorded for implementation review.")
+    else:
+        lines.append("- Comment markup was removed from the refined plan.")
+    lines.extend(["", "## Remaining Decisions", ""])
+    remaining = deferred + answers + research
+    if remaining:
+        for comment in remaining:
+            lines.append(f"- Comment {comment.index}: {comment.category}.")
+    else:
+        lines.append("- No remaining decisions.")
+    lines.extend(
+        [
+            "",
+            "## Refinement Metadata",
+            "",
+            f"- Refined at: {now_timestamp()}",
+            "- Tool: loop refine-plan",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def default_qa_path(input_path: Path, qa_dir: Path) -> Path:
+    """Return the QA ledger path for an input plan."""
+    return qa_dir / f"{input_path.stem}-qa.md"
 
 
 def render_idea(description: str, title: str | None = None) -> str:
@@ -313,6 +486,33 @@ def command_gen_plan(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_refine_plan(args: argparse.Namespace) -> int:
+    """Refine an annotated plan and write a QA ledger."""
+    input_path = Path(args.input)
+    output_path = Path(args.output) if args.output else input_path
+    qa_dir = Path(args.qa_dir)
+    qa_path = default_qa_path(input_path, qa_dir)
+    mode = "discussion" if args.discussion else "direct"
+    try:
+        if not input_path.is_file():
+            raise FileNotFoundError(f"Input file not found: {input_path}")
+        content = input_path.read_text(encoding="utf-8")
+        refined, comments = extract_plan_comments(content)
+        validate_refine_plan_content(input_path, content, comments)
+        ensure_parent(output_path)
+        output_path.write_text(refined, encoding="utf-8")
+        ensure_parent(qa_path)
+        qa_path.write_text(render_qa_ledger(input_path, output_path, comments, mode, args.alt_language), encoding="utf-8")
+    except (OSError, ValueError, UnicodeDecodeError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    print(f"[loop] Reading annotated plan from {input_path}")
+    print(f"[loop] Found {len(comments)} reviewer comment blocks")
+    print(f"[loop] Wrote refined plan to {output_path}")
+    print(f"[loop] Wrote QA ledger to {qa_path}")
+    return 0
+
+
 def command_start_rlcr_loop(args: argparse.Namespace) -> int:
     """Create a local RLCR session directory from a plan file."""
     plan = Path(args.plan)
@@ -415,6 +615,16 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument("--title", default=None)
     plan.add_argument("--force", action="store_true")
     plan.set_defaults(func=command_gen_plan)
+
+    refine = subparsers.add_parser("refine-plan", help="Refine an annotated plan and write a QA ledger.")
+    refine.add_argument("--input", "-i", required=True)
+    refine.add_argument("--output", "-o", default=None)
+    refine.add_argument("--qa-dir", default=".loop/plan_qa")
+    refine.add_argument("--alt-language", default=None)
+    refine_mode = refine.add_mutually_exclusive_group()
+    refine_mode.add_argument("--discussion", action="store_true")
+    refine_mode.add_argument("--direct", action="store_true")
+    refine.set_defaults(func=command_refine_plan)
 
     start = subparsers.add_parser("start-rlcr-loop", help="Create a local RLCR loop session from a plan.")
     start.add_argument("plan")

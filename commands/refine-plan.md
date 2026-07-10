@@ -21,9 +21,9 @@ loop refine-plan --input <path/to/annotated-plan.md> [--output <path/to/refined-
 | `--input FILE` | required | Path to the annotated plan containing reviewer comment blocks |
 | `--output FILE` | input file | Path for the refined plan; when omitted, the input plan is refined in place |
 | `--qa-dir DIR` | `.loop/plan_qa` | Directory where the QA ledger is written |
-| `--alt-language LANG` | config value | Optional translated output language for plan and QA variants |
-| `--discussion` | config value | Ask clarifying questions for ambiguous comment handling |
-| `--direct` | config value | Make minimal conservative assumptions without interactive discussion |
+| `--alt-language LANG` | config value | Optional language preference recorded in the QA metadata |
+| `--discussion` | config value | Record that comment handling should prefer interactive follow-up |
+| `--direct` | config value | Record that comment handling should prefer conservative non-interactive follow-up |
 
 ## Comment Formats
 
@@ -52,9 +52,9 @@ Comment markers inside fenced code blocks or HTML comments are ignored. Empty co
 1. Validates that the input plan exists, contains required plan sections, and has at least one non-empty reviewer comment block.
 2. Classifies each comment as a question, research request, change request, or deferred decision.
 3. Removes comment markup from the refined plan.
-4. Applies clear plan edits for accepted change requests.
+4. Preserves the surrounding plan text and writes a clean comment-free plan revision.
 5. Writes a QA ledger under `--qa-dir` with a comment ledger, answers, research findings, applied changes, remaining decisions, and refinement metadata.
-6. Writes translated plan and QA variants when `--alt-language` is a supported non-English language.
+6. Records the selected refinement mode and optional alternate language request in the QA metadata.
 
 ## QA Output
 
@@ -83,7 +83,7 @@ The QA document includes these sections:
 # Write the refined plan to a new file and store QA in a custom directory
 /loop:refine-plan --input docs/plan.annotated.md --output docs/plan.refined.md --qa-dir docs/plan-qa
 
-# Run in direct mode and create Spanish translated variants
+# Run in direct mode and record a Spanish translation preference in QA metadata
 /loop:refine-plan --input docs/plan.md --direct --alt-language es
 ```
 
