@@ -65,6 +65,15 @@ class TestLoopParitySurface(unittest.TestCase):
                 for text in required_text:
                     self.assertIn(text, content)
 
+    def test_bitlesson_command_is_documented(self) -> None:
+        command = PROJECT_ROOT / "commands" / "bitlesson.md"
+        self.assertTrue(command.is_file())
+        content = command.read_text(encoding="utf-8")
+        self.assertIn("# Command: /loop:bitlesson", content)
+        self.assertIn("loop bitlesson init", content)
+        self.assertIn("loop bitlesson select", content)
+        self.assertIn("loop bitlesson validate-delta", content)
+
     def test_public_markdown_uses_loop_command_branding(self) -> None:
         offenders: list[str] = []
         for path in public_markdown_files():

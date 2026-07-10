@@ -153,6 +153,38 @@ class TestLoopCli(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn(expected_option, result.stdout)
 
+    def test_bitlesson_command_exposes_help_and_validate_delta(self):
+        top_help = subprocess.run(
+            ["python3", str(PROJECT_ROOT / "scripts" / "loop.py"), "bitlesson", "--help"],
+            cwd=PROJECT_ROOT,
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(top_help.returncode, 0, top_help.stderr)
+        self.assertIn("validate-delta", top_help.stdout)
+
+        init_help = subprocess.run(
+            ["python3", str(PROJECT_ROOT / "scripts" / "loop.py"), "bitlesson", "init", "--help"],
+            cwd=PROJECT_ROOT,
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(init_help.returncode, 0, init_help.stderr)
+        self.assertIn("--force", init_help.stdout)
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            delta = root / "delta.md"
+            delta.write_text("## Problem\nA\n## Change\nB\n## Lesson\nC\n", encoding="utf-8")
+            result = subprocess.run(
+                ["python3", str(PROJECT_ROOT / "scripts" / "loop.py"), "bitlesson", "validate-delta", str(delta)],
+                cwd=root,
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("Delta is valid.", result.stdout)
+
     def test_refine_plan_direct_mode_writes_refined_plan_and_qa_ledger(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

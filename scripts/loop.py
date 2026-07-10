@@ -22,6 +22,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import ask_tool
+import bitlesson
 import monitor_common
 import monitor_skill
 
@@ -534,6 +535,45 @@ def command_ask_gemini(args: argparse.Namespace) -> int:
         return 1
 
 
+def command_bitlesson_init(args: argparse.Namespace) -> int:
+    """Initialize the Bitter Lesson workflow."""
+    try:
+        path = bitlesson.init_workflow(project_root(), args.force)
+    except bitlesson.AuxiliaryCommandError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    print(path)
+    return 0
+
+
+def command_bitlesson_select(args: argparse.Namespace) -> int:
+    """Select a Bitter Lesson entry."""
+    try:
+        title, body = bitlesson.select_lesson(project_root(), args.query)
+    except bitlesson.AuxiliaryCommandError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    print(f"### {title}")
+    if body:
+        print(body)
+    return 0
+
+
+def command_bitlesson_validate_delta(args: argparse.Namespace) -> int:
+    """Validate a Bitter Lesson delta file."""
+    try:
+        errors = bitlesson.validate_delta(Path(args.delta_file))
+    except bitlesson.AuxiliaryCommandError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    if errors:
+        for error in errors:
+            print(f"Error: {error}", file=sys.stderr)
+        return 1
+    print("Delta is valid.")
+    return 0
+
+
 def command_start_rlcr_loop(args: argparse.Namespace) -> int:
     """Create a local RLCR session directory from a plan file."""
     plan = Path(args.plan)
@@ -661,6 +701,21 @@ def build_parser() -> argparse.ArgumentParser:
     ask_gemini.add_argument("--yolo", action="store_true")
     ask_gemini.add_argument("question", nargs="*")
     ask_gemini.set_defaults(func=command_ask_gemini)
+
+    bitlesson_parser = subparsers.add_parser("bitlesson", help="Manage Bitter Lesson workflow files.")
+    bitlesson_sub = bitlesson_parser.add_subparsers(dest="bitlesson_command")
+
+    bitlesson_init = bitlesson_sub.add_parser("init", help="Initialize the Bitter Lesson workflow.")
+    bitlesson_init.add_argument("--force", action="store_true")
+    bitlesson_init.set_defaults(func=command_bitlesson_init)
+
+    bitlesson_select = bitlesson_sub.add_parser("select", help="Select a Bitter Lesson entry.")
+    bitlesson_select.add_argument("query", nargs="?")
+    bitlesson_select.set_defaults(func=command_bitlesson_select)
+
+    bitlesson_validate = bitlesson_sub.add_parser("validate-delta", help="Validate a Bitter Lesson delta file.")
+    bitlesson_validate.add_argument("delta_file")
+    bitlesson_validate.set_defaults(func=command_bitlesson_validate_delta)
 
     start = subparsers.add_parser("start-rlcr-loop", help="Create a local RLCR loop session from a plan.")
     start.add_argument("plan")
