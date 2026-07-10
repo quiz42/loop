@@ -43,7 +43,6 @@ DOC_FILES = [
     "docs/install-for-claude.md",
     "docs/install-for-codex.md",
     "docs/install-for-kimi.md",
-    "docs/images/monitor.png",
     "docs/images/rlcr-workflow.svg",
 ]
 
@@ -128,6 +127,8 @@ class TestRootFiles(unittest.TestCase):
         self.assertIn("MIT", content, "README missing license info")
         self.assertIn("## Quick Start", content, "README missing Quick Start section")
         self.assertIn("## License", content, "README missing License section")
+        self.assertNotIn("docs/images/monitor.png", content, "README still references deleted monitor image")
+        self.assertNotIn("Humanize", content, "README still contains migrated project branding")
 
 
 class TestPluginConfiguration(unittest.TestCase):

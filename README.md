@@ -123,7 +123,12 @@ After installation, restart Claude Code and run:
 
 You should see the loop status dashboard.
 
-![Loop monitor dashboard](docs/images/monitor.png)
+```text
+Loop RLCR Monitor
+Status:  idle
+Round:   0 / 0
+Git:     clean
+```
 
 ### 2. Initialize configuration (optional)
 
