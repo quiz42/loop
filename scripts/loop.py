@@ -23,6 +23,7 @@ if str(LIB_DIR) not in sys.path:
 
 import ask_tool
 import bitlesson
+import install_tools
 import monitor_common
 import monitor_skill
 
@@ -574,6 +575,39 @@ def command_bitlesson_validate_delta(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_installed_paths(paths: list[Path]) -> int:
+    for path in paths:
+        print(path)
+    return 0
+
+
+def command_install_codex_hooks(args: argparse.Namespace) -> int:
+    """Install Codex hook assets."""
+    try:
+        return _print_installed_paths(install_tools.install_codex_hooks(args.plugin_root, args.target_dir))
+    except install_tools.AuxiliaryCommandError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+
+def command_install_skill(args: argparse.Namespace) -> int:
+    """Install one skill directory or file."""
+    try:
+        return _print_installed_paths([install_tools.install_skill(args.source, args.destination)])
+    except install_tools.AuxiliaryCommandError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+
+def command_install_skills(args: argparse.Namespace) -> int:
+    """Install all bundled skills for a target profile."""
+    try:
+        return _print_installed_paths(install_tools.install_skills(args.plugin_root, args.destination, args.profile))
+    except install_tools.AuxiliaryCommandError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+
 def command_start_rlcr_loop(args: argparse.Namespace) -> int:
     """Create a local RLCR session directory from a plan file."""
     plan = Path(args.plan)
@@ -716,6 +750,25 @@ def build_parser() -> argparse.ArgumentParser:
     bitlesson_validate = bitlesson_sub.add_parser("validate-delta", help="Validate a Bitter Lesson delta file.")
     bitlesson_validate.add_argument("delta_file")
     bitlesson_validate.set_defaults(func=command_bitlesson_validate_delta)
+
+    install = subparsers.add_parser("install", help="Install loop hooks and skills.")
+    install_sub = install.add_subparsers(dest="install_command")
+
+    install_hooks = install_sub.add_parser("codex-hooks", help="Install Codex hook assets.")
+    install_hooks.add_argument("--plugin-root", type=Path, default=Path.cwd())
+    install_hooks.add_argument("--target-dir", type=Path, default=Path.home() / ".codex" / "loop")
+    install_hooks.set_defaults(func=command_install_codex_hooks)
+
+    install_skill = install_sub.add_parser("skill", help="Install one skill directory or file.")
+    install_skill.add_argument("source", type=Path)
+    install_skill.add_argument("--destination", type=Path, default=Path.home() / ".loop" / "skills")
+    install_skill.set_defaults(func=command_install_skill)
+
+    for name, profile in (("skills-codex", "codex"), ("skills-kimi", "kimi")):
+        install_skills = install_sub.add_parser(name, help=f"Install bundled skills for {profile}.")
+        install_skills.set_defaults(func=command_install_skills, profile=profile)
+        install_skills.add_argument("--plugin-root", type=Path, default=Path.cwd())
+        install_skills.add_argument("--destination", type=Path, default=Path.home() / ".loop" / "skills")
 
     start = subparsers.add_parser("start-rlcr-loop", help="Create a local RLCR loop session from a plan.")
     start.add_argument("plan")

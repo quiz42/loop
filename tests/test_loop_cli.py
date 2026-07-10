@@ -185,6 +185,36 @@ class TestLoopCli(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("Delta is valid.", result.stdout)
 
+    def test_install_command_exposes_helper_subcommands(self):
+        top_help = subprocess.run(
+            ["python3", str(PROJECT_ROOT / "scripts" / "loop.py"), "install", "--help"],
+            cwd=PROJECT_ROOT,
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(top_help.returncode, 0, top_help.stderr)
+        self.assertIn("codex-hooks", top_help.stdout)
+        self.assertIn("skills-codex", top_help.stdout)
+        self.assertIn("skills-kimi", top_help.stdout)
+
+        codex_hooks_help = subprocess.run(
+            ["python3", str(PROJECT_ROOT / "scripts" / "loop.py"), "install", "codex-hooks", "--help"],
+            cwd=PROJECT_ROOT,
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(codex_hooks_help.returncode, 0, codex_hooks_help.stderr)
+        self.assertIn("--target-dir", codex_hooks_help.stdout)
+
+        skill_help = subprocess.run(
+            ["python3", str(PROJECT_ROOT / "scripts" / "loop.py"), "install", "skill", "--help"],
+            cwd=PROJECT_ROOT,
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(skill_help.returncode, 0, skill_help.stderr)
+        self.assertIn("--destination", skill_help.stdout)
+
     def test_refine_plan_direct_mode_writes_refined_plan_and_qa_ledger(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

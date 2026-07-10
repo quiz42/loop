@@ -74,6 +74,16 @@ class TestLoopParitySurface(unittest.TestCase):
         self.assertIn("loop bitlesson select", content)
         self.assertIn("loop bitlesson validate-delta", content)
 
+    def test_install_command_is_documented(self) -> None:
+        command = PROJECT_ROOT / "commands" / "install.md"
+        self.assertTrue(command.is_file())
+        content = command.read_text(encoding="utf-8")
+        self.assertIn("# Command: /loop:install", content)
+        self.assertIn("loop install codex-hooks", content)
+        self.assertIn("loop install skill", content)
+        self.assertIn("loop install skills-codex", content)
+        self.assertIn("loop install skills-kimi", content)
+
     def test_public_markdown_uses_loop_command_branding(self) -> None:
         offenders: list[str] = []
         for path in public_markdown_files():
