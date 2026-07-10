@@ -215,6 +215,51 @@ class TestLoopCli(unittest.TestCase):
         self.assertEqual(skill_help.returncode, 0, skill_help.stderr)
         self.assertIn("--destination", skill_help.stdout)
 
+    def test_validate_command_exposes_io_validation_subcommands(self):
+        top_help = subprocess.run(
+            ["python3", str(PROJECT_ROOT / "scripts" / "loop.py"), "validate", "--help"],
+            cwd=PROJECT_ROOT,
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(top_help.returncode, 0, top_help.stderr)
+        self.assertIn("gen-idea", top_help.stdout)
+        self.assertIn("gen-plan", top_help.stdout)
+        self.assertIn("refine-plan", top_help.stdout)
+
+        gen_plan_help = subprocess.run(
+            ["python3", str(PROJECT_ROOT / "scripts" / "loop.py"), "validate", "gen-plan", "--help"],
+            cwd=PROJECT_ROOT,
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(gen_plan_help.returncode, 0, gen_plan_help.stderr)
+        self.assertIn("--input", gen_plan_help.stdout)
+        self.assertIn("--output", gen_plan_help.stdout)
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            idea = root / "idea.md"
+            output = root / "plan.md"
+            idea.write_text("# Title\n\n## Idea\nBuild a useful validation command.\n", encoding="utf-8")
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(PROJECT_ROOT / "scripts" / "loop.py"),
+                    "validate",
+                    "gen-plan",
+                    "--input",
+                    str(idea),
+                    "--output",
+                    str(output),
+                ],
+                cwd=PROJECT_ROOT,
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("IO validation passed.", result.stdout)
+
     def test_refine_plan_direct_mode_writes_refined_plan_and_qa_ledger(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

@@ -26,6 +26,7 @@ import bitlesson
 import install_tools
 import monitor_common
 import monitor_skill
+import validate_io
 
 TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(?:[-_].*)?$")
 
@@ -608,6 +609,17 @@ def command_install_skills(args: argparse.Namespace) -> int:
         return 1
 
 
+def command_validate_io(args: argparse.Namespace) -> int:
+    """Validate input and output paths for planning commands."""
+    try:
+        validate_io.validate_mode(args)
+    except (validate_io.IOValidationError, OSError, UnicodeDecodeError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    print("IO validation passed.")
+    return 0
+
+
 def command_start_rlcr_loop(args: argparse.Namespace) -> int:
     """Create a local RLCR session directory from a plan file."""
     plan = Path(args.plan)
@@ -769,6 +781,17 @@ def build_parser() -> argparse.ArgumentParser:
         install_skills.set_defaults(func=command_install_skills, profile=profile)
         install_skills.add_argument("--plugin-root", type=Path, default=Path.cwd())
         install_skills.add_argument("--destination", type=Path, default=Path.home() / ".loop" / "skills")
+
+    validate = subparsers.add_parser("validate", help="Validate loop planning command inputs and outputs.")
+    validate_sub = validate.add_subparsers(dest="validate_command")
+
+    for name in ("gen-idea", "gen-plan", "refine-plan"):
+        validate_command = validate_sub.add_parser(name, help=f"Validate {name} command input and output files.")
+        validate_command.add_argument("--input", type=Path)
+        validate_command.add_argument("--output", type=Path, required=True)
+        validate_command.add_argument("--allow-overwrite", action="store_true")
+        validate_command.add_argument("--check-output-content", action="store_true")
+        validate_command.set_defaults(func=command_validate_io, mode=name)
 
     start = subparsers.add_parser("start-rlcr-loop", help="Create a local RLCR loop session from a plan.")
     start.add_argument("plan")

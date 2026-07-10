@@ -174,6 +174,7 @@ The loop runs until all tasks are complete and all acceptance criteria are met.
 | `loop ask-gemini <question>` | Send a one-shot question to Gemini |
 | `loop bitlesson <subcommand>` | Manage Bitter Lesson workflow files |
 | `loop install <subcommand>` | Install loop hooks and skills |
+| `loop validate <subcommand>` | Validate planning command inputs and outputs |
 | `loop start-rlcr-loop <plan>` | Start the RLCR implementation loop |
 | `loop monitor` | Show loop status dashboard |
 | `loop cancel-rlcr-loop` | Stop a running loop |

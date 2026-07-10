@@ -84,6 +84,15 @@ class TestLoopParitySurface(unittest.TestCase):
         self.assertIn("loop install skills-codex", content)
         self.assertIn("loop install skills-kimi", content)
 
+    def test_validate_command_is_documented(self) -> None:
+        command = PROJECT_ROOT / "commands" / "validate.md"
+        self.assertTrue(command.is_file())
+        content = command.read_text(encoding="utf-8")
+        self.assertIn("# Command: /loop:validate", content)
+        self.assertIn("loop validate gen-idea", content)
+        self.assertIn("loop validate gen-plan", content)
+        self.assertIn("loop validate refine-plan", content)
+
     def test_public_markdown_uses_loop_command_branding(self) -> None:
         offenders: list[str] = []
         for path in public_markdown_files():
