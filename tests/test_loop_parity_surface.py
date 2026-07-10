@@ -52,6 +52,19 @@ class TestLoopParitySurface(unittest.TestCase):
         self.assertIn("--qa-dir", content)
         self.assertIn("--alt-language", content)
 
+    def test_ask_commands_are_documented(self) -> None:
+        expected = {
+            "ask-codex.md": ("# Command: /loop:ask-codex", "loop ask-codex", "--codex-model"),
+            "ask-gemini.md": ("# Command: /loop:ask-gemini", "loop ask-gemini", "--gemini-model"),
+        }
+        for filename, required_text in expected.items():
+            with self.subTest(filename=filename):
+                command = PROJECT_ROOT / "commands" / filename
+                self.assertTrue(command.is_file())
+                content = command.read_text(encoding="utf-8")
+                for text in required_text:
+                    self.assertIn(text, content)
+
     def test_public_markdown_uses_loop_command_branding(self) -> None:
         offenders: list[str] = []
         for path in public_markdown_files():

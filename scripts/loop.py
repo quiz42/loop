@@ -16,9 +16,12 @@ from textwrap import dedent
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 LIB_DIR = SCRIPT_DIR / "lib"
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import ask_tool
 import monitor_common
 import monitor_skill
 
@@ -513,6 +516,24 @@ def command_refine_plan(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_ask_codex(args: argparse.Namespace) -> int:
+    """Ask Codex through the shared consultation tool."""
+    try:
+        return ask_tool.run_codex(args)
+    except ask_tool.AuxiliaryCommandError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+
+def command_ask_gemini(args: argparse.Namespace) -> int:
+    """Ask Gemini through the shared consultation tool."""
+    try:
+        return ask_tool.run_gemini(args)
+    except ask_tool.AuxiliaryCommandError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+
 def command_start_rlcr_loop(args: argparse.Namespace) -> int:
     """Create a local RLCR session directory from a plan file."""
     plan = Path(args.plan)
@@ -625,6 +646,21 @@ def build_parser() -> argparse.ArgumentParser:
     refine_mode.add_argument("--discussion", action="store_true")
     refine_mode.add_argument("--direct", action="store_true")
     refine.set_defaults(func=command_refine_plan)
+
+    ask_codex = subparsers.add_parser("ask-codex", help="Ask Codex a one-shot question.")
+    ask_codex.add_argument("--codex-model", default="gpt-5.5")
+    ask_codex.add_argument("--codex-effort", default="high")
+    ask_codex.add_argument("--codex-timeout", type=int, default=3600)
+    ask_codex.add_argument("--bypass-sandbox", action="store_true")
+    ask_codex.add_argument("question", nargs="*")
+    ask_codex.set_defaults(func=command_ask_codex)
+
+    ask_gemini = subparsers.add_parser("ask-gemini", help="Ask Gemini a one-shot research question.")
+    ask_gemini.add_argument("--gemini-model", default="gemini-3.1-pro-preview")
+    ask_gemini.add_argument("--gemini-timeout", type=int, default=3600)
+    ask_gemini.add_argument("--yolo", action="store_true")
+    ask_gemini.add_argument("question", nargs="*")
+    ask_gemini.set_defaults(func=command_ask_gemini)
 
     start = subparsers.add_parser("start-rlcr-loop", help="Create a local RLCR loop session from a plan.")
     start.add_argument("plan")

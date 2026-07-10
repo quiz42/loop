@@ -133,6 +133,25 @@ class TestLoopCli(unittest.TestCase):
         self.assertIn("gen-plan", result.stdout)
         self.assertIn("monitor", result.stdout)
         self.assertIn("refine-plan", result.stdout)
+        self.assertIn("ask-codex", result.stdout)
+        self.assertIn("ask-gemini", result.stdout)
+
+    def test_ask_commands_expose_provider_help(self):
+        cases = [
+            ("ask-codex", "--codex-model"),
+            ("ask-gemini", "--gemini-model"),
+        ]
+        for command, expected_option in cases:
+            with self.subTest(command=command):
+                result = subprocess.run(
+                    ["python3", str(PROJECT_ROOT / "scripts" / "loop.py"), command, "--help"],
+                    cwd=PROJECT_ROOT,
+                    text=True,
+                    capture_output=True,
+                )
+
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(expected_option, result.stdout)
 
     def test_refine_plan_direct_mode_writes_refined_plan_and_qa_ledger(self):
         with tempfile.TemporaryDirectory() as temp:

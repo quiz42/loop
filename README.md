@@ -170,6 +170,8 @@ The loop runs until all tasks are complete and all acceptance criteria are met.
 | `loop gen-idea <description>` | Generate an idea draft from a description |
 | `loop gen-plan --input <draft> --output <plan>` | Convert idea draft to detailed plan |
 | `loop refine-plan --input <plan>` | Refine an annotated plan and write a QA ledger |
+| `loop ask-codex <question>` | Send a one-shot question to Codex |
+| `loop ask-gemini <question>` | Send a one-shot question to Gemini |
 | `loop start-rlcr-loop <plan>` | Start the RLCR implementation loop |
 | `loop monitor` | Show loop status dashboard |
 | `loop cancel-rlcr-loop` | Stop a running loop |
