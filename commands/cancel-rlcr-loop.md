@@ -11,21 +11,23 @@ Cancel a running RLCR loop. The current implementation round is allowed to finis
 Internally runs:
 
 ```
-loop cancel-rlcr-loop [--reason REASON]
+loop cancel-rlcr-loop [--reason REASON] [--force]
 ```
 
 ## Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--reason REASON` | *(none)* | Human-readable explanation for why the loop is being cancelled. Recorded in the loop log and shown in the final status output. |
+| `--reason REASON` | `Cancelled by user request.` | Human-readable explanation shown in the final status output |
+| `--force` | off | Cancel even when the loop is in finalize phase |
 
 ## What It Does
 
-1. Sends a cancellation signal to the running RLCR loop orchestrator.
-2. Waits for the current implementation or review step to complete (no mid-step interruption).
-3. Records the cancellation reason (if provided) in the loop log.
-4. Prints a final status summary showing how many rounds completed and which goals were met before cancellation.
+1. Finds the active loop session under `.loop/rlcr`.
+2. Writes a `.cancel-requested` signal file.
+3. Removes `.loop/.pending-session-id`.
+4. Moves the active state file to `cancel-state.md`.
+5. Prints a final status summary and the cancellation reason.
 
 If no loop is currently running, the command exits immediately with an informational message.
 
@@ -42,15 +44,14 @@ If no loop is currently running, the command exits immediately with an informati
 ## Expected Output
 
 ```
-[loop] Cancellation requested. Waiting for current round to finish...
-[loop] Round 3 complete. Stopping loop.
-[loop] Loop cancelled after 3 rounds.
-[loop] Goals completed: 4 / 7
-[loop] Reason: Changing approach — plan needs to be revised
+CANCELLED
+Cancelled RLCR loop (was at round 3 of 9).
+State preserved as cancel-state.md
+Reason: Changing approach - plan needs to be revised
 ```
 
 If no loop is active:
 
 ```
-[loop] No active RLCR loop found. Nothing to cancel.
+No active RLCR loop found.
 ```

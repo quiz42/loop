@@ -88,7 +88,7 @@ Default values are read from `config/default_config.json`:
 
 | Key | Default | Description |
 |---|---|---|
-| `codex_model` | `gpt-5.5` | Codex model used for review rounds |
+| `codex_model` | `gpt-5.1` | Codex model used for review rounds |
 | `codex_effort` | `high` | Codex reasoning effort level |
 | `bitlesson_model` | `haiku` | Model used for bitlesson generation |
 | `agent_teams` | `false` | Enable multi-agent team mode |

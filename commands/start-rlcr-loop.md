@@ -25,23 +25,24 @@ loop start-rlcr-loop PLAN.md [--codex-model MODEL] [--codex-effort LEVEL] \
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--codex-model MODEL` | `gpt-5.5` | Codex model used by the `code-reviewer` agent for reviewing each round |
-| `--codex-effort LEVEL` | `high` | Effort level passed to the Codex reviewer (`low`, `medium`, `high`) |
+| `--codex-model MODEL` | `gpt-5.1` | Codex model recorded for review rounds |
+| `--codex-effort LEVEL` | `high` | Effort level recorded for Codex review (`low`, `medium`, `high`, `xhigh`) |
 | `--max-iterations N` | `42` | Maximum number of implement→review rounds before the loop is forcibly stopped |
+| `--codex-timeout SECONDS` | `5400` | Review timeout recorded for Codex review rounds |
+| `--base-branch BRANCH` | auto | Local branch used as the review base |
 | `--agent-teams` | off | Enable parallel sub-agent teams so independent plan sections are implemented concurrently |
-| `--track-plan-file` | off | Write goal completion state back into `PLAN.md` after every round (updates checkboxes) |
+| `--track-plan-file` | off | Require the plan file to be tracked and clean before loop setup |
 | `--push-every-round` | off | Push changes to the remote branch at the end of each round |
+| `--skip-impl` | off | Start in review-only mode without a plan file |
+| `--privacy` | off | Disable methodology-analysis phase metadata |
 
 ## What It Does
 
-1. Parses `PLAN.md` to extract goals and acceptance criteria.
-2. Starts the `goal-tracker` and `drift-monitor` agents.
-3. Runs the RLCR loop:
-   - **Implement**: the `implementer` agent writes or modifies code.
-   - **Monitor drift**: the `drift-monitor` checks changes against the plan.
-   - **Review**: the `code-reviewer` (Codex) evaluates the diff and returns `APPROVED`, `NEEDS_REVISION`, or `BLOCKED`.
-   - If `NEEDS_REVISION`, the review report is fed back to the implementer for the next round.
-4. Terminates when the reviewer signals `APPROVED`, the `goal-tracker` signals `ALL_GOALS_MET`, or `--max-iterations` is reached.
+1. Validates that the project is a git repository with a clean working tree.
+2. Validates the plan file and base branch.
+3. Creates `.loop/rlcr/<timestamp>/` with `state.md`, `goal-tracker.md`, `round-0-prompt.md`, `round-0-summary.md`, and `round-0-contract.md`.
+4. Copies the plan into the loop session and writes `.loop/.pending-session-id`.
+5. Records review model, effort, timeout, iteration limit, branch, and plan metadata for the loop hooks.
 
 ## Example Usage
 
@@ -50,7 +51,7 @@ loop start-rlcr-loop PLAN.md [--codex-model MODEL] [--codex-effort LEVEL] \
 /loop:start-rlcr-loop PLAN.md
 
 # Use a specific Codex model with agent teams and auto-push
-/loop:start-rlcr-loop PLAN.md --codex-model gpt-5.5 --codex-effort high \
+/loop:start-rlcr-loop PLAN.md --codex-model gpt-5.1 --codex-effort high \
   --agent-teams --push-every-round
 
 # Cap iterations and track progress in the plan file
@@ -60,15 +61,10 @@ loop start-rlcr-loop PLAN.md [--codex-model MODEL] [--codex-effort LEVEL] \
 ## Expected Output
 
 ```
-[loop] Starting RLCR loop from PLAN.md
-[loop] Goals detected: 7
-[loop] Round 1 — implementing...
-[loop] Round 1 — reviewing (codex/gpt-5.5, effort=high)...
-[loop] Round 1 — review result: NEEDS_REVISION (3 blocking issues)
-[loop] Round 2 — implementing...
-[loop] Round 2 — reviewing...
-[loop] Round 2 — review result: APPROVED
-[loop] All goals met. Loop complete after 2 rounds.
+RLCR loop initialized.
+Loop directory: /path/to/project/.loop/rlcr/2026-07-10_12-00-00
+State file: /path/to/project/.loop/rlcr/2026-07-10_12-00-00/state.md
+Prompt file: /path/to/project/.loop/rlcr/2026-07-10_12-00-00/round-0-prompt.md
 ```
 
-When `--track-plan-file` is set, `PLAN.md` is updated with `[x]` checkboxes as goals are completed.
+When `--track-plan-file` is set, the setup step verifies that `PLAN.md` is tracked by git and has no local modifications before the loop starts.

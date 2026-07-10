@@ -26,6 +26,14 @@ loop = load_module("loop_cli", "scripts/loop.py")
 
 
 class TestLoopCli(unittest.TestCase):
+    def make_repo(self, root: Path) -> None:
+        subprocess.run(["git", "init", "-b", "main"], cwd=root, check=True, capture_output=True, text=True)
+        subprocess.run(["git", "config", "user.email", "dev@example.com"], cwd=root, check=True)
+        subprocess.run(["git", "config", "user.name", "Dev User"], cwd=root, check=True)
+        (root / "README.md").write_text("# Test repo\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=root, check=True)
+        subprocess.run(["git", "commit", "-m", "initial"], cwd=root, check=True, capture_output=True, text=True)
+
     def test_gen_idea_and_gen_plan_write_markdown_files(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -87,18 +95,48 @@ class TestLoopCli(unittest.TestCase):
     def test_start_cancel_and_monitor_rlcr_session(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
+            self.make_repo(root)
             plan = root / "docs" / "plan.md"
             plan.parent.mkdir()
-            plan.write_text("# Plan\n", encoding="utf-8")
+            plan.write_text(
+                "# Plan\n\n"
+                "## Goal\nShip the main CLI RLCR setup path.\n\n"
+                "## Acceptance Criteria\n- AC-1: Creates loop files.\n- AC-2: Preserves review settings.\n\n"
+                "## Steps\nBuild and test the implementation.\n",
+                encoding="utf-8",
+            )
+            subprocess.run(["git", "add", "docs/plan.md"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-m", "add plan"], cwd=root, check=True, capture_output=True, text=True)
 
             start = subprocess.run(
-                ["python3", str(PROJECT_ROOT / "scripts/loop.py"), "start-rlcr-loop", str(plan)],
+                [
+                    "python3",
+                    str(PROJECT_ROOT / "scripts/loop.py"),
+                    "start-rlcr-loop",
+                    str(plan),
+                    "--codex-model",
+                    "gpt-test",
+                    "--codex-effort",
+                    "medium",
+                    "--max-iterations",
+                    "7",
+                ],
                 cwd=root,
                 text=True,
                 capture_output=True,
                 check=True,
             )
-            self.assertIn("Created RLCR session", start.stdout)
+            self.assertIn("RLCR loop initialized.", start.stdout)
+            session_dirs = list((root / ".loop" / "rlcr").glob("*"))
+            self.assertEqual(len(session_dirs), 1)
+            session = session_dirs[0]
+            self.assertTrue((session / "goal-tracker.md").is_file())
+            self.assertTrue((session / "round-0-prompt.md").is_file())
+            self.assertTrue((root / ".loop" / ".pending-session-id").is_file())
+            state = (session / "state.md").read_text(encoding="utf-8")
+            self.assertIn("max_iterations: 7", state)
+            self.assertIn("codex_model: gpt-test", state)
+            self.assertIn("codex_effort: medium", state)
 
             monitor = subprocess.run(
                 ["python3", str(PROJECT_ROOT / "scripts/loop.py"), "monitor", "rlcr", "--once"],
@@ -117,8 +155,10 @@ class TestLoopCli(unittest.TestCase):
                 capture_output=True,
                 check=True,
             )
-            self.assertIn("Cancelled RLCR session", cancel.stdout)
-            self.assertTrue(any((root / ".loop" / "rlcr").glob("*/cancelled-state.md")))
+            self.assertIn("CANCELLED", cancel.stdout)
+            self.assertIn("No longer needed.", cancel.stdout)
+            self.assertTrue((session / "cancel-state.md").is_file())
+            self.assertFalse((session / "state.md").exists())
 
     def test_help_includes_top_level_commands(self):
         result = subprocess.run(

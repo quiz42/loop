@@ -26,6 +26,7 @@ import bitlesson
 import install_tools
 import monitor_common
 import monitor_skill
+import rlcr_loop
 import validate_io
 
 TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(?:[-_].*)?$")
@@ -622,64 +623,50 @@ def command_validate_io(args: argparse.Namespace) -> int:
 
 def command_start_rlcr_loop(args: argparse.Namespace) -> int:
     """Create a local RLCR session directory from a plan file."""
-    plan = Path(args.plan)
-    if not plan.is_file():
-        print(f"Error: plan file not found: {plan}", file=sys.stderr)
+    model = args.codex_model
+    effort = args.codex_effort
+    if ":" in model:
+        model, effort = model.split(":", 1)
+    try:
+        session = rlcr_loop.setup_rlcr_loop(
+            rlcr_loop.RLCRSetupOptions(
+                project_root=project_root(),
+                plan_file=Path(args.plan) if args.plan else None,
+                max_iterations=args.max_iterations,
+                codex_model=model,
+                codex_effort=effort,
+                codex_timeout=args.codex_timeout,
+                push_every_round=args.push_every_round,
+                base_branch=args.base_branch,
+                full_review_round=args.full_review_round,
+                skip_impl=args.skip_impl,
+                ask_codex_question=not args.yolo,
+                agent_teams=args.agent_teams,
+                track_plan_file=args.track_plan_file,
+                methodology_analysis=not args.privacy,
+            )
+        )
+    except (rlcr_loop.RLCRError, OSError, subprocess.CalledProcessError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
         return 1
-    root = project_root()
-    loop_root = root / ".loop" / "rlcr"
-    session_name = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S")
-    session = loop_root / session_name
-    session.mkdir(parents=True, exist_ok=False)
-    state = session / "state.md"
-    state.write_text(
-        dedent(
-            f"""
-            ---
-            status: active
-            plan_file: {plan}
-            started_at: {now_timestamp()}
-            ---
-
-            # RLCR Session
-
-            Plan: {plan}
-            Base branch: {args.base_branch}
-            Max iterations: {args.max_iterations}
-            Full review round: {args.full_review_round}
-            """
-        ).lstrip(),
-        encoding="utf-8",
-    )
-    (session / "loop.log").write_text(f"Started RLCR loop for {plan}\n", encoding="utf-8")
-    print(f"Created RLCR session at {session}")
+    print("RLCR loop initialized.")
+    print(f"Loop directory: {session.loop_dir}")
+    print(f"State file: {session.state_file}")
+    print(f"Prompt file: {session.prompt_file}")
     return 0
 
 
 def command_cancel_rlcr_loop(args: argparse.Namespace) -> int:
     """Mark the newest RLCR session as cancelled."""
-    session = latest_loop_session(Path(args.loop_dir))
-    if session is None:
-        print(f"No session directories found in {args.loop_dir}", file=sys.stderr)
-        return 1
-    cancelled = session.path / "cancelled-state.md"
-    cancelled.write_text(
-        dedent(
-            f"""
-            ---
-            status: cancelled
-            cancelled_at: {now_timestamp()}
-            ---
-
-            # Cancelled
-
-            {args.reason}
-            """
-        ).lstrip(),
-        encoding="utf-8",
-    )
-    print(f"Cancelled RLCR session {session.path.name}")
-    return 0
+    try:
+        code, message = rlcr_loop.cancel_rlcr_loop(project_root(), force=args.force)
+    except (rlcr_loop.RLCRError, OSError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 3
+    if args.reason:
+        message = f"{message}\nReason: {args.reason}"
+    print(message)
+    return code
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -794,15 +781,25 @@ def build_parser() -> argparse.ArgumentParser:
         validate_command.set_defaults(func=command_validate_io, mode=name)
 
     start = subparsers.add_parser("start-rlcr-loop", help="Create a local RLCR loop session from a plan.")
-    start.add_argument("plan")
-    start.add_argument("--base-branch", default="main")
-    start.add_argument("--max-iterations", type=int, default=10)
-    start.add_argument("--full-review-round", type=int, default=5)
+    start.add_argument("plan", nargs="?")
+    start.add_argument("--base-branch", default=None)
+    start.add_argument("--max-iterations", type=int, default=rlcr_loop.DEFAULT_MAX_ITERATIONS)
+    start.add_argument("--codex-model", default=rlcr_loop.DEFAULT_CODEX_MODEL)
+    start.add_argument("--codex-effort", default=rlcr_loop.DEFAULT_CODEX_EFFORT)
+    start.add_argument("--codex-timeout", type=int, default=rlcr_loop.DEFAULT_CODEX_TIMEOUT)
+    start.add_argument("--full-review-round", type=int, default=rlcr_loop.DEFAULT_FULL_REVIEW_ROUND)
+    start.add_argument("--push-every-round", action="store_true")
+    start.add_argument("--agent-teams", action="store_true")
+    start.add_argument("--track-plan-file", action="store_true")
+    start.add_argument("--skip-impl", action="store_true")
+    start.add_argument("--yolo", action="store_true")
+    start.add_argument("--privacy", action="store_true")
     start.set_defaults(func=command_start_rlcr_loop)
 
     cancel = subparsers.add_parser("cancel-rlcr-loop", help="Mark the newest RLCR loop session as cancelled.")
     cancel.add_argument("--loop-dir", default=".loop/rlcr")
     cancel.add_argument("--reason", default="Cancelled by user request.")
+    cancel.add_argument("--force", action="store_true")
     cancel.set_defaults(func=command_cancel_rlcr_loop)
 
     return parser
