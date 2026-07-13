@@ -23,7 +23,7 @@ python3 scripts/loop.py start-rlcr-loop [PLAN.md] [OPTIONS]
 | `--codex-model MODEL` | Codex model for review rounds (default: gpt-5.5) |
 | `--codex-effort high` | Use high reasoning effort for Codex review |
 | `--max-iterations N` | Maximum loop iterations before stopping (default: 42) |
-| `--agent-teams` | Enable multi-agent team mode for parallel execution |
+| `--agent-teams` | Enable multi-agent team mode for parallel execution; requires `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` |
 | `--track-plan-file` | Require the plan file to be tracked and clean before loop setup |
 | `--push-every-round` | Push commits to remote after each completed round |
 
@@ -75,7 +75,7 @@ python3 scripts/loop.py start-rlcr-loop plan.md --codex-effort high --push-every
 
 Start with agent teams and a 10-iteration cap:
 ```
-python3 scripts/loop.py start-rlcr-loop plan.md --agent-teams --max-iterations 10
+CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 python3 scripts/loop.py start-rlcr-loop plan.md --agent-teams --max-iterations 10
 ```
 
 Monitor the loop in real time:
@@ -91,6 +91,6 @@ python3 scripts/loop.py cancel-rlcr-loop --reason "Pivoting plan direction"
 ## Notes
 
 - Defaults are shown in the command option table above.
-- `--agent-teams` is disabled by default; enable for complex plans that benefit from parallel agents.
+- `--agent-teams` is disabled by default and requires `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`; enable for complex plans that benefit from parallel agents.
 - Use `--track-plan-file` when the plan should be treated as a tracked git input.
 - The loop stops automatically when all plan steps pass Codex review or when `--max-iterations` is reached.

@@ -69,6 +69,23 @@ class TestMonitorCommon(unittest.TestCase):
             self.assertEqual(monitor_common.parse_goal_tracker_issue_counts(tracker), (1, 0, 1))
             self.assertEqual(monitor_common.parse_goal_tracker(tracker), (1, 1, 1, 1, 1, 1, "Ship the monitor dashboard"))
 
+    def test_latest_session_falls_back_when_newest_directory_is_deleted(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            older = root / "2026-06-22_10-00-00"
+            newer = root / "2026-06-22_11-00-00"
+            older.mkdir()
+            newer.mkdir()
+            (older / "state.md").write_text("status: active\n", encoding="utf-8")
+            (newer / "state.md").write_text("status: active\n", encoding="utf-8")
+
+            self.assertEqual(monitor_common.find_latest_session(root), newer)
+            for child in newer.iterdir():
+                child.unlink()
+            newer.rmdir()
+
+            self.assertEqual(monitor_common.find_latest_session(root), older)
+
 
 class TestMonitorSkill(unittest.TestCase):
     def test_skill_stats_best_file_and_once_rendering(self):

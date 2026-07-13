@@ -30,7 +30,7 @@ loop start-rlcr-loop PLAN.md [--codex-model MODEL] [--codex-effort LEVEL] \
 | `--max-iterations N` | `42` | Maximum number of implement→review rounds before the loop is forcibly stopped |
 | `--codex-timeout SECONDS` | `5400` | Review timeout recorded for Codex review rounds |
 | `--base-branch BRANCH` | auto | Local branch used as the review base |
-| `--agent-teams` | off | Enable parallel sub-agent teams so independent plan sections are implemented concurrently |
+| `--agent-teams` | off | Enable parallel sub-agent teams for independent plan sections; requires `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` |
 | `--track-plan-file` | off | Require the plan file to be tracked and clean before loop setup |
 | `--push-every-round` | off | Push changes to the remote branch at the end of each round |
 | `--skip-impl` | off | Start in review-only mode without a plan file |
@@ -51,6 +51,7 @@ loop start-rlcr-loop PLAN.md [--codex-model MODEL] [--codex-effort LEVEL] \
 /loop:start-rlcr-loop PLAN.md
 
 # Use a specific Codex model with agent teams and auto-push
+CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 \
 /loop:start-rlcr-loop PLAN.md --codex-model gpt-5.5 --codex-effort high \
   --agent-teams --push-every-round
 

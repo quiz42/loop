@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -93,6 +94,35 @@ class TestRLCRLoopSetup(unittest.TestCase):
             self.assertTrue((session.loop_dir / ".review-phase-started").is_file())
             self.assertIn("Code Review Only", session.prompt_file.read_text(encoding="utf-8"))
 
+    def test_agent_teams_requires_experimental_environment_and_updates_prompt(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.make_repo(root)
+            plan = root / "plan.md"
+            plan.write_text(
+                "# Plan\n\n"
+                "## Goal\nCoordinate team execution.\n\n"
+                "## Acceptance Criteria\n- AC-1: Agent teams are explicitly configured.\n\n"
+                "## Steps\nBuild and test.\n",
+                encoding="utf-8",
+            )
+            subprocess.run(["git", "add", "plan.md"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-m", "add plan"], cwd=root, check=True, capture_output=True, text=True)
+            options = rlcr_loop.RLCRSetupOptions(project_root=root, plan_file=plan, agent_teams=True)
+
+            with mock.patch.dict(os.environ, {"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": ""}, clear=False):
+                with self.assertRaisesRegex(rlcr_loop.RLCRError, "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"):
+                    rlcr_loop.setup_rlcr_loop(options)
+
+            with mock.patch.dict(os.environ, {"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"}, clear=False):
+                session = rlcr_loop.setup_rlcr_loop(options)
+
+            state = rlcr_loop.parse_state(session.state_file)
+            prompt = session.prompt_file.read_text(encoding="utf-8")
+            self.assertEqual(state["agent_teams"], "true")
+            self.assertIn("Agent Teams", prompt)
+            self.assertIn("team lead", prompt.lower())
+
 
 class TestRLCRCancellation(unittest.TestCase):
     def make_loop(self, root: Path, state_name: str = "state.md") -> Path:
@@ -169,6 +199,27 @@ class TestRLCRStopGate(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertIn("BLOCK: round summary is missing", stdout)
             self.assertEqual(stderr, "")
+
+    def test_stop_gate_reports_invalid_json_and_unexpected_decision(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.write_hook(root, 'not-json')
+
+            code, stdout, stderr = rlcr_loop.run_stop_gate(root)
+
+            self.assertEqual(code, 20)
+            self.assertEqual(stdout, "")
+            self.assertIn("non-JSON", stderr)
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.write_hook(root, '{"decision":"maybe"}')
+
+            code, stdout, stderr = rlcr_loop.run_stop_gate(root)
+
+            self.assertEqual(code, 20)
+            self.assertEqual(stdout, "")
+            self.assertIn("Unexpected hook decision", stderr)
 
     def test_shell_wrappers_are_invokable(self):
         with tempfile.TemporaryDirectory() as temp:

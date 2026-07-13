@@ -415,6 +415,15 @@ def render_prompt(options: RLCRSetupOptions, plan_path: Path | None, plan_relati
     ).lstrip()
     if plan_text:
         body += "\n## Plan\n\n" + plan_text + "\n"
+    if options.agent_teams:
+        body += dedent(
+            """
+
+            ## Agent Teams
+
+            Use a team lead to coordinate parallel implementation agents only for independent tasks. The team lead remains responsible for keeping work aligned with the round contract, merging results, and ensuring verification evidence is written before review.
+            """
+        )
     return body
 
 
@@ -430,6 +439,8 @@ def setup_rlcr_loop(options: RLCRSetupOptions) -> RLCRSession:
         raise RLCRError("Full review round must be at least 2.")
     if options.codex_timeout < 1:
         raise RLCRError("Codex timeout must be positive.")
+    if options.agent_teams and os.environ.get("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS") != "1":
+        raise RLCRError("--agent-teams requires CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1.")
     _ensure_git_repository(project_root)
     if find_active_loop(active_loop_base(project_root)) is not None:
         raise RLCRError("An RLCR loop is already active.")
