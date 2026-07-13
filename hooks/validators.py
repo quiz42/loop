@@ -150,6 +150,61 @@ def _block_message(title: str, detail: str) -> str:
     return f"# {title}\n\n{detail}"
 
 
+def _current_git_branch(root: Path) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "--abbrev-ref", "HEAD"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def _validate_active_plan_state(root: Path, payload: Mapping[str, Any]) -> ValidationResult | None:
+    loop_dir = _active_loop(payload)
+    if not loop_dir:
+        return None
+    state_file = loop_common.resolve_active_state_file(loop_dir)
+    if not state_file:
+        return None
+    try:
+        state = loop_common.parse_state_file(state_file, strict=True)
+    except Exception as exc:
+        return ValidationResult.block(
+            _block_message("Plan State Blocked", f"The active loop state is malformed: {exc}")
+        )
+
+    start_branch = state.get("start_branch", "")
+    if start_branch:
+        current_branch = _current_git_branch(root)
+        if current_branch and current_branch != start_branch:
+            return ValidationResult.block(
+                _block_message(
+                    "Plan Branch Blocked",
+                    f"The active loop started on branch '{start_branch}', but the current branch is '{current_branch}'.",
+                )
+            )
+
+    plan_file = state.get("plan_file", "")
+    if not plan_file:
+        return None
+    project_plan = _resolve_input_path(plan_file, root)
+    if not _path_is_inside(project_plan, root) or not project_plan.is_file():
+        return ValidationResult.block(
+            _block_message("Plan File Blocked", "The tracked plan file must exist inside the project workspace.")
+        )
+    backup_plan = loop_dir / "plan.md"
+    if not backup_plan.is_file():
+        return ValidationResult.block(
+            _block_message("Plan Backup Blocked", "The active loop plan backup is missing.")
+        )
+    if project_plan.read_text(encoding="utf-8") != backup_plan.read_text(encoding="utf-8"):
+        return ValidationResult.block(
+            _block_message("Plan File Modified", f"The tracked plan file '{plan_file}' has been modified since the loop started.")
+        )
+    return None
+
+
 def _methodology_file_result(action: str, path: Path, loop_dir: Path, allowed: set[str]) -> ValidationResult | None:
     if not (loop_dir / "methodology-analysis-state.md").is_file():
         return None
@@ -352,11 +407,14 @@ def validate_bash(payload: Mapping[str, Any]) -> ValidationResult:
 
 
 def validate_plan_prompt(payload: Mapping[str, Any]) -> ValidationResult:
-    prompt = str(payload.get("prompt", "") or payload.get("user_prompt", ""))
-    if not prompt:
-        return ValidationResult.allow()
     root = _project_root()
     if not root:
+        return ValidationResult.allow()
+    active_state_result = _validate_active_plan_state(root, payload)
+    if active_state_result is not None:
+        return active_state_result
+    prompt = str(payload.get("prompt", "") or payload.get("user_prompt", ""))
+    if not prompt:
         return ValidationResult.allow()
     plan_patterns = [r"(^|\s)(/tmp/[^\s]+\.md)", r"(^|\s)([^\s]+plan[^\s]*\.md)"]
     candidates: list[Path] = []

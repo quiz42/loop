@@ -53,6 +53,36 @@ class HookValidatorTests(unittest.TestCase):
     def payload(self, tool_name: str, **tool_input: object) -> dict[str, object]:
         return {"tool_name": tool_name, "tool_input": tool_input, "session_id": "sid"}
 
+    def make_git_repo_with_plan(self) -> Path:
+        repo = self.root / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True, capture_output=True, text=True)
+        subprocess.run(["git", "config", "user.email", "dev@example.com"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "Dev User"], cwd=repo, check=True)
+        plans = repo / "plans"
+        plans.mkdir()
+        (plans / "test-plan.md").write_text("# Plan\n\n## Goal\nKeep the plan stable.\n", encoding="utf-8")
+        subprocess.run(["git", "add", "plans/test-plan.md"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-m", "add plan"], cwd=repo, check=True, capture_output=True, text=True)
+
+        loop_dir = repo / ".loop" / "rlcr" / "2026-01-01_00-00-00"
+        loop_dir.mkdir(parents=True)
+        (loop_dir / "plan.md").write_text((plans / "test-plan.md").read_text(encoding="utf-8"), encoding="utf-8")
+        (loop_dir / "state.md").write_text(
+            "---\n"
+            "current_round: 0\n"
+            "max_iterations: 4\n"
+            "plan_file: plans/test-plan.md\n"
+            "plan_tracked: true\n"
+            "start_branch: main\n"
+            "base_branch: main\n"
+            "review_started: false\n"
+            "session_id: sid\n"
+            "---\n",
+            encoding="utf-8",
+        )
+        return repo
+
     def test_write_blocks_state_file(self) -> None:
         result = validators.validate_write(self.payload("Write", file_path=str(self.loop_dir / "state.md"), content="x"))
         self.assertFalse(result.allowed)
@@ -71,6 +101,25 @@ class HookValidatorTests(unittest.TestCase):
         )
         self.assertFalse(result.allowed)
         self.assertIn("round-2-summary.md", result.message)
+
+    def test_finalize_phase_allows_finalize_summary_but_blocks_contract_and_state(self) -> None:
+        (self.loop_dir / "state.md").rename(self.loop_dir / "finalize-state.md")
+
+        summary = validators.validate_write(
+            self.payload("Write", file_path=str(self.loop_dir / "finalize-summary.md"), content="final checks")
+        )
+        contract = validators.validate_write(
+            self.payload("Write", file_path=str(self.loop_dir / "round-2-contract.md"), content="contract")
+        )
+        state = validators.validate_write(
+            self.payload("Write", file_path=str(self.loop_dir / "finalize-state.md"), content="x")
+        )
+
+        self.assertTrue(summary.allowed)
+        self.assertFalse(contract.allowed)
+        self.assertIn("Finalize Contract Blocked", contract.message)
+        self.assertFalse(state.allowed)
+        self.assertIn("State File Blocked", state.message)
 
     def test_edit_blocks_goal_tracker_immutable_change(self) -> None:
         result = validators.validate_edit(
@@ -119,6 +168,41 @@ class HookValidatorTests(unittest.TestCase):
         result = validators.validate_read(self.payload("Read", file_path=str(project_file)))
         self.assertFalse(result.allowed)
         self.assertIn("Methodology Analysis", result.message)
+
+    def test_plan_prompt_blocks_missing_or_external_plan_references(self) -> None:
+        missing = validators.validate_plan_prompt({"prompt": "Start loop with docs/missing-plan.md"})
+        external = validators.validate_plan_prompt({"prompt": "Start loop with /tmp/outside-plan.md"})
+
+        self.assertFalse(missing.allowed)
+        self.assertIn("Plan File Blocked", missing.message)
+        self.assertFalse(external.allowed)
+        self.assertIn("Plan File Blocked", external.message)
+
+    def test_plan_prompt_blocks_malformed_active_state_branch_drift_and_plan_changes(self) -> None:
+        repo = self.make_git_repo_with_plan()
+        os.environ["CLAUDE_PROJECT_DIR"] = str(repo)
+        loop_dir = repo / ".loop" / "rlcr" / "2026-01-01_00-00-00"
+
+        self.assertTrue(validators.validate_plan_prompt({}).allowed)
+
+        state = loop_dir / "state.md"
+        original_state = state.read_text(encoding="utf-8")
+        state.write_text("---\ncurrent_round: 0\nmax_iterations: 4\n---\n", encoding="utf-8")
+        malformed = validators.validate_plan_prompt({})
+        self.assertFalse(malformed.allowed)
+        self.assertIn("malformed", malformed.message.lower())
+
+        state.write_text(original_state, encoding="utf-8")
+        subprocess.run(["git", "checkout", "-b", "feature"], cwd=repo, check=True, capture_output=True, text=True)
+        branch_drift = validators.validate_plan_prompt({})
+        self.assertFalse(branch_drift.allowed)
+        self.assertIn("branch", branch_drift.message.lower())
+
+        subprocess.run(["git", "checkout", "main"], cwd=repo, check=True, capture_output=True, text=True)
+        (repo / "plans" / "test-plan.md").write_text("# Plan\n\nchanged\n", encoding="utf-8")
+        changed_plan = validators.validate_plan_prompt({})
+        self.assertFalse(changed_plan.allowed)
+        self.assertIn("modified", changed_plan.message.lower())
 
     def test_wrapper_delegates_to_python_validator(self) -> None:
         script = ROOT / "hooks" / "loop-write-validator.sh"

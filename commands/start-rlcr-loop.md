@@ -68,4 +68,4 @@ State file: /path/to/project/.loop/rlcr/2026-07-10_12-00-00/state.md
 Prompt file: /path/to/project/.loop/rlcr/2026-07-10_12-00-00/round-0-prompt.md
 ```
 
-When `--track-plan-file` is set, the setup step verifies that `PLAN.md` is tracked by git and has no local modifications before the loop starts.
+When `--track-plan-file` is set, the setup step verifies that `PLAN.md` is tracked by git and has no local modifications before the loop starts. During the loop, plan-file hooks also block prompts when the active state is malformed, the current branch differs from the recorded start branch, the tracked plan has moved outside the workspace, the loop plan backup is missing, or the tracked plan content differs from the backup captured at startup.
