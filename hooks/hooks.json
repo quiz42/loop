@@ -1,5 +1,5 @@
 {
-  "description": "Loop plugin hooks for loop validation and stop handling",
+  "description": "Loop Plugin Hooks - Validation hooks and Stop hooks for /start-rlcr-loop",
   "hooks": {
     "UserPromptSubmit": [
       {
