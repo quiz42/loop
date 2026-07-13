@@ -186,6 +186,7 @@ class TestShellTestAssets(unittest.TestCase):
 
     def test_run_all_tests_includes_shell_regression(self):
         content = (PROJECT_ROOT / "tests" / "run-all-tests.sh").read_text(encoding="utf-8")
+        self.assertIn('python3 -m unittest discover -s tests -p "test_*.py" -v', content)
         self.assertIn("test-template-loader.sh", content)
         self.assertIn("test-loop-escape.sh", content)
         self.assertIn("test-bash-validator-patterns.sh", content)

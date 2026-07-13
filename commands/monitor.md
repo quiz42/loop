@@ -1,6 +1,6 @@
 # Command: /loop:monitor
 
-Display live status information for running loop processes. Supports monitoring the RLCR loop, Codex reviewer activity, and Gemini-based tasks.
+Display live status information for running loop processes. Supports monitoring the RLCR loop, aggregated skill activity, Codex reviewer activity, and Gemini-based tasks.
 
 ## Usage
 
@@ -11,20 +11,21 @@ Display live status information for running loop processes. Supports monitoring 
 Internally runs:
 
 ```
-loop monitor rlcr|codex|gemini [--once]
+loop monitor rlcr|skill|codex|gemini [--once]
 ```
 
 ## Arguments
 
 | Argument | Required | Description |
 |----------|----------|-------------|
-| `TARGET` | Yes | What to monitor. One of: `rlcr`, `codex`, `gemini` |
+| `TARGET` | Yes | What to monitor. One of: `rlcr`, `skill`, `codex`, `gemini` |
 
 ### Targets
 
 | Target | Description |
 |--------|-------------|
 | `rlcr` | Monitor the active RLCR loop: current round, goal completion, drift status, and reviewer signal |
+| `skill` | Monitor aggregated skill invocations across providers, including the newest prompt, output, and cached run log |
 | `codex` | Monitor Codex reviewer activity: current review in progress, model/effort settings, and recent review results |
 | `gemini` | Monitor Gemini-based agent activity and task status |
 
@@ -42,6 +43,8 @@ With `--once`, it prints a single snapshot and returns — useful for scripting 
 
 The `rlcr` target pulls data from the `goal-tracker` (goal completion), the `drift-monitor` (drift severity and history), and the loop orchestrator (current round, reviewer signal).
 
+The `skill` target summarizes all skill invocations under `.loop/skill/`, while `codex` and `gemini` apply the same dashboard with a provider filter.
+
 ## Example Usage
 
 ```
@@ -53,6 +56,10 @@ The `rlcr` target pulls data from the `goal-tracker` (goal completion), the `dri
 
 # Watch Codex reviewer activity
 /loop:monitor codex
+
+# Watch all skill activity
+/loop:monitor skill
+loop monitor skill --once
 
 # Single Gemini status snapshot
 /loop:monitor gemini --once

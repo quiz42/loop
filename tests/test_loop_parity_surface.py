@@ -93,6 +93,37 @@ class TestLoopParitySurface(unittest.TestCase):
         self.assertIn("loop validate gen-plan", content)
         self.assertIn("loop validate refine-plan", content)
 
+    def test_core_upstream_command_docs_are_present(self) -> None:
+        expected = {
+            "gen-idea.md": ("# Command: /loop:gen-idea", "loop gen-idea"),
+            "gen-plan.md": ("# Command: /loop:gen-plan", "loop gen-plan"),
+            "start-rlcr-loop.md": ("# Command: /loop:start-rlcr-loop", "loop start-rlcr-loop", "--track-plan-file"),
+            "cancel-rlcr-loop.md": ("# Command: /loop:cancel-rlcr-loop", "loop cancel-rlcr-loop"),
+            "monitor.md": ("# Command: /loop:monitor", "loop monitor rlcr", "loop monitor skill"),
+        }
+        for filename, required_text in expected.items():
+            with self.subTest(filename=filename):
+                command = PROJECT_ROOT / "commands" / filename
+                self.assertTrue(command.is_file())
+                content = command.read_text(encoding="utf-8")
+                for text in required_text:
+                    self.assertIn(text, content)
+
+    def test_core_upstream_skills_are_present(self) -> None:
+        expected = {
+            "loop/SKILL.md": "name: loop",
+            "loop-gen-plan/SKILL.md": "name: loop-gen-plan",
+            "loop-rlcr/SKILL.md": "name: loop-rlcr",
+            "loop-refine-plan/SKILL.md": "name: loop-refine-plan",
+            "ask-codex/SKILL.md": "name: ask-codex",
+            "ask-gemini/SKILL.md": "name: ask-gemini",
+        }
+        for relative_path, frontmatter in expected.items():
+            with self.subTest(relative_path=relative_path):
+                skill = PROJECT_ROOT / "skills" / relative_path
+                self.assertTrue(skill.is_file())
+                self.assertIn(frontmatter, skill.read_text(encoding="utf-8"))
+
     def test_public_markdown_uses_loop_command_branding(self) -> None:
         offenders: list[str] = []
         for path in public_markdown_files():

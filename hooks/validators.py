@@ -205,6 +205,12 @@ def _validate_active_plan_state(root: Path, payload: Mapping[str, Any]) -> Valid
     return None
 
 
+def _stop_block(result: ValidationResult | None) -> ValidationResult | None:
+    if result is None or result.allowed:
+        return result
+    return ValidationResult.block(result.message, 0)
+
+
 def _methodology_file_result(action: str, path: Path, loop_dir: Path, allowed: set[str]) -> ValidationResult | None:
     if not (loop_dir / "methodology-analysis-state.md").is_file():
         return None
@@ -462,6 +468,10 @@ def stop_hook(payload: Mapping[str, Any]) -> ValidationResult:
     state_file, state = _active_state(loop_dir)
     if not loop_dir or not state_file or not state:
         return ValidationResult.allow()
+
+    plan_state_result = _stop_block(_validate_active_plan_state(root, payload))
+    if plan_state_result is not None:
+        return plan_state_result
 
     if not _git_is_clean(root):
         return ValidationResult.block(_block_message("Loop Blocked", "Uncommitted changes detected; commit or revert them before stopping."), 0)

@@ -59,6 +59,9 @@ class HookValidatorTests(unittest.TestCase):
         subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True, capture_output=True, text=True)
         subprocess.run(["git", "config", "user.email", "dev@example.com"], cwd=repo, check=True)
         subprocess.run(["git", "config", "user.name", "Dev User"], cwd=repo, check=True)
+        (repo / ".gitignore").write_text(".loop/\n", encoding="utf-8")
+        subprocess.run(["git", "add", ".gitignore"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-m", "ignore loop runtime"], cwd=repo, check=True, capture_output=True, text=True)
         plans = repo / "plans"
         plans.mkdir()
         (plans / "test-plan.md").write_text("# Plan\n\n## Goal\nKeep the plan stable.\n", encoding="utf-8")
@@ -203,6 +206,24 @@ class HookValidatorTests(unittest.TestCase):
         changed_plan = validators.validate_plan_prompt({})
         self.assertFalse(changed_plan.allowed)
         self.assertIn("modified", changed_plan.message.lower())
+
+    def test_stop_hook_blocks_tracked_plan_backup_missing_and_content_drift(self) -> None:
+        repo = self.make_git_repo_with_plan()
+        os.environ["CLAUDE_PROJECT_DIR"] = str(repo)
+        loop_dir = repo / ".loop" / "rlcr" / "2026-01-01_00-00-00"
+        (loop_dir / "round-0-summary.md").write_text("ready", encoding="utf-8")
+        (loop_dir / "goal-tracker.md").write_text("## IMMUTABLE SECTION\nGoal\n---\n## MUTABLE SECTION\nCurrent\n", encoding="utf-8")
+
+        backup = loop_dir / "plan.md"
+        backup.unlink()
+        missing_backup = validators.stop_hook({"session_id": "sid"})
+        self.assertFalse(missing_backup.allowed)
+        self.assertIn("backup", missing_backup.message.lower())
+
+        backup.write_text("# Plan\n\nchanged backup\n", encoding="utf-8")
+        drifted_backup = validators.stop_hook({"session_id": "sid"})
+        self.assertFalse(drifted_backup.allowed)
+        self.assertIn("modified", drifted_backup.message.lower())
 
     def test_wrapper_delegates_to_python_validator(self) -> None:
         script = ROOT / "hooks" / "loop-write-validator.sh"
