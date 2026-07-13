@@ -26,43 +26,45 @@ The loop has two phases: **Implementation** (Claude works, Codex reviews summari
 
 ## Install
 
+Loop currently installs locally (Marketplace distribution is not yet available). Clone the repo and start Claude Code with the plugin directory:
+
 ```bash
-# Add FrankDan77 marketplace
-/plugin marketplace add FrankDan77/loop
-# If you want to use development branch for experimental features
-/plugin marketplace add FrankDan77/loop#dev
-# Then install loop plugin
-/plugin install loop@FrankDan77
+git clone https://github.com/FrankDan77/loop.git
+claude --plugin-dir /path/to/loop
 ```
 
-Requires [codex CLI](https://github.com/openai/codex) for review. See the full [Installation Guide](docs/install-for-claude.md) for prerequisites and alternative setup options.
+Requires [codex CLI](https://github.com/openai/codex) for review. See the full [Installation Guide](docs/install-for-claude.md) for prerequisites, and the [Codex](docs/install-for-codex.md) and [Kimi](docs/install-for-kimi.md) guides for other runtimes.
+
+### Command naming
+
+Inside Claude Code the plugin commands use the `/rloop:` prefix (for example `/rloop:gen-plan`) to avoid clashing with the built-in `/loop` command. Outside Claude Code, the standalone CLI is still invoked as `loop` (for example `loop monitor`).
 
 ## Quick Start
 
 1. **Generate an idea draft** from a loose thought (optional — skip if you already have a draft):
    ```bash
-   /loop:gen-idea "add undo/redo to the editor"
+   /rloop:gen-idea "add undo/redo to the editor"
    ```
    Output goes to `.loop/ideas/<slug>-<timestamp>.md` by default. Pass a `.md` path to expand existing rough notes. `--n` controls how many parallel directions explore the idea (default 6).
 
 2. **Generate a plan** from your draft:
    ```bash
-   /loop:gen-plan --input draft.md --output docs/plan.md
+   /rloop:gen-plan --input draft.md --output docs/plan.md
    ```
 
 3. **Refine an annotated plan** before implementation when reviewers add comments (`CMT:` ... `ENDCMT`, `<cmt>` ... `</cmt>`, or `<comment>` ... `</comment>`):
    ```bash
-   /loop:refine-plan --input docs/plan.md
+   /rloop:refine-plan --input docs/plan.md
    ```
 
 4. **Run the loop**:
    ```bash
-   /loop:start-rlcr-loop docs/plan.md
+   /rloop:start-rlcr-loop docs/plan.md
    ```
 
 5. **Consult Gemini** for deep web research (requires Gemini CLI):
    ```bash
-   /loop:ask-gemini What are the latest best practices for X?
+   /rloop:ask-gemini What are the latest best practices for X?
    ```
 
 6. **Monitor progress (in another terminal, not inside Claude Code)**:
@@ -76,9 +78,17 @@ Requires [codex CLI](https://github.com/openai/codex) for review. See the full [
 
 ## Monitor Dashboard
 
-<p align="center">
-  <img src="docs/images/monitor.png" alt="Loop Monitor" width="680"/>
-</p>
+```text
+ Loop RLCR Monitor
+Session Started: 2026-07-13 15:42:07
+Round:    3 / 10 (5) | Model: gpt-5.5 (high)
+Status:   Active(build(2)->review(1)) | Codex Ask Question: Off
+Progress: ACs: 4/7  Tasks: 2 active, 5 done
+Git:      ~3 +1 ?2  +128/-24 lines
+Goal:     Add undo/redo to the editor
+Plan:     docs/plan.md
+Log:      .loop/rlcr/2026-07-13_15-42-07/loop.log
+```
 
 ## Documentation
 
