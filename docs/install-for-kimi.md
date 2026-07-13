@@ -1,83 +1,272 @@
-# Using Kimi as an Alternative Review Model
+# Install Loop for Kimi CLI
 
-loop uses Codex CLI for code review by default. If you prefer Kimi (Moonshot AI) as your review model, this guide explains how to configure it.
+This guide explains how to install the Loop skills for [Kimi Code CLI](https://github.com/MoonshotAI/kimi-cli).
 
-## What is Kimi
+## Overview
 
-Kimi is a large language model by Moonshot AI with strong code understanding capabilities. It can serve as a drop-in alternative to Codex for the review step in the RLCR loop.
+Loop provides four Agent Skills for kimi:
+
+| Skill | Type | Purpose |
+|-------|------|---------|
+| `loop` | Standard | General guidance for all workflows |
+| `loop-gen-plan` | Flow | Generate structured plan from draft |
+| `loop-refine-plan` | Flow | Refine annotated plan with CMT blocks |
+| `loop-rlcr` | Flow | Iterative development with Codex review |
+
+## Installation
+
+### Quick Install (Recommended)
+
+From the Loop repo root, run:
+
+```bash
+./scripts/install-skills-kimi.sh
+```
+
+This command will:
+- Sync `loop`, `loop-gen-plan`, `loop-refine-plan`, and `loop-rlcr` into `~/.config/agents/skills`
+- Copy runtime dependencies into `~/.config/agents/skills/loop`
+
+Common installer script (all targets):
+
+```bash
+./scripts/install-skill.sh --target kimi
+```
+
+### Manual Install
+
+### 1. Clone or navigate to the loop repository
+
+```bash
+cd /path/to/loop
+```
+
+### 2. Copy skills and runtime bundle to kimi's skills directory
+
+```bash
+# Create the skills directory if it doesn't exist
+mkdir -p ~/.config/agents/skills
+
+# Copy all four skills
+cp -r skills/loop ~/.config/agents/skills/
+cp -r skills/loop-gen-plan ~/.config/agents/skills/
+cp -r skills/loop-refine-plan ~/.config/agents/skills/
+cp -r skills/loop-rlcr ~/.config/agents/skills/
+
+# Copy runtime dependencies used by the skills
+# (must match install-skill.sh's install_runtime_bundle)
+cp -r scripts ~/.config/agents/skills/loop/
+cp -r hooks ~/.config/agents/skills/loop/
+cp -r prompt-template ~/.config/agents/skills/loop/
+cp -r templates ~/.config/agents/skills/loop/
+cp -r config ~/.config/agents/skills/loop/
+cp -r agents ~/.config/agents/skills/loop/
+
+# Hydrate runtime root placeholders inside SKILL.md files
+for skill in loop loop-gen-plan loop-refine-plan loop-rlcr; do
+  sed -i.bak "s|{{LOOP_RUNTIME_ROOT}}|$HOME/.config/agents/skills/loop|g" \
+    "$HOME/.config/agents/skills/$skill/SKILL.md"
+done
+
+# Strip user-invocable flag from SKILL.md files for runtime visibility
+# (This matches the behavior of scripts/install-skill.sh)
+for skill in loop loop-gen-plan loop-refine-plan loop-rlcr; do
+  awk '
+    BEGIN { in_fm = 0; fm_done = 0 }
+    /^---[[:space:]]*$/ {
+      if (fm_done == 0) {
+        in_fm = !in_fm
+        if (in_fm == 0) {
+          fm_done = 1
+        }
+      }
+      print
+      next
+    }
+    in_fm && $0 ~ /^user-invocable:[[:space:]]*/ { next }
+    { print }
+  ' "$HOME/.config/agents/skills/$skill/SKILL.md" > "$HOME/.config/agents/skills/$skill/SKILL.md.tmp"
+  mv "$HOME/.config/agents/skills/$skill/SKILL.md.tmp" "$HOME/.config/agents/skills/$skill/SKILL.md"
+done
+```
+
+### 3. Verify installation
+
+```bash
+# List installed skills
+ls -la ~/.config/agents/skills/
+
+# Should show:
+# loop/
+# loop-gen-plan/
+# loop-refine-plan/
+# loop-rlcr/
+```
+
+### 4. Restart kimi (if already running)
+
+Skills are loaded at startup. Restart kimi to pick up the new skills:
+
+```bash
+# Exit current kimi session
+/exit
+
+# Or press Ctrl-D
+
+# Start kimi again
+kimi
+```
+
+## Usage
+
+### List available skills
+
+```bash
+/help
+```
+
+Look for the "Skills" section in the help output.
+
+### Use the skills
+
+#### 1. Generate plan from draft
+
+```bash
+# Start the flow (will ask for input/output paths)
+/flow:loop-gen-plan
+
+# Or load as standard skill
+/skill:loop-gen-plan
+```
+
+#### 2. Start RLCR development loop
+
+```bash
+# Start with plan file
+/flow:loop-rlcr path/to/plan.md
+
+# With options
+/flow:loop-rlcr path/to/plan.md --max 20 --push-every-round
+
+# Skip implementation, go directly to code review
+/flow:loop-rlcr --skip-impl
+
+# Load as standard skill (no auto-execution)
+/skill:loop-rlcr
+```
+
+#### 3. Get general guidance
+
+```bash
+/skill:loop
+```
+
+## Command Options
+
+### RLCR Loop Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `path/to/plan.md` | Plan file path | Required (unless --skip-impl) |
+| `--max N` | Maximum iterations | 42 |
+| `--codex-model MODEL:EFFORT` | Codex model | gpt-5.5:high |
+| `--codex-timeout SECONDS` | Review timeout | 5400 |
+| `--base-branch BRANCH` | Base for code review | auto-detect |
+| `--full-review-round N` | Full alignment check interval | 5 |
+| `--skip-impl` | Skip to code review | false |
+| `--push-every-round` | Push after each round | false |
+
+### Generate Plan Options
+
+| Option | Description | Required |
+|--------|-------------|----------|
+| `--input <path>` | Draft file path | Yes |
+| `--output <path>` | Plan output path | Yes |
 
 ## Prerequisites
 
-- A Moonshot AI API key (https://platform.moonshot.cn)
-- Kimi API access enabled on your account
-
-## Configuration
-
-Kimi support in loop is configured through `config/default_config.json`. Set `bitlesson_model` to `kimi` and point the review model to the Kimi endpoint:
-
-```json
-{
-  "codex_model": "moonshot-v1-8k",
-  "codex_effort": "high",
-  "bitlesson_model": "kimi",
-  "agent_teams": false
-}
-```
-
-Set your Moonshot API key in the environment:
+Ensure you have `codex` CLI installed:
 
 ```bash
-export MOONSHOT_API_KEY="sk-..."
+codex --version
 ```
 
-loop reads `MOONSHOT_API_KEY` when `bitlesson_model` is set to `kimi` and routes review requests to the Moonshot API.
+The skills will use `gpt-5.5` with `high` effort level by default.
 
-## Available Kimi models
+## Uninstall
 
-| Model | Context window | Notes |
-|-------|---------------|-------|
-| `moonshot-v1-8k` | 8 000 tokens | Fast, suitable for most diffs |
-| `moonshot-v1-32k` | 32 000 tokens | Use for large changeset reviews |
-| `moonshot-v1-128k` | 128 000 tokens | Full-repo context |
-
-Set the model name as `codex_model` in the config file.
-
-## Installing the Moonshot Python SDK (optional)
-
-If you are using bitlesson.py with Kimi directly:
+To remove the skills:
 
 ```bash
-pip install moonshot
+rm -rf ~/.config/agents/skills/loop
+rm -rf ~/.config/agents/skills/loop-gen-plan
+rm -rf ~/.config/agents/skills/loop-refine-plan
+rm -rf ~/.config/agents/skills/loop-rlcr
 ```
-
-Then in your Python code:
-
-```python
-import os
-from moonshot import Moonshot
-
-client = Moonshot(api_key=os.environ["MOONSHOT_API_KEY"])
-```
-
-## Switching back to Codex
-
-To revert to the default Codex reviewer, restore the original config values:
-
-```json
-{
-  "codex_model": "gpt-5.5",
-  "codex_effort": "high",
-  "bitlesson_model": "haiku",
-  "agent_teams": false
-}
-```
-
-And ensure `OPENAI_API_KEY` is set in your environment.
 
 ## Troubleshooting
 
-**Authentication errors:** Confirm `MOONSHOT_API_KEY` is exported and matches the key shown in your Moonshot dashboard.
+### Skills not showing up
 
-**Model not found:** Check that the model name matches exactly. Kimi model names are case-sensitive.
+1. Check the skills directory exists:
+   ```bash
+   ls ~/.config/agents/skills/
+   ```
 
-**Slow responses:** Switch to `moonshot-v1-8k` for faster turnaround on small diffs.
+2. Ensure SKILL.md files are present:
+   ```bash
+   cat ~/.config/agents/skills/loop/SKILL.md | head -5
+   ```
+
+3. Restart kimi completely
+
+### Codex not found
+
+The skills expect `codex` to be in your PATH. If using a proxy, ensure `~/.zprofile` is configured:
+
+```bash
+# Add to ~/.zprofile if needed
+export OPENAI_API_KEY="your-api-key"
+# or other proxy settings
+```
+
+### Scripts not found
+
+If skills report missing scripts like `setup-rlcr-loop.sh`, verify:
+
+```bash
+ls -la ~/.config/agents/skills/loop/scripts
+```
+
+### Installer options
+
+The installer supports:
+
+```bash
+./scripts/install-skill.sh --help
+```
+
+Common examples:
+
+```bash
+# Preview only
+./scripts/install-skills-kimi.sh --dry-run
+
+# Custom skills directory
+./scripts/install-skills-kimi.sh --skills-dir /custom/skills/dir
+```
+
+### Output files not found
+
+The skills save output to:
+- Cache: `~/.cache/loop/<project>/<timestamp>/`
+- Loop data: `.loop/rlcr/<timestamp>/`
+
+Ensure these directories are writable.
+
+## See Also
+
+- [Kimi CLI Documentation](https://moonshotai.github.io/kimi-cli/)
+- [Agent Skills Format](https://agentskills.io/)
+- [Install for Codex](./install-for-codex.md)
+- [Loop README](../README.md)

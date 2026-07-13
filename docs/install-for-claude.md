@@ -1,162 +1,80 @@
-# Installing loop for Claude Code
-
-This guide walks through installing the loop plugin in Claude Code.
+# Install Loop for Claude Code
 
 ## Prerequisites
 
-- Claude Code CLI installed and running
-- Codex CLI installed and on your PATH (see [install-for-codex.md](install-for-codex.md))
-- An OpenAI API key set as `OPENAI_API_KEY`
+- [codex](https://github.com/openai/codex) -- OpenAI Codex CLI (for review). Verify with `codex --version`.
+- `jq` -- JSON processor. Verify with `jq --version`.
+- `git` -- Git version control. Verify with `git --version`.
 
-## Installation
+## Option 1: Git Marketplace (Recommended)
 
-### Method 1: Marketplace installation (recommended)
+Start Claude Code and run:
 
-#### Step 1: Add the plugin from the marketplace
+```bash
+# Add the marketplace
+/plugin marketplace add git@github.com:FrankDan77/loop.git
 
-In a Claude Code session, run:
-
-```
-/plugin marketplace add FrankDan77/loop
-```
-
-This fetches the plugin metadata from the marketplace.
-
-#### Step 2: Install the plugin
-
-```
+# Install the plugin
 /plugin install loop@FrankDan77
 ```
 
-Claude Code downloads and registers the plugin. You should see a confirmation message listing the available commands.
+## Option 2: Local Development
 
-#### Step 3: Verify the installation
+If you have the plugin cloned locally:
 
+```bash
+claude --plugin-dir /path/to/loop
 ```
-/monitor
-```
 
-If the plugin is installed correctly, you will see a status message. If Claude Code reports an unknown command, restart your session and try again.
+## Option 3: Try Experimental Features (dev branch)
 
-### Method 2: Local installation from GitHub
-
-#### One-click install
-
-Clone the repository and run the installer:
+The `dev` branch contains experimental features that are not yet released to `main`. To try them locally:
 
 ```bash
 git clone https://github.com/FrankDan77/loop.git
 cd loop
-bash scripts/install-local.sh
+git checkout dev
 ```
 
-The script automatically:
-- Detects your Claude Code plugin directory
-- Creates a symlink to the cloned repository
-- Makes all scripts executable
-- Installs to Codex simultaneously (if Codex is installed)
-
-Restart Claude Code after installation, then verify with `/monitor`.
-
-#### Manual installation
-
-If the automated script doesn't work for your setup:
-
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/FrankDan77/loop.git ~/loop
-   ```
-
-2. Find your Claude Code plugin directory:
-   - Linux/WSL: `~/.claude-code/plugins/` or `~/.config/claude-code/plugins/`
-   - macOS: `~/Library/Application Support/claude-code/plugins/`
-   - Windows: `%APPDATA%\claude-code\plugins\`
-
-3. Create a symlink:
-   ```bash
-   # Linux/macOS
-   ln -s ~/loop ~/.claude-code/plugins/loop
-   
-   # Windows (requires admin privileges)
-   mklink /D "%APPDATA%\claude-code\plugins\loop" "%USERPROFILE%\loop"
-   ```
-
-4. Make scripts executable (Linux/macOS):
-   ```bash
-   chmod +x ~/loop/scripts/*.sh ~/loop/scripts/*.py
-   ```
-
-5. Restart Claude Code and verify with `/monitor`.
-
-#### GitHub install (no clone required)
-
-Install directly from GitHub without cloning:
+Then start Claude Code with the local plugin directory:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/FrankDan77/loop/main/scripts/install-local.sh | bash
+claude --plugin-dir /path/to/loop
 ```
 
-This downloads and runs the installer. Review the script before running if you have security concerns.
+Note: The `dev` branch may contain unstable or incomplete features. For production use, stick with Option 1 (Git Marketplace) which tracks the stable `main` branch.
 
-#### Uninstalling local installations
+## Verify Installation
+
+After installing, you should see Loop commands available:
+
+```
+/loop:start-rlcr-loop
+/loop:gen-plan
+/loop:refine-plan
+/loop:ask-codex
+```
+
+## Monitor Setup (Optional)
+
+Add the monitoring helper to your shell for real-time progress tracking:
 
 ```bash
-cd loop
-bash scripts/uninstall-local.sh
+# Add to your .bashrc or .zshrc
+source ~/.claude/plugins/cache/FrankDan77/loop/<LATEST.VERSION>/scripts/loop.sh
 ```
 
-Or manually remove the symlink:
-```bash
-rm ~/.claude-code/plugins/loop
-```
-
-## Post-installation setup
-
-### Initialize configuration
-
-The plugin ships with a default configuration at `config/default_config.json`. Review it and adjust values for your project before running your first loop:
-
-```json
-{
-  "codex_model": "gpt-5.5",
-  "codex_effort": "high",
-  "bitlesson_model": "haiku",
-  "agent_teams": false
-}
-```
-
-### Initialize the Bitter Lesson workflow (optional)
+Then use:
 
 ```bash
-bash scripts/bitlesson-init.sh
+loop monitor rlcr   # Monitor RLCR loop
 ```
 
-This creates `.loop/bitlesson/lessons.md` and `.loop/bitlesson/state.json` in your project root.
+## Other Install Guides
 
-## Updating the plugin
+- [Install for Codex](install-for-codex.md)
+- [Install for Kimi](install-for-kimi.md)
 
-To update to the latest version, re-run the install command:
+## Next Steps
 
-```
-/plugin install loop@FrankDan77
-```
-
-## Uninstalling
-
-```
-/plugin remove loop
-```
-
-This removes the plugin and its registered commands. Project files under `.loop/` and `config/` are not deleted.
-
-## Troubleshooting
-
-**Commands not found after install:** Close and reopen your Claude Code session.
-
-**Codex errors during the loop:** Verify that `OPENAI_API_KEY` is set in your environment and that `codex` is on your PATH (`which codex`).
-
-**Permission denied on scripts:** Make the scripts executable:
-
-```bash
-chmod +x scripts/bitlesson-init.sh scripts/bitlesson-select.sh scripts/bitlesson-validate-delta.sh
-```
+See the [Usage Guide](usage.md) for detailed command reference and configuration options.

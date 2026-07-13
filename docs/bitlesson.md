@@ -1,127 +1,41 @@
 # Bitter Lesson Workflow
 
-The Bitter Lesson workflow tracks small, concrete lessons learned during iterative development. It is named after Richard Sutton's essay arguing that general methods beat hand-crafted ones over time. The workflow encourages you to record surprises and failures so they inform the next iteration rather than being forgotten.
+BitLesson is the repository's Bitter Lesson-style knowledge capture system for RLCR rounds.
 
-## Files
+## Configuration
 
-| Path | Description |
-|------|-------------|
-| `.loop/bitlesson/lessons.md` | The running log of lesson entries |
-| `.loop/bitlesson/state.json` | Workflow state (current lesson index, last validated delta) |
-| `templates/bitlesson.md` | Blank template to start a new log |
+The selector reads `bitlesson_model` from the merged config hierarchy:
 
-## Scripts
+1. `config/default_config.json`
+2. `~/.config/loop/config.json`
+3. `.loop/config.json`
+4. CLI flags where applicable
 
-| Script | Description |
-|--------|-------------|
-| `scripts/bitlesson-init.sh` | Creates the `.loop/bitlesson/` directory and initial files |
-| `scripts/bitlesson-select.sh` | Interactively selects or filters a lesson from the log |
-| `scripts/bitlesson-validate-delta.sh` | Validates that new entries conform to the expected format |
+Provider routing is automatic:
 
-## Python API
+- `gpt-*`, `o[N]-*` (e.g. `o1-*`, `o3-*`, `o4-*`) route to Codex
+- `claude-*`, `haiku`, `sonnet`, `opus` route to Claude
 
-`bitlesson.py` exposes three functions:
+If the configured provider binary is missing, the selector falls back to the default Codex model so the loop can still proceed.
 
-```python
-from bitlesson import init_workflow, select_lesson, validate_delta
-```
+On Codex-only installs, Loop writes `provider_mode: "codex-only"` into the user config.
+When that mode is present, the selector forces BitLesson selection onto the Codex/OpenAI path
+before provider resolution, even if an older default such as `haiku` would otherwise route to Claude.
 
-### init_workflow(root)
+## Workflow
 
-Initializes the Bitter Lesson workflow at `root`. Creates `.loop/bitlesson/lessons.md` from `templates/bitlesson.md` and writes an empty `state.json`.
+Each project keeps its BitLesson knowledge base at `.loop/bitlesson.md`.
 
-```python
-init_workflow("/path/to/project")
-```
+When `start-rlcr-loop` begins:
 
-### select_lesson(root, query=None)
+1. The file is initialized from `templates/bitlesson.md` if it does not already exist
+2. Each task or sub-task runs through `scripts/bitlesson-select.sh`
+3. The selected lesson IDs are applied during implementation, or `NONE` is recorded when nothing matches
+4. The stop gate validates a required `## BitLesson Delta` section in every round summary
 
-Returns a lesson entry from the log. If `query` is provided, performs a fuzzy search and returns the best match. If `query` is `None`, returns the most recent entry.
+## Summary Contract
 
-```python
-lesson = select_lesson("/path/to/project", query="dependency injection")
-print(lesson)
-```
-
-### validate_delta(root, delta)
-
-Validates `delta` (a string containing one or more new lesson entries) against the expected format. Returns `True` if valid, raises `ValueError` with a descriptive message if not.
-
-```python
-validate_delta("/path/to/project", new_entries_text)
-```
-
-## Getting started
-
-### 1. Initialize the workflow
-
-```bash
-bash scripts/bitlesson-init.sh
-```
-
-This creates `.loop/bitlesson/lessons.md` and `.loop/bitlesson/state.json` in your current directory.
-
-### 2. Add your first lesson
-
-Open `.loop/bitlesson/lessons.md` and add an entry under `## Entries`:
-
-```
-### 2026-06-25: Mocking external HTTP calls in tests
-
-**What happened:** Tests hit the live API and failed in CI due to missing credentials.
-**Why:** No mock was set up for the HTTP client.
-**Lesson:** Always patch external HTTP clients in unit tests using unittest.mock.
-```
-
-### 3. Validate new entries
-
-Before committing, run:
-
-```bash
-bash scripts/bitlesson-validate-delta.sh
-```
-
-The script reads new entries since the last validated state and reports any format errors.
-
-### 4. Select a relevant lesson before starting a loop
-
-Before running `/start-rlcr-loop`, retrieve a relevant past lesson to keep context in mind:
-
-```bash
-bash scripts/bitlesson-select.sh "async error handling"
-```
-
-Or from Python:
-
-```python
-lesson = select_lesson(".", query="async error handling")
-```
-
-## Entry format
-
-Each entry must follow this structure exactly for `validate_delta` to pass:
-
-```
-### YYYY-MM-DD: Short title
-
-**What happened:** ...
-**Why:** ...
-**Lesson:** ...
-```
-
-- The date must be in `YYYY-MM-DD` format.
-- All three fields (`What happened`, `Why`, `Lesson`) are required.
-- Entries are separated by a blank line.
-
-## Integration with the RLCR loop
-
-When `bitlesson_model` is set in `config/default_config.json`, the loop automatically summarizes the Bitter Lesson log at the start of each iteration and injects the most relevant lesson into the review prompt. This helps Codex (or Kimi) avoid known pitfalls from earlier iterations.
-
-To disable this behavior, set `bitlesson_model` to `null` in the config.
-
-## BitLesson Delta in round summaries
-
-Round summaries can include a `## BitLesson Delta` section so the loop can verify whether a reusable lesson was added, updated, or intentionally skipped:
+Required summary shape:
 
 ```markdown
 ## BitLesson Delta
@@ -130,4 +44,8 @@ Round summaries can include a `## BitLesson Delta` section so the loop can verif
 - Notes: <what changed and why>
 ```
 
-The block templates in `prompt-template/block/` explain validation failures for missing delta sections, invalid actions, inconsistent lesson IDs, missing notes, and attempts to use `Action: none` before `.loop/bitlesson/lessons.md` contains any concrete lesson entries.
+Validation rules are strict:
+
+- `Action: none` must use `Lesson ID(s): NONE` or leave the field empty
+- `Action: add` and `Action: update` must reference concrete `BL-YYYYMMDD-short-name` IDs that exist in `.loop/bitlesson.md`
+- `--require-bitlesson-entry-for-none` can be used to block empty knowledge bases from repeatedly reporting `none`
