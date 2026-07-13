@@ -225,6 +225,21 @@ class HookValidatorTests(unittest.TestCase):
         self.assertFalse(drifted_backup.allowed)
         self.assertIn("modified", drifted_backup.message.lower())
 
+    def test_stop_hook_uses_background_marker_fallback_for_mismatched_session(self) -> None:
+        repo = self.make_git_repo_with_plan()
+        os.environ["CLAUDE_PROJECT_DIR"] = str(repo)
+        loop_dir = repo / ".loop" / "rlcr" / "2026-01-01_00-00-00"
+        (loop_dir / "state.md").write_text(
+            "---\ncurrent_round: 0\nmax_iterations: 4\nplan_file: plans/test-plan.md\nplan_tracked: true\nstart_branch: main\nbase_branch: main\nreview_started: false\nsession_id: other\n---\n",
+            encoding="utf-8",
+        )
+        (loop_dir / "bg-pending.marker").write_text("pending", encoding="utf-8")
+
+        result = validators.stop_hook({"session_id": "sid"})
+
+        self.assertFalse(result.allowed)
+        self.assertIn("summary", result.message.lower())
+
     def test_wrapper_delegates_to_python_validator(self) -> None:
         script = ROOT / "hooks" / "loop-write-validator.sh"
         input_json = json.dumps(self.payload("Write", file_path=str(self.loop_dir / "state.md"), content="x"))

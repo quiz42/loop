@@ -99,6 +99,17 @@ class LoopCommonTests(unittest.TestCase):
             newer.joinpath("complete-state.md").write_text("---\nsession_id: sid\ncurrent_round: 2\nmax_iterations: 2\n---\n", encoding="utf-8")
             self.assertIsNone(loop_common.find_active_loop(base, "sid"))
 
+    def test_find_active_loop_can_fallback_to_background_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            fallback = base / "2026-01-03_00-00-00"
+            fallback.mkdir()
+            fallback.joinpath("state.md").write_text("---\nsession_id: other\ncurrent_round: 1\nmax_iterations: 2\nreview_started: false\nbase_branch: main\n---\n", encoding="utf-8")
+            fallback.joinpath("bg-pending.marker").write_text("pending", encoding="utf-8")
+
+            self.assertIsNone(loop_common.find_active_loop(base, "sid"))
+            self.assertEqual(loop_common.find_active_loop(base, "sid", allow_bg_marker_fallback=True), fallback)
+
     def test_loop_runtime_path_detection_uses_loop_directory(self) -> None:
         self.assertTrue(loop_common.is_in_loop_dir("/workspace/.loop/rlcr/2026/state.md"))
         legacy_path = "/workspace/." + "human" + "ize/rlcr/2026/state.md"

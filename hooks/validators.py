@@ -102,7 +102,7 @@ def _active_loop(payload: Mapping[str, Any], env: Mapping[str, str] | None = Non
     if not root:
         return None
     session_id = loop_common.extract_session_id(payload)
-    return loop_common.find_active_loop(root / ".loop" / "rlcr", session_id)
+    return loop_common.find_active_loop(root / ".loop" / "rlcr", session_id, allow_bg_marker_fallback=True)
 
 
 def _active_state(loop_dir: Path | None) -> tuple[Path | None, loop_common.LoopState | None]:
