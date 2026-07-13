@@ -98,7 +98,7 @@ class TestLoopParitySurface(unittest.TestCase):
             "gen-idea.md": ("# Command: /loop:gen-idea", "loop gen-idea"),
             "gen-plan.md": ("# Command: /loop:gen-plan", "loop gen-plan"),
             "start-rlcr-loop.md": ("# Command: /loop:start-rlcr-loop", "loop start-rlcr-loop", "--track-plan-file"),
-            "cancel-rlcr-loop.md": ("# Command: /loop:cancel-rlcr-loop", "loop cancel-rlcr-loop"),
+            "cancel-rlcr-loop.md": ("# Command: /loop:cancel-rlcr-loop", "loop cancel-rlcr-loop", "--loop-dir"),
             "monitor.md": ("# Command: /loop:monitor", "loop monitor rlcr", "loop monitor skill"),
         }
         for filename, required_text in expected.items():

@@ -132,6 +132,24 @@ class TestRLCRCancellation(unittest.TestCase):
         (root / ".loop" / ".pending-session-id").write_text("pending\n", encoding="utf-8")
         return loop_dir
 
+    def test_cancel_active_loop_uses_custom_loop_base_when_provided(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            custom_base = root / "alt" / "rlcr"
+            loop_dir = custom_base / "2026-06-24_05-00-00"
+            loop_dir.mkdir(parents=True)
+            (loop_dir / "state.md").write_text("current_round: 3\nmax_iterations: 9\n", encoding="utf-8")
+            (root / ".loop").mkdir(parents=True)
+            (root / ".loop" / ".pending-session-id").write_text("pending\n", encoding="utf-8")
+
+            code, message = rlcr_loop.cancel_rlcr_loop(root, loop_base=custom_base)
+
+            self.assertEqual(code, 0)
+            self.assertIn("CANCELLED", message)
+            self.assertTrue((loop_dir / "cancel-state.md").is_file())
+            self.assertFalse((loop_dir / "state.md").exists())
+            self.assertFalse((root / ".loop" / ".pending-session-id").exists())
+
     def test_cancel_active_loop_moves_state_and_cleans_pending_signal(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

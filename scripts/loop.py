@@ -751,7 +751,11 @@ def command_start_rlcr_loop(args: argparse.Namespace) -> int:
 def command_cancel_rlcr_loop(args: argparse.Namespace) -> int:
     """Mark the newest RLCR session as cancelled."""
     try:
-        code, message = rlcr_loop.cancel_rlcr_loop(project_root(), force=args.force)
+        root = project_root()
+        loop_base = Path(args.loop_dir)
+        if not loop_base.is_absolute():
+            loop_base = root / loop_base
+        code, message = rlcr_loop.cancel_rlcr_loop(root, force=args.force, loop_base=loop_base)
     except (rlcr_loop.RLCRError, OSError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 3

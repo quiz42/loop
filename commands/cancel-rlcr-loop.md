@@ -11,19 +11,20 @@ Cancel a running RLCR loop. The current implementation round is allowed to finis
 Internally runs:
 
 ```
-loop cancel-rlcr-loop [--reason REASON] [--force]
+loop cancel-rlcr-loop [--loop-dir LOOP_DIR] [--reason REASON] [--force]
 ```
 
 ## Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
+| `--loop-dir LOOP_DIR` | `.loop/rlcr` | RLCR loop directory to inspect for the active session |
 | `--reason REASON` | `Cancelled by user request.` | Human-readable explanation shown in the final status output |
 | `--force` | off | Cancel even when the loop is in finalize phase |
 
 ## What It Does
 
-1. Finds the active loop session under `.loop/rlcr`.
+1. Finds the active loop session under the selected loop directory.
 2. Writes a `.cancel-requested` signal file.
 3. Removes `.loop/.pending-session-id`.
 4. Moves the active state file to `cancel-state.md`.

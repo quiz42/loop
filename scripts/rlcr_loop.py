@@ -487,9 +487,9 @@ def setup_rlcr_loop(options: RLCRSetupOptions) -> RLCRSession:
     return session
 
 
-def cancel_rlcr_loop(project_root: Path, force: bool = False) -> tuple[int, str]:
+def cancel_rlcr_loop(project_root: Path, force: bool = False, loop_base: Path | None = None) -> tuple[int, str]:
     """Cancel the active RLCR loop and return an exit code plus message."""
-    loop_dir = find_active_loop(active_loop_base(project_root))
+    loop_dir = find_active_loop(loop_base or active_loop_base(project_root))
     if loop_dir is None:
         return 0, "No active RLCR loop found."
     state_order = [
