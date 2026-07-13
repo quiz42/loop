@@ -1,58 +1,39 @@
-# Command: /loop:cancel-rlcr-loop
+---
+description: "Cancel active RLCR loop"
+allowed-tools: ["Bash(${CLAUDE_PLUGIN_ROOT}/scripts/cancel-rlcr-loop.sh)", "Bash(${CLAUDE_PLUGIN_ROOT}/scripts/cancel-rlcr-loop.sh --force)", "AskUserQuestion"]
+disable-model-invocation: true
+---
 
-Cancel a running RLCR loop. The current implementation round is allowed to finish cleanly before the loop is stopped, ensuring no partial changes are left in an inconsistent state.
+# Cancel RLCR Loop
 
-## Usage
+To cancel the active loop:
 
-```
-/loop:cancel-rlcr-loop [options]
-```
+1. Run the cancel script:
 
-Internally runs:
-
-```
-loop cancel-rlcr-loop [--loop-dir LOOP_DIR] [--reason REASON] [--force]
-```
-
-## Options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--loop-dir LOOP_DIR` | `.loop/rlcr` | RLCR loop directory to inspect for the active session |
-| `--reason REASON` | `Cancelled by user request.` | Human-readable explanation shown in the final status output |
-| `--force` | off | Cancel even when the loop is in finalize phase |
-
-## What It Does
-
-1. Finds the active loop session under the selected loop directory.
-2. Writes a `.cancel-requested` signal file.
-3. Removes `.loop/.pending-session-id`.
-4. Moves the active state file to `cancel-state.md`.
-5. Prints a final status summary and the cancellation reason.
-
-If no loop is currently running, the command exits immediately with an informational message.
-
-## Example Usage
-
-```
-# Cancel with no reason
-/loop:cancel-rlcr-loop
-
-# Cancel with an explanation
-/loop:cancel-rlcr-loop --reason "Changing approach — plan needs to be revised"
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/cancel-rlcr-loop.sh"
 ```
 
-## Expected Output
+2. Check the first line of output:
+   - **NO_LOOP** or **NO_ACTIVE_LOOP**: Say "No active RLCR loop found."
+   - **CANCELLED**: Report the cancellation message from the output
+   - **CANCELLED_METHODOLOGY_ANALYSIS**: Report the cancellation message from the output
+   - **CANCELLED_FINALIZE**: Report the cancellation message from the output
+   - **FINALIZE_NEEDS_CONFIRM**: The loop is in Finalize Phase. Continue to step 3
 
-```
-CANCELLED
-Cancelled RLCR loop (was at round 3 of 9).
-State preserved as cancel-state.md
-Reason: Changing approach - plan needs to be revised
-```
+3. **If FINALIZE_NEEDS_CONFIRM**:
+   - Use AskUserQuestion to confirm cancellation with these options:
+     - Question: "The loop is currently in Finalize Phase. After this phase completes, the loop will end without returning to Codex review. Are you sure you want to cancel now?"
+     - Header: "Cancel?"
+     - Options:
+       1. Label: "Yes, cancel now", Description: "Cancel the loop immediately, finalize-state.md will be renamed to cancel-state.md"
+       2. Label: "No, let it finish", Description: "Continue with the Finalize Phase, the loop will complete normally"
+   - **If user chooses "Yes, cancel now"**:
+     - Run: `"${CLAUDE_PLUGIN_ROOT}/scripts/cancel-rlcr-loop.sh" --force`
+     - Report the cancellation message from the output
+   - **If user chooses "No, let it finish"**:
+     - Report: "Understood. The Finalize Phase will continue. Once complete, the loop will end normally."
 
-If no loop is active:
+**Key principle**: The script handles all cancellation logic. A loop is active if `state.md` (normal loop), `methodology-analysis-state.md` (Methodology Analysis Phase), or `finalize-state.md` (Finalize Phase) exists in the newest loop directory.
 
-```
-No active RLCR loop found.
-```
+The loop directory with summaries, review results, and state information will be preserved for reference.
