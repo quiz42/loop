@@ -17,9 +17,17 @@ jobs:
           echo "Target branch: $TARGET"
 
           if [ "$TARGET" = "main" ] && [ "$SOURCE" != "dev" ]; then
-            echo "Only the dev branch can target main."
-            echo "Please change the base branch of this PR to dev."
+            echo ""
+            echo "========================================"
+            echo "FAILED: Only 'dev' branch can target 'main'."
+            echo ""
+            echo "Your branch '$SOURCE' must target 'dev' instead."
+            echo "Please change the base branch of this PR to 'dev'."
+            echo "========================================"
             exit 1
           fi
 
-          echo "Branch targeting rule satisfied."
+          echo ""
+          echo "========================================"
+          echo "PASSED: Branch targeting rule satisfied."
+          echo "========================================"

@@ -2,9 +2,9 @@ name: Shell Syntax Check
 
 on:
   push:
-    branches: ["**"]
+    branches: ['**']
   pull_request:
-    branches: ["**"]
+    branches: ['**']
 
 jobs:
   shell-syntax-check:
@@ -13,35 +13,49 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install shell dependencies
+      - name: Install zsh
         run: sudo apt-get update && sudo apt-get install -y zsh
 
-      - name: Find shell scripts
+      - name: Find all shell scripts
         id: find-scripts
         run: |
-          scripts=$(find . -name "*.sh" -type f -not -path "./.git/*" | sort)
-          echo "scripts<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$scripts" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
+          scripts=$(find . -name "*.sh" -type f | sort)
+          echo "Found shell scripts:"
+          echo "$scripts"
+          echo "scripts<<EOF" >> $GITHUB_OUTPUT
+          echo "$scripts" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Check bash syntax
         run: |
+          echo "Checking bash syntax for all .sh files..."
           exit_code=0
           while IFS= read -r script; do
             if [ -n "$script" ]; then
-              echo "Checking bash syntax: $script"
-              bash -n "$script" || exit_code=1
+              echo "Checking: $script"
+              if bash -n "$script"; then
+                echo "  bash: OK"
+              else
+                echo "  bash: FAILED"
+                exit_code=1
+              fi
             fi
           done <<< "${{ steps.find-scripts.outputs.scripts }}"
-          exit "$exit_code"
+          exit $exit_code
 
       - name: Check zsh syntax
         run: |
+          echo "Checking zsh syntax for all .sh files..."
           exit_code=0
           while IFS= read -r script; do
             if [ -n "$script" ]; then
-              echo "Checking zsh syntax: $script"
-              zsh -n "$script" || exit_code=1
+              echo "Checking: $script"
+              if zsh -n "$script"; then
+                echo "  zsh: OK"
+              else
+                echo "  zsh: FAILED"
+                exit_code=1
+              fi
             fi
           done <<< "${{ steps.find-scripts.outputs.scripts }}"
-          exit "$exit_code"
+          exit $exit_code

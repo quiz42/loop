@@ -1,5 +1,5 @@
 {
-  "description": "loop Codex Hooks - Native Stop hooks for RLCR loops",
+  "description": "Loop Codex Hooks - Native Stop hooks for RLCR loops",
   "hooks": {
     "Stop": [
       {
