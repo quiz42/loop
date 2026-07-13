@@ -1167,18 +1167,30 @@ mkdir -p "$CACHE_DIR"
 # portable-timeout.sh already sourced above
 
 # Disable native hooks for nested Codex reviewer calls to prevent Stop-hook recursion.
-# Probe whether the installed Codex CLI supports --disable; cache the result per loop
-# so older builds do not fail with an unknown-argument error.
+# Probe whether the installed Codex CLI supports --disable and which feature name
+# it uses (newer builds renamed `codex_hooks` -> `hooks`); cache the resolved
+# feature name per loop so older builds do not fail with an unknown-argument error.
+# Cache contents: the feature name to disable, or empty when --disable is unsupported.
 CODEX_DISABLE_HOOKS_ARGS=()
-_CODEX_FEATURE_CACHE="$CACHE_DIR/.codex-disable-hooks-supported"
+_CODEX_FEATURE_CACHE="$CACHE_DIR/.codex-disable-hooks-feature"
+_codex_hooks_feature=""
 if [[ -f "$_CODEX_FEATURE_CACHE" ]]; then
-    [[ "$(cat "$_CODEX_FEATURE_CACHE")" == "yes" ]] && CODEX_DISABLE_HOOKS_ARGS=(--disable codex_hooks)
+    _codex_hooks_feature="$(cat "$_CODEX_FEATURE_CACHE" 2>/dev/null || true)"
 elif codex --help 2>&1 | grep -q -- '--disable'; then
-    CODEX_DISABLE_HOOKS_ARGS=(--disable codex_hooks)
-    echo "yes" > "$_CODEX_FEATURE_CACHE" 2>/dev/null
+    _codex_features_list=$(codex features list 2>/dev/null || true)
+    if printf '%s\n' "$_codex_features_list" | grep -qE '^hooks[[:space:]]'; then
+        _codex_hooks_feature="hooks"
+    elif printf '%s\n' "$_codex_features_list" | grep -qE '^codex_hooks[[:space:]]'; then
+        _codex_hooks_feature="codex_hooks"
+    else
+        # --disable exists but feature name unknown; default to modern name.
+        _codex_hooks_feature="hooks"
+    fi
+    echo "$_codex_hooks_feature" > "$_CODEX_FEATURE_CACHE" 2>/dev/null
 else
-    echo "no" > "$_CODEX_FEATURE_CACHE" 2>/dev/null
+    echo "" > "$_CODEX_FEATURE_CACHE" 2>/dev/null
 fi
+[[ -n "$_codex_hooks_feature" ]] && CODEX_DISABLE_HOOKS_ARGS=(--disable "$_codex_hooks_feature")
 
 # Build command arguments for summary review (codex exec)
 CODEX_EXEC_ARGS=("-m" "$CODEX_EXEC_MODEL")

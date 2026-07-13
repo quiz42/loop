@@ -12,6 +12,9 @@ RUNTIME_ROOT="$CODEX_CONFIG_DIR/skills/loop"
 DRY_RUN="false"
 ENABLE_FEATURE="true"
 HOOKS_TEMPLATE="$REPO_ROOT/config/codex-hooks.json"
+# Resolved by detect_codex_hooks_feature(): the Codex feature-flag name for
+# native hooks. Newer Codex (>=0.130.x) renamed `codex_hooks` -> `hooks`.
+CODEX_HOOKS_FEATURE=""
 
 usage() {
     cat <<'EOF'
@@ -23,7 +26,7 @@ Usage:
 Options:
   --codex-config-dir PATH  Codex config dir (default: ${CODEX_HOME:-~/.codex})
   --runtime-root PATH      Installed Loop runtime root (default: <codex-config-dir>/skills/loop)
-  --skip-enable-feature    Do not run `codex features enable codex_hooks`
+  --skip-enable-feature    Do not run `codex features enable <hooks feature>`
   --dry-run                Print actions without writing
   -h, --help               Show help
 EOF
@@ -72,13 +75,30 @@ done
 
 HOOKS_FILE="$CODEX_CONFIG_DIR/hooks.json"
 
+# Detect the Codex feature-flag name for native hooks.
+# Newer Codex builds expose it as `hooks`; older ones as `codex_hooks`.
+# Sets CODEX_HOOKS_FEATURE to the matching name, or leaves it empty when
+# neither is present.
+detect_codex_hooks_feature() {
+    local listing
+    listing=$(codex features list 2>/dev/null || true)
+    if printf '%s\n' "$listing" | grep -qE '^hooks[[:space:]]'; then
+        CODEX_HOOKS_FEATURE="hooks"
+    elif printf '%s\n' "$listing" | grep -qE '^codex_hooks[[:space:]]'; then
+        CODEX_HOOKS_FEATURE="codex_hooks"
+    else
+        CODEX_HOOKS_FEATURE=""
+    fi
+}
+
 require_codex_hooks_support() {
     if ! command -v codex >/dev/null 2>&1; then
-        die "Codex CLI with native hooks support is required. Install Codex 0.114.0+ first."
+        die "Codex CLI with native hooks support is required. Install a recent Codex first."
     fi
 
-    if ! codex features list 2>/dev/null | grep -qE '^codex_hooks[[:space:]]'; then
-        die "Installed Codex CLI does not expose the codex_hooks feature. Loop Codex install requires Codex 0.114.0+."
+    detect_codex_hooks_feature
+    if [[ -z "$CODEX_HOOKS_FEATURE" ]]; then
+        die "Installed Codex CLI does not expose a hooks feature (looked for 'hooks' and 'codex_hooks'). Update Codex to a version with native hooks support."
     fi
 }
 
@@ -177,10 +197,11 @@ enable_feature() {
 
     [[ "$ENABLE_FEATURE" == "true" ]] || return 0
 
-    if CODEX_HOME="$config_dir" codex features enable codex_hooks >/dev/null 2>&1; then
-        log "enabled codex_hooks feature in $config_dir/config.toml"
+    local feature="${CODEX_HOOKS_FEATURE:-hooks}"
+    if CODEX_HOME="$config_dir" codex features enable "$feature" >/dev/null 2>&1; then
+        log "enabled $feature feature in $config_dir/config.toml"
     else
-        die "failed to enable codex_hooks feature automatically in $config_dir/config.toml"
+        die "failed to enable $feature feature automatically in $config_dir/config.toml"
     fi
 }
 
@@ -193,7 +214,7 @@ require_codex_hooks_support
 if [[ "$DRY_RUN" == "true" ]]; then
     log "DRY-RUN merge $HOOKS_TEMPLATE -> $HOOKS_FILE"
     if [[ "$ENABLE_FEATURE" == "true" ]]; then
-        log "DRY-RUN enable codex_hooks feature in $CODEX_CONFIG_DIR/config.toml"
+        log "DRY-RUN enable ${CODEX_HOOKS_FEATURE:-hooks} feature in $CODEX_CONFIG_DIR/config.toml"
     fi
     exit 0
 fi

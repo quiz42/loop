@@ -323,11 +323,11 @@ else
     fail "Codex install rejects builds without native hooks support" "non-zero exit" "exit 0"
 fi
 
-if grep -q "codex_hooks feature" "$TEST_DIR/install-unsupported.log"; then
-    pass "Unsupported Codex failure explains missing codex_hooks feature"
+if grep -q "hooks feature" "$TEST_DIR/install-unsupported.log"; then
+    pass "Unsupported Codex failure explains missing hooks feature"
 else
-    fail "Unsupported Codex failure explains missing codex_hooks feature" \
-        "error mentioning codex_hooks feature" \
+    fail "Unsupported Codex failure explains missing hooks feature" \
+        "error mentioning hooks feature" \
         "$(cat "$TEST_DIR/install-unsupported.log")"
 fi
 
