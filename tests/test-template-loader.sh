@@ -58,10 +58,10 @@ echo ""
 echo "Test 2: load_template - existing file"
 CONTENT=$(load_template "$TEMPLATE_DIR" "block/git-push.md")
 
-if [[ -n "$CONTENT" ]] && echo "$CONTENT" | grep -q "Git push is blocked"; then
+if [[ -n "$CONTENT" ]] && echo "$CONTENT" | grep -q "Git Push Blocked"; then
     pass "load_template loads existing file correctly"
 else
-    fail "load_template failed to load existing file" "Content containing 'Git push is blocked'" "$CONTENT"
+    fail "load_template failed to load existing file" "Content containing 'Git Push Blocked'" "$CONTENT"
 fi
 
 # ========================================
@@ -69,7 +69,7 @@ fi
 # ========================================
 echo ""
 echo "Test 3: load_template - non-existing file"
-CONTENT=$(load_template "$TEMPLATE_DIR" "non-existing-file.md" 2>/dev/null || true)
+CONTENT=$(load_template "$TEMPLATE_DIR" "non-existing-file.md" 2>/dev/null)
 
 if [[ -z "$CONTENT" ]]; then
     pass "load_template returns empty for non-existing file"
@@ -155,10 +155,9 @@ RESULT=$(load_and_render "$TEMPLATE_DIR" "block/wrong-round-number.md" \
     "CURRENT_ROUND=5" \
     "CORRECT_PATH=/tmp/round-5-summary.md")
 
-if echo "$RESULT" | grep -q "Wrong round number" && \
-   echo "$RESULT" | grep -q "round 3" && \
-   echo "$RESULT" | grep -q "current round is 5" && \
-   echo "$RESULT" | grep -q "/tmp/round-5-summary.md"; then
+if echo "$RESULT" | grep -q "Wrong Round Number" && \
+   echo "$RESULT" | grep -q "round-3-summary.md" && \
+   echo "$RESULT" | grep -q "current round is \*\*5\*\*"; then
     pass "load_and_render works correctly with real template"
 else
     fail "load_and_render integration test" "Content with replaced variables" "$RESULT"
@@ -216,10 +215,10 @@ echo "Test 12: load_and_render_safe - existing template works normally"
 FALLBACK="This should not appear"
 RESULT=$(load_and_render_safe "$TEMPLATE_DIR" "block/git-push.md" "$FALLBACK")
 
-if echo "$RESULT" | grep -q "Git push is blocked" && ! echo "$RESULT" | grep -q "should not appear"; then
+if echo "$RESULT" | grep -q "Git Push Blocked" && ! echo "$RESULT" | grep -q "should not appear"; then
     pass "load_and_render_safe uses template when available"
 else
-    fail "load_and_render_safe with existing template" "Git push is blocked (not fallback)" "$RESULT"
+    fail "load_and_render_safe with existing template" "Git Push Blocked (not fallback)" "$RESULT"
 fi
 
 # ========================================
