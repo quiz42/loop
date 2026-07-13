@@ -43,7 +43,7 @@ _loop_monitor_skill() {
     # Check if .loop/skill exists
     if [[ ! -d "$skill_dir" ]]; then
         echo "Error: $skill_dir directory not found in current directory"
-        echo "Run /loop:ask-codex or /loop:ask-gemini first to create skill invocations"
+        echo "Run /rloop:ask-codex or /rloop:ask-gemini first to create skill invocations"
         return 1
     fi
 

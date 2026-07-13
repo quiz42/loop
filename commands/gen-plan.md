@@ -25,7 +25,7 @@ Permitted writes (before any optional auto-start) are limited to:
 - The plan output file (`--output`)
 - Optional translated language variant (only when `ALT_PLAN_LANGUAGE` is configured)
 
-If `--auto-start-rlcr-if-converged` is enabled, the command MAY immediately start the RLCR loop by running `/loop:start-rlcr-loop <output-plan-path>`, but only in `discussion` mode when `PLAN_CONVERGENCE_STATUS=converged` and there are no pending user decisions. All coding happens in that subsequent command/loop, not during plan generation.
+If `--auto-start-rlcr-if-converged` is enabled, the command MAY immediately start the RLCR loop by running `/rloop:start-rlcr-loop <output-plan-path>`, but only in `discussion` mode when `PLAN_CONVERGENCE_STATUS=converged` and there are no pending user decisions. All coding happens in that subsequent command/loop, not during plan generation.
 
 This command transforms a user's draft document into a well-structured implementation plan with clear goals, acceptance criteria (AC-X format), path boundaries, and feasibility suggestions.
 
@@ -55,7 +55,7 @@ Parse `$ARGUMENTS` and set:
 - `GEN_PLAN_MODE_DIRECT=true` if `--direct` is present
 - If both `--discussion` and `--direct` are present simultaneously, report error "Cannot use --discussion and --direct together" and stop
 
-`AUTO_START_RLCR_IF_CONVERGED=true` allows skipping manual plan review and starting implementation immediately (by invoking `/loop:start-rlcr-loop <output-plan-path>`), but only when `GEN_PLAN_MODE=discussion`, plan convergence is achieved, and no pending user decisions remain. In `direct` mode this condition is never satisfied.
+`AUTO_START_RLCR_IF_CONVERGED=true` allows skipping manual plan review and starting implementation immediately (by invoking `/rloop:start-rlcr-loop <output-plan-path>`), but only when `GEN_PLAN_MODE=discussion`, plan convergence is achieved, and no pending user decisions remain. In `direct` mode this condition is never satisfied.
 
 ---
 
@@ -448,7 +448,7 @@ Example: "The implementation includes core feature X with basic validation"
 
 Each task must include exactly one routing tag:
 - `coding`: implemented by Claude
-- `analyze`: executed via Codex (`/loop:ask-codex`)
+- `analyze`: executed via Codex (`/rloop:ask-codex`)
 
 | Task ID | Description | Target AC | Tag (`coding`/`analyze`) | Depends On |
 |---------|-------------|-----------|----------------------------|------------|
@@ -602,7 +602,7 @@ If all of the following are true:
 Then start work immediately by running:
 
 ```bash
-/loop:start-rlcr-loop --skip-quiz <output-plan-path>
+/rloop:start-rlcr-loop --skip-quiz <output-plan-path>
 ```
 
 The `--skip-quiz` flag is passed because the user has already demonstrated understanding of the plan through the gen-plan convergence discussion.
@@ -616,7 +616,7 @@ If the command invocation is not available in this context, fall back to the set
 If the auto-start attempt fails, report the failure reason and provide the exact manual command for the user to run:
 
 ```bash
-/loop:start-rlcr-loop <output-plan-path>
+/rloop:start-rlcr-loop <output-plan-path>
 ```
 
 ### Step 6: Report Results
@@ -640,7 +640,7 @@ If issues arise during plan generation that require user input:
 
 If auto-start mode is enabled but convergence conditions are not met:
 - Explain why direct start was skipped
-- Tell the user to either resolve pending decisions or run `/loop:start-rlcr-loop <plan.md>` manually
+- Tell the user to either resolve pending decisions or run `/rloop:start-rlcr-loop <plan.md>` manually
 
 If unable to generate a complete plan:
 - Explain what information is missing

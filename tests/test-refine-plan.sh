@@ -831,7 +831,7 @@ else
     fail "install-skill.sh includes loop-refine-plan in SKILL_NAMES" '"loop-refine-plan"' "missing from SKILL_NAMES"
 fi
 
-assert_file_contains "$CLAUDE_INSTALL_DOC" "/loop:refine-plan" "install-for-claude.md mentions refine-plan command"
+assert_file_contains "$CLAUDE_INSTALL_DOC" "/rloop:refine-plan" "install-for-claude.md mentions refine-plan command"
 assert_file_contains "$CODEX_INSTALL_DOC" "loop-refine-plan" "install-for-codex.md mentions loop-refine-plan skill"
 assert_file_contains "$KIMI_INSTALL_DOC" "loop-refine-plan" "install-for-kimi.md mentions loop-refine-plan skill"
 

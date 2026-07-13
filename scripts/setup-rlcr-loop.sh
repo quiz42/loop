@@ -93,7 +93,7 @@ show_help() {
 start-rlcr-loop - Iterative development with Codex review
 
 USAGE:
-  /loop:start-rlcr-loop <path/to/plan.md> [OPTIONS]
+  /rloop:start-rlcr-loop <path/to/plan.md> [OPTIONS]
 
 ARGUMENTS:
   <path/to/plan.md>    Path to a markdown file containing the implementation plan
@@ -150,7 +150,7 @@ DESCRIPTION:
   The flow:
   1. Claude executes plan tasks with tag-based routing (Implementation Phase)
      - \`coding\` tasks: Claude implements directly
-     - \`analyze\` tasks: Claude delegates execution via \`/loop:ask-codex\`
+     - \`analyze\` tasks: Claude delegates execution via \`/rloop:ask-codex\`
   2. Claude writes a summary to round-N-summary.md
   3. On exit attempt, Codex reviews the summary
   4. If Codex finds issues, it blocks exit and sends feedback
@@ -160,15 +160,15 @@ DESCRIPTION:
   8. When no issues found, enters Finalize Phase and loop ends
 
 EXAMPLES:
-  /loop:start-rlcr-loop docs/feature-plan.md
-  /loop:start-rlcr-loop docs/impl.md --max 20
-  /loop:start-rlcr-loop plan.md --codex-model ${DEFAULT_CODEX_MODEL}:${DEFAULT_CODEX_EFFORT}
-  /loop:start-rlcr-loop plan.md --codex-timeout 7200  # 2 hour timeout
-  /loop:start-rlcr-loop plan.md --yolo              # skip quiz, full automation
-  /loop:start-rlcr-loop plan.md --skip-quiz          # skip quiz only
+  /rloop:start-rlcr-loop docs/feature-plan.md
+  /rloop:start-rlcr-loop docs/impl.md --max 20
+  /rloop:start-rlcr-loop plan.md --codex-model ${DEFAULT_CODEX_MODEL}:${DEFAULT_CODEX_EFFORT}
+  /rloop:start-rlcr-loop plan.md --codex-timeout 7200  # 2 hour timeout
+  /rloop:start-rlcr-loop plan.md --yolo              # skip quiz, full automation
+  /rloop:start-rlcr-loop plan.md --skip-quiz          # skip quiz only
 
 STOPPING:
-  - /loop:cancel-rlcr-loop   Cancel the active loop
+  - /rloop:cancel-rlcr-loop   Cancel the active loop
   - Reach --max iterations
   - Pass code review (no [P0-9] issues) after COMPLETE
 
@@ -374,7 +374,7 @@ if [[ -n "$RLCR_LOOP_DIR" ]]; then
     echo "  Active loop: $RLCR_LOOP_DIR" >&2
     echo "" >&2
     echo "Only one loop can be active at a time." >&2
-    echo "Cancel the RLCR loop first with: /loop:cancel-rlcr-loop" >&2
+    echo "Cancel the RLCR loop first with: /rloop:cancel-rlcr-loop" >&2
     exit 1
 fi
 
@@ -419,9 +419,9 @@ if [[ -z "$PLAN_FILE" ]]; then
     else
         echo "Error: No plan file provided" >&2
         echo "" >&2
-        echo "Usage: /loop:start-rlcr-loop <path/to/plan.md> [OPTIONS]" >&2
+        echo "Usage: /rloop:start-rlcr-loop <path/to/plan.md> [OPTIONS]" >&2
         echo "" >&2
-        echo "For help: /loop:start-rlcr-loop --help" >&2
+        echo "For help: /rloop:start-rlcr-loop --help" >&2
         exit 1
     fi
 fi
@@ -1337,7 +1337,7 @@ Rules:
 Each task must have one routing tag from the plan: \`coding\` or \`analyze\`.
 
 - Tag \`coding\`: Claude executes the task directly.
-- Tag \`analyze\`: Claude must execute via \`/loop:ask-codex\`, then integrate Codex output.
+- Tag \`analyze\`: Claude must execute via \`/rloop:ask-codex\`, then integrate Codex output.
 - Keep Goal Tracker "Active Tasks" columns **Tag** and **Owner** aligned with execution (\`coding -> claude\`, \`analyze -> codex\`).
 - If a task has no explicit tag, default to \`coding\` (Claude executes directly).
 
@@ -1468,7 +1468,7 @@ The loop will:
 2. If issues are found ([P0-9] markers), you'll need to fix them
 3. When no issues remain, enters Finalize Phase and loop ends
 
-To cancel: /loop:cancel-rlcr-loop
+To cancel: /rloop:cancel-rlcr-loop
 
 ---
 
@@ -1497,7 +1497,7 @@ The loop is now active. When you try to exit:
 4. Code review checks for [P0-9] issues; if found, you fix them
 5. When no issues found, enters Finalize Phase and loop ends
 
-To cancel: /loop:cancel-rlcr-loop
+To cancel: /rloop:cancel-rlcr-loop
 
 ---
 

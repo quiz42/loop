@@ -6,27 +6,18 @@
 - `jq` -- JSON processor. Verify with `jq --version`.
 - `git` -- Git version control. Verify with `git --version`.
 
-## Option 1: Git Marketplace (Recommended)
+## Option 1: Local Install (Recommended)
 
-Start Claude Code and run:
-
-```bash
-# Add the marketplace
-/plugin marketplace add git@github.com:FrankDan77/loop.git
-
-# Install the plugin
-/plugin install loop@FrankDan77
-```
-
-## Option 2: Local Development
-
-If you have the plugin cloned locally:
+Clone the repo and start Claude Code with the plugin directory:
 
 ```bash
+git clone https://github.com/FrankDan77/loop.git
 claude --plugin-dir /path/to/loop
 ```
 
-## Option 3: Try Experimental Features (dev branch)
+Marketplace distribution is not yet available; use the local install for now.
+
+## Option 2: Try Experimental Features (dev branch)
 
 The `dev` branch contains experimental features that are not yet released to `main`. To try them locally:
 
@@ -42,17 +33,17 @@ Then start Claude Code with the local plugin directory:
 claude --plugin-dir /path/to/loop
 ```
 
-Note: The `dev` branch may contain unstable or incomplete features. For production use, stick with Option 1 (Git Marketplace) which tracks the stable `main` branch.
+Note: The `dev` branch may contain unstable or incomplete features. For production use, stick with the stable `main` branch.
 
 ## Verify Installation
 
 After installing, you should see Loop commands available:
 
 ```
-/loop:start-rlcr-loop
-/loop:gen-plan
-/loop:refine-plan
-/loop:ask-codex
+/rloop:start-rlcr-loop
+/rloop:gen-plan
+/rloop:refine-plan
+/rloop:ask-codex
 ```
 
 ## Monitor Setup (Optional)
@@ -61,7 +52,7 @@ Add the monitoring helper to your shell for real-time progress tracking:
 
 ```bash
 # Add to your .bashrc or .zshrc
-source ~/.claude/plugins/cache/FrankDan77/loop/<LATEST.VERSION>/scripts/loop.sh
+source /path/to/loop/scripts/loop.sh
 ```
 
 Then use:

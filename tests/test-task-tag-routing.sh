@@ -102,7 +102,7 @@ else
     fail "round-0 prompt includes task tag routing section" "routing section present" "missing"
 fi
 
-if [[ -n "$PROMPT_FILE" ]] && grep -q "/loop:ask-codex" "$PROMPT_FILE"; then
+if [[ -n "$PROMPT_FILE" ]] && grep -q "/rloop:ask-codex" "$PROMPT_FILE"; then
     pass "round-0 prompt includes ask-codex routing for analyze tasks"
 else
     fail "round-0 prompt includes ask-codex routing for analyze tasks" "ask-codex instruction" "missing"
@@ -230,7 +230,7 @@ else
     fail "stop hook follow-up prompt includes task tag routing reminder" "routing reminder section" "missing"
 fi
 
-if [[ -f "$NEXT_PROMPT" ]] && grep -q "/loop:ask-codex" "$NEXT_PROMPT"; then
+if [[ -f "$NEXT_PROMPT" ]] && grep -q "/rloop:ask-codex" "$NEXT_PROMPT"; then
     pass "stop hook follow-up prompt includes ask-codex instruction for analyze tasks"
 else
     fail "stop hook follow-up prompt includes ask-codex instruction for analyze tasks" "ask-codex instruction in round-1 prompt" "missing"

@@ -228,7 +228,7 @@ if [[ -z "$PLAN_TRACKED" || -z "$START_BRANCH" ]]; then
 This indicates the loop was started with an older version of loop.
 
 **Options:**
-1. Cancel the loop: \`/loop:cancel-rlcr-loop\`
+1. Cancel the loop: \`/rloop:cancel-rlcr-loop\`
 2. Update loop plugin to version 1.1.2+
 3. Restart the RLCR loop with the updated plugin"
     jq -n --arg reason "$REASON" --arg msg "Loop: Blocked - state schema outdated" \
@@ -247,7 +247,7 @@ if [[ -z "$REVIEW_STARTED" || ( "$REVIEW_STARTED" != "true" && "$REVIEW_STARTED"
 This indicates the loop was started with an older version of loop (pre-1.5.0).
 
 **Options:**
-1. Cancel the loop: \`/loop:cancel-rlcr-loop\`
+1. Cancel the loop: \`/rloop:cancel-rlcr-loop\`
 2. Update loop plugin to version 1.5.0+
 3. Restart the RLCR loop with the updated plugin"
     jq -n --arg reason "$REASON" --arg msg "Loop: Blocked - state schema outdated (missing review_started)" \
@@ -261,7 +261,7 @@ if [[ -z "$BASE_BRANCH" ]]; then
 This indicates the loop was started with an older version of loop (pre-1.5.0).
 
 **Options:**
-1. Cancel the loop: \`/loop:cancel-rlcr-loop\`
+1. Cancel the loop: \`/rloop:cancel-rlcr-loop\`
 2. Update loop plugin to version 1.5.0+
 3. Restart the RLCR loop with the updated plugin"
     jq -n --arg reason "$REASON" --arg msg "Loop: Blocked - state schema outdated (missing base_branch)" \
@@ -383,9 +383,9 @@ The plan file \`$PLAN_FILE\` has been modified since the RLCR loop started.
 **Modifying plan files is forbidden during an active RLCR loop.**
 
 If you need to change the plan:
-1. Cancel the current loop: \`/loop:cancel-rlcr-loop\`
+1. Cancel the current loop: \`/rloop:cancel-rlcr-loop\`
 2. Update the plan file
-3. Start a new loop: \`/loop:start-rlcr-loop $PLAN_FILE\`
+3. Start a new loop: \`/rloop:start-rlcr-loop $PLAN_FILE\`
 
 Backup available at: \`$BACKUP_PLAN\`"
     REASON=$(load_and_render_safe "$TEMPLATE_DIR" "block/plan-file-modified.md" "$FALLBACK" \
@@ -1413,7 +1413,7 @@ append_task_tag_routing_note() {
 
 Follow the plan's per-task routing tags strictly:
 - `coding` task -> Claude executes directly
-- `analyze` task -> execute via `/loop:ask-codex`, then integrate the result
+- `analyze` task -> execute via `/rloop:ask-codex`, then integrate the result
 - Keep Goal Tracker Active Tasks columns `Tag` and `Owner` aligned with execution
 ROUTING_EOF
 }
@@ -1627,7 +1627,7 @@ Steps to retry:
 2. Write your summary to the expected file
 3. Attempt to exit again
 
-If this error persists, consider canceling and restarting the loop: \`/loop:cancel-rlcr-loop\`
+If this error persists, consider canceling and restarting the loop: \`/rloop:cancel-rlcr-loop\`
 
 ## Debug Information
 
@@ -1931,7 +1931,7 @@ This can happen if the state file was manually edited.
 **To fix:**
 Reset the state by canceling and restarting the loop.
 
-Use \`/loop:cancel-rlcr-loop\` to end this loop."
+Use \`/rloop:cancel-rlcr-loop\` to end this loop."
         jq -n --arg reason "$REASON" --arg msg "Loop: Blocked - invalid review phase state" \
             '{"decision": "block", "reason": $reason, "systemMessage": $msg}'
         exit 0

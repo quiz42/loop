@@ -44,15 +44,15 @@ The quiz is advisory, not a gate. You always have the option to proceed. But tha
 
 1. Generate the initial implementation plan:
    ```bash
-   /loop:gen-plan --input draft.md --output docs/plan.md
+   /rloop:gen-plan --input draft.md --output docs/plan.md
    ```
 2. If the plan is reviewed with comment annotations, refine it and generate a QA ledger:
    ```bash
-   /loop:refine-plan --input docs/plan.md
+   /rloop:refine-plan --input docs/plan.md
    ```
 3. Start the RLCR loop on the refined plan:
    ```bash
-   /loop:start-rlcr-loop docs/plan.md
+   /rloop:start-rlcr-loop docs/plan.md
    ```
 
 ## Commands
@@ -70,7 +70,7 @@ The quiz is advisory, not a gate. You always have the option to proceed. But tha
 ### start-rlcr-loop
 
 ```
-/loop:start-rlcr-loop [path/to/plan.md | --plan-file path/to/plan.md] [OPTIONS]
+/rloop:start-rlcr-loop [path/to/plan.md | --plan-file path/to/plan.md] [OPTIONS]
 
 OPTIONS:
   --plan-file <path>     Explicit plan file path (alternative to positional arg)
@@ -102,7 +102,7 @@ OPTIONS:
 ### gen-plan
 
 ```
-/loop:gen-plan --input <path/to/draft.md> --output <path/to/plan.md> [OPTIONS]
+/rloop:gen-plan --input <path/to/draft.md> --output <path/to/plan.md> [OPTIONS]
 
 OPTIONS:
   --input   Path to the input draft file (required)
@@ -123,15 +123,15 @@ Workflow:
 3. Analyzes draft for clarity, consistency, completeness, and functionality
 4. Engages user to resolve any issues found
 5. Generates a structured plan.md with acceptance criteria
-6. Optionally starts `/loop:start-rlcr-loop` if `--auto-start-rlcr-if-converged` conditions are met
+6. Optionally starts `/rloop:start-rlcr-loop` if `--auto-start-rlcr-if-converged` conditions are met
 
 If reviewers later annotate the generated plan with comment blocks, run
-`/loop:refine-plan --input <plan.md>` before starting or resuming implementation.
+`/rloop:refine-plan --input <plan.md>` before starting or resuming implementation.
 
 ### refine-plan
 
 ```
-/loop:refine-plan --input <path/to/annotated-plan.md> [OPTIONS]
+/rloop:refine-plan --input <path/to/annotated-plan.md> [OPTIONS]
 
 OPTIONS:
   --input <path>        Path to the annotated plan file (required)
@@ -156,13 +156,13 @@ how each comment was handled.
 
 ```bash
 # Refine a plan in place and write QA output to the default directory
-/loop:refine-plan --input docs/plan.md
+/rloop:refine-plan --input docs/plan.md
 
 # Write the refined plan to a new file and store QA output in a custom directory
-/loop:refine-plan --input docs/plan.annotated.md --output docs/plan.refined.md --qa-dir docs/plan-qa
+/rloop:refine-plan --input docs/plan.annotated.md --output docs/plan.refined.md --qa-dir docs/plan-qa
 
 # Run in direct mode and generate translated variants
-/loop:refine-plan --input docs/plan.md --direct --alt-language zh
+/rloop:refine-plan --input docs/plan.md --direct --alt-language zh
 ```
 
 **Annotated comment block format:**
@@ -236,7 +236,7 @@ translated plan and QA variants by inserting `_<code>` before the file extension
 ### ask-codex
 
 ```
-/loop:ask-codex [OPTIONS] <question or task>
+/rloop:ask-codex [OPTIONS] <question or task>
 
 OPTIONS:
   --codex-model <MODEL:EFFORT>
@@ -324,7 +324,7 @@ Progress data is stored in `.loop/rlcr/<timestamp>/` for each loop session.
 
 ## Cancellation
 
-- **RLCR loop**: `/loop:cancel-rlcr-loop`
+- **RLCR loop**: `/rloop:cancel-rlcr-loop`
 
 ## Environment Variables
 

@@ -70,7 +70,7 @@ Example: "The implementation includes core feature X with basic validation"
 
 Each task must include exactly one routing tag:
 - `coding`: implemented by Claude
-- `analyze`: executed via Codex (`/loop:ask-codex`)
+- `analyze`: executed via Codex (`/rloop:ask-codex`)
 
 | Task ID | Description | Target AC | Tag (`coding`/`analyze`) | Depends On |
 |---------|-------------|-----------|----------------------------|------------|

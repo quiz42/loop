@@ -51,7 +51,7 @@ show_help() {
 ask-gemini - One-shot deep-research consultation with Gemini
 
 USAGE:
-  /loop:ask-gemini [OPTIONS] <question or task>
+  /rloop:ask-gemini [OPTIONS] <question or task>
 
 OPTIONS:
   --gemini-model <MODEL>
@@ -69,9 +69,9 @@ DESCRIPTION:
   The response is saved to .loop/skill/<unique-id>/output.md for reference.
 
 EXAMPLES:
-  /loop:ask-gemini What are the latest best practices for Rust error handling?
-  /loop:ask-gemini --gemini-model gemini-2.5-pro Review recent CVEs for OpenSSL 3.x
-  /loop:ask-gemini --gemini-timeout 600 Compare React Server Components vs Astro Islands
+  /rloop:ask-gemini What are the latest best practices for Rust error handling?
+  /rloop:ask-gemini --gemini-model gemini-2.5-pro Review recent CVEs for OpenSSL 3.x
+  /rloop:ask-gemini --gemini-timeout 600 Compare React Server Components vs Astro Islands
 
 ENVIRONMENT:
   LOOP_GEMINI_YOLO
@@ -146,16 +146,16 @@ if ! command -v gemini &>/dev/null; then
     echo "Error: 'gemini' command is not installed or not in PATH" >&2
     echo "" >&2
     echo "Please install Gemini CLI: npm install -g @google/gemini-cli  or  https://github.com/google-gemini/gemini-cli" >&2
-    echo "Then retry: /loop:ask-gemini <your question>" >&2
+    echo "Then retry: /rloop:ask-gemini <your question>" >&2
     exit 1
 fi
 
 if [[ -z "$QUESTION" ]]; then
     echo "Error: No question or task provided" >&2
     echo "" >&2
-    echo "Usage: /loop:ask-gemini [OPTIONS] <question or task>" >&2
+    echo "Usage: /rloop:ask-gemini [OPTIONS] <question or task>" >&2
     echo "" >&2
-    echo "For help: /loop:ask-gemini --help" >&2
+    echo "For help: /rloop:ask-gemini --help" >&2
     exit 1
 fi
 
@@ -295,7 +295,7 @@ if [[ $GEMINI_EXIT_CODE -eq 124 ]]; then
     echo "Error: Gemini timed out after ${GEMINI_TIMEOUT} seconds" >&2
     echo "" >&2
     echo "Try increasing the timeout:" >&2
-    echo "  /loop:ask-gemini --gemini-timeout $((GEMINI_TIMEOUT * 2)) <your question>" >&2
+    echo "  /rloop:ask-gemini --gemini-timeout $((GEMINI_TIMEOUT * 2)) <your question>" >&2
     echo "" >&2
     echo "Debug logs: $CACHE_DIR" >&2
 

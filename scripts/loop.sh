@@ -272,7 +272,7 @@ _loop_monitor_codex() {
     # Check if .loop/rlcr exists
     if [[ ! -d "$loop_dir" ]]; then
         echo "Error: $loop_dir directory not found in current directory"
-        echo "Are you in a project with an active loop loop?"
+        echo "Are you in a project with an active RLCR loop?"
         return 1
     fi
 
@@ -508,7 +508,7 @@ _loop_monitor_codex() {
 
         # Move to top and draw directly (no pre-clearing to avoid flicker)
         tput cup 0 0
-        printf "${bg}${bold}%-${term_width}s${reset}${clr_eol}\n" " Loop Loop Monitor"
+        printf "${bg}${bold}%-${term_width}s${reset}${clr_eol}\n" " Loop RLCR Monitor"
         printf "${cyan}Session Started:${reset} %s${clr_eol}\n" "$start_display"
         # Format full_review_round display (show in parentheses if available)
         local full_review_display=""
@@ -802,7 +802,7 @@ _loop_monitor_codex() {
     # Check if we have a valid session directory
     if [[ -z "$current_session_dir" ]]; then
         echo "No session directories found in $loop_dir"
-        echo "Start an RLCR loop first with /loop:start-rlcr-loop"
+        echo "Start an RLCR loop first with /rloop:start-rlcr-loop"
         return 1
     fi
 

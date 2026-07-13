@@ -1446,7 +1446,7 @@ git_tracked_loop_blocked_message() {
 
 Detected tracked or staged files under \`.loop/\`.
 
-These files are local Loop loop state and must remain outside version control.
+These files are local Loop state and must remain outside version control.
 
 ## Required Fix
 

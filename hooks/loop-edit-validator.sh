@@ -57,7 +57,7 @@ fi
 # ========================================
 # During methodology analysis, only methodology artifacts can be edited.
 # This prevents source code modifications after Codex has signed off.
-# This check MUST come before the loop loop dir early exit below.
+# This check MUST come before the loop state dir early exit below.
 
 PROJECT_ROOT="${PROJECT_ROOT:-$(resolve_project_root 2>/dev/null || true)}"
 [[ -z "$PROJECT_ROOT" ]] && exit 0

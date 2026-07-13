@@ -18,7 +18,7 @@ Read and execute below with ultrathink.
 
 This command MUST NOT implement features, modify source code, or create commits while producing the draft. Permitted writes are limited to the single output draft file produced in Phase 4; prerequisite directory creation for the default `.loop/ideas/` path by the validation script is permitted as part of that write. All exploration subagents run read-only.
 
-This command transforms a loose idea into a repo-grounded draft suitable as input to `/loop:gen-plan`. It applies directed-diversity exploration: a lead picks N orthogonal directions, N parallel `Explore` subagents develop each, the lead synthesizes a draft with one primary direction plus N-1 alternatives. Each direction carries objective evidence from the repo.
+This command transforms a loose idea into a repo-grounded draft suitable as input to `/rloop:gen-plan`. It applies directed-diversity exploration: a lead picks N orthogonal directions, N parallel `Explore` subagents develop each, the lead synthesizes a draft with one primary direction plus N-1 alternatives. Each direction carries objective evidence from the repo.
 
 ## Workflow Overview
 
@@ -196,7 +196,7 @@ Report to the user:
 - Path written (`OUTPUT_FILE`).
 - Primary direction name.
 - Requested `N` and the actual direction count (note if reduced due to degradation).
-- Next-step hint: `To turn this draft into a plan, run: /loop:gen-plan --input <OUTPUT_FILE> --output <plan-path>`.
+- Next-step hint: `To turn this draft into a plan, run: /rloop:gen-plan --input <OUTPUT_FILE> --output <plan-path>`.
 
 ---
 

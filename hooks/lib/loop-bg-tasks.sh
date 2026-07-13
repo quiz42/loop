@@ -360,7 +360,7 @@ handle_bg_task_short_circuit() {
                && [[ -n "$hook_session_id" ]] \
                && [[ "$guard_stored_sid" != "$hook_session_id" ]]; then
                 jq -n \
-                    '{systemMessage: "RLCR loop in this repo is parked by another Claude session waiting for background work. Stop allowed; your session leaves the loop untouched. If that session ended, run /loop:cancel-rlcr-loop to clean up."}'
+                    '{systemMessage: "RLCR loop in this repo is parked by another Claude session waiting for background work. Stop allowed; your session leaves the loop untouched. If that session ended, run /rloop:cancel-rlcr-loop to clean up."}'
                 exit 0
             fi
         fi
