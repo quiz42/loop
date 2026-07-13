@@ -379,7 +379,11 @@ find_active_loop() {
         fi
 
         local stored_session_id
-        stored_session_id=$(sed -n '/^---$/,/^---$/{ /^'"${FIELD_SESSION_ID}"':/{ s/'"${FIELD_SESSION_ID}"': *//; p; } }' "$any_state" 2>/dev/null | tr -d ' ')
+        # NOTE: extract via frontmatter-body + grep rather than a nested sed
+        # block ({ /re/{ s//; p } }). BSD/macOS sed rejects that one-liner with
+        # "extra characters at the end of } command" and exits non-zero, which
+        # under `set -euo pipefail` silently kills the hook.
+        stored_session_id=$(sed -n '/^---$/,/^---$/{ /^---$/d; p; }' "$any_state" 2>/dev/null | grep "^${FIELD_SESSION_ID}:" | sed "s/^${FIELD_SESSION_ID}: *//" | tr -d ' ' || true)
 
         # Empty stored session_id matches any session (backward compat).
         if [[ -z "$stored_session_id" ]] || [[ "$stored_session_id" == "$filter_session_id" ]]; then
