@@ -145,15 +145,15 @@ Edit `config/default_config.json` to customize model settings, effort levels, an
 loop gen-idea "Build a CLI tool for managing TODO lists with SQLite backend"
 ```
 
-This creates an idea draft with project overview, goals, and constraints.
+This creates an idea draft under `.loop/ideas/` with project overview, directed exploration slots, goals, and constraints.
 
 ### 4. Create a plan
 
 ```bash
-loop gen-plan --input draft.md --output docs/plan.md
+loop gen-plan --input .loop/ideas/idea-build-a-cli-tool-for-managing-todo-lists-with-sqlite-backend.md --output docs/plan.md
 ```
 
-This generates a detailed implementation plan with milestones, tasks, and acceptance criteria.
+This generates a detailed implementation plan with path boundaries, task routing, pending decisions, and acceptance criteria.
 
 ### 5. Start the RLCR loop
 

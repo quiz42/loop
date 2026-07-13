@@ -20,7 +20,7 @@ python3 scripts/loop.py start-rlcr-loop [PLAN.md] [OPTIONS]
 | Option | Description |
 |---|---|
 | `PLAN.md` | Plan file to execute; required unless `--skip-impl` is used |
-| `--codex-model MODEL` | Codex model for review rounds (default: gpt-5.1) |
+| `--codex-model MODEL` | Codex model for review rounds (default: gpt-5.5) |
 | `--codex-effort high` | Use high reasoning effort for Codex review |
 | `--max-iterations N` | Maximum loop iterations before stopping (default: 42) |
 | `--agent-teams` | Enable multi-agent team mode for parallel execution |

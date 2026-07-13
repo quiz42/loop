@@ -29,7 +29,7 @@ loop gen-plan [--input IDEA.md] [--output PLAN.md] [--title TITLE]
 ## What It Does
 
 1. Reads the idea document (`--input`).
-2. Expands it into a full implementation plan with goals, tasks, acceptance criteria, and constraints.
+2. Expands it into a full implementation plan with goal description, acceptance criteria, path boundaries, task routing, deliberation summary, and verification commands.
 3. Writes the result to `--output` (default `PLAN.md`).
 
 The generated `PLAN.md` is consumed directly by `/loop:start-rlcr-loop`.
@@ -39,35 +39,43 @@ The generated `PLAN.md` is consumed directly by `/loop:start-rlcr-loop`.
 Every generated plan follows this structure:
 
 ```markdown
-# <Title>
+# <Title> Implementation Plan
 
-## Overview
-Brief description of what will be built and why.
+## Source Idea
+Original idea content used as the planning input.
 
-## Goals
-- [ ] Goal 1 — short statement of a verifiable outcome
-- [ ] Goal 2
-- ...
-
-## Tasks
-Ordered list of implementation tasks that collectively satisfy the goals.
-
-1. Task description (maps to one or more goals)
-2. ...
+## Goal Description
+Clear, direct description of what needs to be accomplished.
 
 ## Acceptance Criteria
-Explicit, testable conditions that must be true for the plan to be considered complete.
+Each criterion includes positive and negative tests for deterministic verification.
 
-- Criterion 1
-- Criterion 2
+## Path Boundaries
+Upper bound, lower bound, and allowed choices for implementation scope.
 
-## Constraints
-Any technical, architectural, or process constraints that must be respected.
+## Feasibility Hints and Suggestions
+Conceptual implementation path and relevant repository references.
 
-- Constraint 1
+## Dependencies and Sequence
+Milestones and dependency order.
 
-## Out of Scope
-What is explicitly not part of this plan.
+## Implementation Steps
+Ordered local work sequence.
+
+## Task Breakdown
+Task table with `coding` or `analyze` routing tags.
+
+## Claude-Codex Deliberation
+Agreement and convergence summary.
+
+## Pending User Decisions
+Explicit decisions that need owner input, or `None`.
+
+## Implementation Notes
+Code style and workflow notes for implementers.
+
+## Verification
+Commands that prove the implementation works.
 ```
 
 ## Example Usage
@@ -86,7 +94,5 @@ What is explicitly not part of this plan.
 ## Expected Output
 
 ```
-[loop] Reading idea from IDEA.md...
-[loop] Generating implementation plan...
-[loop] Plan written to PLAN.md (7 goals, 12 tasks, 5 acceptance criteria)
+Wrote implementation plan to PLAN.md
 ```

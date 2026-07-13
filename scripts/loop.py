@@ -256,10 +256,23 @@ def default_qa_path(input_path: Path, qa_dir: Path) -> Path:
     return qa_dir / f"{input_path.stem}-qa.md"
 
 
-def render_idea(description: str, title: str | None = None) -> str:
+def render_idea(description: str, title: str | None = None, directions: int = 6) -> str:
     """Render a structured idea draft from a short description."""
     clean_description = " ".join(description.strip().split())
     idea_title = title or clean_description[:80].rstrip(".") or "loop idea"
+    direction_lines: list[str] = []
+    direction_count = max(1, directions)
+    for index in range(1, direction_count + 1):
+        label = "Primary" if index == 1 else f"Alt-{index - 1}"
+        direction_lines.extend(
+            [
+                f"### {label}: Repo-Grounded Path {index}",
+                "",
+                "- Rationale: Explore a distinct implementation angle against the current repository context.",
+                "- Objective Evidence: To be filled during planning with concrete files, patterns, and risks.",
+                "",
+            ]
+        )
     return dedent(
         f"""
         # {idea_title}
@@ -273,6 +286,12 @@ def render_idea(description: str, title: str | None = None) -> str:
         ## Target Outcome
 
         Define a focused change that can be reviewed through the RLCR workflow and verified with clear acceptance criteria.
+
+        ## Directed Exploration
+
+        - Requested directions: {direction_count}
+
+        {chr(10).join(direction_lines).rstrip()}
 
         ## Users
 
@@ -323,16 +342,62 @@ def render_plan(idea_markdown: str, title: str | None = None) -> str:
 
         {idea_markdown.strip()}
 
-        ## Goal
+        ## Goal Description
 
         Deliver the requested change in small, reviewable increments while preserving existing behavior.
 
-        ## Scope
+        ## Acceptance Criteria
+
+        Following TDD philosophy, each criterion includes positive and negative tests for deterministic verification.
+
+        - AC-1: The command or feature behaves as described by the idea.
+          - Positive Tests: The primary success path produces the expected output.
+          - Negative Tests: Invalid or incomplete input is rejected with a clear error.
+        - AC-2: Local tests cover the primary behavior and at least one failure path.
+          - Positive Tests: Focused tests pass for the changed behavior.
+          - Negative Tests: Regression tests fail when required output or validation is missing.
+        - AC-3: Documentation or command help explains how to use the new behavior.
+          - Positive Tests: Public docs and help mention the new command or option.
+          - Negative Tests: Public docs do not contain legacy branding or stale command names.
+
+        ## Path Boundaries
+
+        ### Upper Bound (Maximum Acceptable Scope)
+
+        The implementation fully satisfies the documented behavior, updates tests and docs, and preserves existing compatible workflows.
+
+        ### Lower Bound (Minimum Acceptable Scope)
+
+        The implementation completes the smallest behavior that satisfies all acceptance criteria without unrelated refactoring.
+
+        ### Allowed Choices
+
+        - Can use: existing project helpers, command patterns, and standard library modules.
+        - Cannot use: unrelated rewrites, unreviewed generated code, or public legacy branding.
+
+        ## Feasibility Hints and Suggestions
+
+        ### Conceptual Approach
 
         - Confirm the current project structure and affected entry points.
         - Implement the smallest complete change that satisfies the acceptance criteria.
         - Add or update local tests for the changed behavior.
         - Run the documented verification command before considering the work complete.
+
+        ### Relevant References
+
+        - `scripts/loop.py` - main CLI entry point.
+        - `tests/` - local verification suite.
+        - `commands/` and `skills/` - public command documentation.
+
+        ## Dependencies and Sequence
+
+        ### Milestones
+
+        1. Inspect the current behavior and define the smallest implementation path.
+        2. Add tests that describe the desired behavior.
+        3. Implement the behavior and update documentation.
+        4. Run focused and full verification.
 
         ## Implementation Steps
 
@@ -342,11 +407,35 @@ def render_plan(idea_markdown: str, title: str | None = None) -> str:
         4. Run the test suite and fix regressions before review.
         5. Summarize the completed behavior and verification result.
 
-        ## Acceptance Criteria
+        ## Task Breakdown
 
-        - AC-1: The command or feature behaves as described by the idea.
-        - AC-2: Local tests cover the primary behavior and at least one failure path.
-        - AC-3: Documentation or command help explains how to use the new behavior.
+        | Task ID | Description | Target AC | Tag (`coding`/`analyze`) | Depends On |
+        |---------|-------------|-----------|----------------------------|------------|
+        | task1 | Inspect affected code and command docs | AC-1 | coding | - |
+        | task2 | Add or update tests for the target behavior | AC-2 | coding | task1 |
+        | task3 | Implement the smallest complete change | AC-1 | coding | task2 |
+        | task4 | Update public docs and run verification | AC-3 | coding | task3 |
+
+        ## Claude-Codex Deliberation
+
+        ### Agreements
+        - The plan should stay scoped to the requested behavior and use existing project patterns.
+
+        ### Resolved Disagreements
+        - None recorded during deterministic local generation.
+
+        ### Convergence Status
+        - Final Status: `partially_converged`
+
+        ## Pending User Decisions
+
+        - None.
+
+        ## Implementation Notes
+
+        ### Code Style Requirements
+        - Implementation code and comments must not contain plan-specific workflow markers unless the feature explicitly requires them.
+        - Use descriptive, domain-appropriate names in code.
 
         ## Verification
 
@@ -467,8 +556,11 @@ def command_gen_idea(args: argparse.Namespace) -> int:
     if not description:
         print("Error: gen-idea requires a description", file=sys.stderr)
         return 2
-    content = render_idea(description, args.title)
-    output = Path(args.output) if args.output else Path("docs") / f"idea-{slugify(args.title or description)}.md"
+    if args.n < 1:
+        print("Error: --n must be greater than or equal to 1", file=sys.stderr)
+        return 2
+    content = render_idea(description, args.title, args.n)
+    output = Path(args.output) if args.output else Path(".loop") / "ideas" / f"idea-{slugify(args.title or description)}.md"
     try:
         write_text(output, content, args.force)
     except OSError as exc:
@@ -698,6 +790,7 @@ def build_parser() -> argparse.ArgumentParser:
     idea = subparsers.add_parser("gen-idea", help="Generate a structured idea draft.")
     idea.add_argument("description", nargs="*", help="Idea description text.")
     idea.add_argument("--title", default=None)
+    idea.add_argument("--n", type=int, default=6)
     idea.add_argument("--output", "-o", default=None)
     idea.add_argument("--force", action="store_true")
     idea.set_defaults(func=command_gen_idea)

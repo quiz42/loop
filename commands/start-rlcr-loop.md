@@ -25,7 +25,7 @@ loop start-rlcr-loop PLAN.md [--codex-model MODEL] [--codex-effort LEVEL] \
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--codex-model MODEL` | `gpt-5.1` | Codex model recorded for review rounds |
+| `--codex-model MODEL` | `gpt-5.5` | Codex model recorded for review rounds |
 | `--codex-effort LEVEL` | `high` | Effort level recorded for Codex review (`low`, `medium`, `high`, `xhigh`) |
 | `--max-iterations N` | `42` | Maximum number of implement→review rounds before the loop is forcibly stopped |
 | `--codex-timeout SECONDS` | `5400` | Review timeout recorded for Codex review rounds |
@@ -51,7 +51,7 @@ loop start-rlcr-loop PLAN.md [--codex-model MODEL] [--codex-effort LEVEL] \
 /loop:start-rlcr-loop PLAN.md
 
 # Use a specific Codex model with agent teams and auto-push
-/loop:start-rlcr-loop PLAN.md --codex-model gpt-5.1 --codex-effort high \
+/loop:start-rlcr-loop PLAN.md --codex-model gpt-5.5 --codex-effort high \
   --agent-teams --push-every-round
 
 # Cap iterations and track progress in the plan file

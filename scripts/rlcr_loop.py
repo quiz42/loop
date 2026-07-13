@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from textwrap import dedent
 
-DEFAULT_CODEX_MODEL = "gpt-5.1"
+DEFAULT_CODEX_MODEL = "gpt-5.5"
 DEFAULT_CODEX_EFFORT = "high"
 DEFAULT_CODEX_TIMEOUT = 5400
 DEFAULT_MAX_ITERATIONS = 42

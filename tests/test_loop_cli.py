@@ -48,7 +48,41 @@ class TestLoopCli(unittest.TestCase):
             self.assertIn("# Add a monitor dashboard", idea_file.read_text(encoding="utf-8"))
             plan = plan_file.read_text(encoding="utf-8")
             self.assertIn("Implementation Plan", plan)
+            self.assertIn("## Goal Description", plan)
+            self.assertIn("## Path Boundaries", plan)
+            self.assertIn("## Task Breakdown", plan)
+            self.assertIn("## Claude-Codex Deliberation", plan)
+            self.assertIn("## Pending User Decisions", plan)
             self.assertIn("python3 -m unittest discover -s tests", plan)
+
+    def test_gen_idea_defaults_to_loop_ideas_and_records_requested_directions(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(PROJECT_ROOT / "scripts" / "loop.py"),
+                    "gen-idea",
+                    "Improve",
+                    "the",
+                    "planning",
+                    "workflow",
+                    "--n",
+                    "3",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+
+            self.assertIn(".loop/ideas/", result.stdout)
+            idea_files = list((root / ".loop" / "ideas").glob("*.md"))
+            self.assertEqual(len(idea_files), 1)
+            content = idea_files[0].read_text(encoding="utf-8")
+            self.assertIn("## Directed Exploration", content)
+            self.assertIn("- Requested directions: 3", content)
+            self.assertIn("### Alt-2:", content)
 
     def test_gen_idea_protects_existing_files_without_force(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -159,6 +193,52 @@ class TestLoopCli(unittest.TestCase):
             self.assertIn("No longer needed.", cancel.stdout)
             self.assertTrue((session / "cancel-state.md").is_file())
             self.assertFalse((session / "state.md").exists())
+
+    def test_start_rlcr_loop_rejects_dirty_tree_and_untracked_plan_file(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.make_repo(root)
+            tracked_plan = root / "plan.md"
+            tracked_plan.write_text(
+                "# Plan\n\n## Goal\nKeep setup safe.\n\n## Acceptance Criteria\n- AC-1: Reject unsafe starts.\n\n## Steps\nValidate.\n",
+                encoding="utf-8",
+            )
+            subprocess.run(["git", "add", "plan.md"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-m", "add plan"], cwd=root, check=True, capture_output=True, text=True)
+            (root / "dirty.txt").write_text("dirty", encoding="utf-8")
+
+            dirty = subprocess.run(
+                ["python3", str(PROJECT_ROOT / "scripts" / "loop.py"), "start-rlcr-loop", str(tracked_plan)],
+                cwd=root,
+                text=True,
+                capture_output=True,
+            )
+            self.assertNotEqual(dirty.returncode, 0)
+            self.assertIn("Git working tree is not clean", dirty.stderr)
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.make_repo(root)
+            untracked_plan = root / "plan.md"
+            untracked_plan.write_text(
+                "# Plan\n\n## Goal\nTrack plan input.\n\n## Acceptance Criteria\n- AC-1: Reject untracked plan.\n\n## Steps\nValidate.\n",
+                encoding="utf-8",
+            )
+
+            untracked = subprocess.run(
+                [
+                    "python3",
+                    str(PROJECT_ROOT / "scripts" / "loop.py"),
+                    "start-rlcr-loop",
+                    str(untracked_plan),
+                    "--track-plan-file",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+            )
+            self.assertNotEqual(untracked.returncode, 0)
+            self.assertIn("--track-plan-file requires the plan file to be tracked in git", untracked.stderr)
 
     def test_help_includes_top_level_commands(self):
         result = subprocess.run(

@@ -1,6 +1,6 @@
 # Command: /loop:gen-idea
 
-Generate a structured idea document from a plain-language description. The output is a markdown file that captures the concept, motivation, and high-level approach — ready to be refined into a full plan with `/loop:gen-plan`.
+Generate a structured idea document from a plain-language description. The output is a markdown file that captures the concept, target outcome, and a deterministic directed-exploration scaffold that is ready to be refined into a full plan with `/loop:gen-plan`.
 
 ## Usage
 
@@ -11,7 +11,7 @@ Generate a structured idea document from a plain-language description. The outpu
 Internally runs:
 
 ```
-loop gen-idea DESCRIPTION [--output FILE] [--title TITLE]
+loop gen-idea DESCRIPTION [--n COUNT] [--output FILE] [--title TITLE]
 ```
 
 ## Arguments
@@ -24,14 +24,15 @@ loop gen-idea DESCRIPTION [--output FILE] [--title TITLE]
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--output FILE` | `IDEA.md` | Path where the generated idea document is written |
+| `--n COUNT` | `6` | Number of directed exploration slots recorded in the idea draft |
+| `--output FILE` | `.loop/ideas/idea-<slug>.md` | Path where the generated idea document is written |
 | `--title TITLE` | Derived from description | Title used as the H1 heading in the generated document |
 
 ## What It Does
 
 1. Accepts the free-text description and expands it into a structured idea document.
-2. The document includes: title, summary, motivation/problem statement, proposed approach, and open questions.
-3. Writes the result to `--output` (default `IDEA.md`).
+2. The document includes: title, idea statement, target outcome, directed exploration slots, users, acceptance criteria, and open questions.
+3. Writes the result to `--output` (default `.loop/ideas/idea-<slug>.md`).
 
 The generated idea document is the expected input for `/loop:gen-plan`.
 
@@ -40,6 +41,9 @@ The generated idea document is the expected input for `/loop:gen-plan`.
 ```
 # Quick idea from a short phrase
 /loop:gen-idea "add dark mode support to the dashboard"
+
+# Request a smaller exploration set
+/loop:gen-idea "add dark mode support to the dashboard" --n 3
 
 # Provide an explicit title and output path
 /loop:gen-idea "refactor auth layer to use JWT refresh tokens" \
@@ -50,8 +54,7 @@ The generated idea document is the expected input for `/loop:gen-plan`.
 ## Expected Output
 
 ```
-[loop] Generating idea document...
-[loop] Idea written to IDEA.md
+Wrote idea draft to .loop/ideas/idea-add-dark-mode-support-to-the-dashboard.md
 ```
 
 **IDEA.md** (example structure):
@@ -59,18 +62,26 @@ The generated idea document is the expected input for `/loop:gen-plan`.
 ```markdown
 # Add Dark Mode Support to the Dashboard
 
-## Summary
+Generated: 2026-07-13T00:00:00Z
+
+## Idea
+
 Introduce a dark colour scheme for the dashboard UI, toggled by a user preference.
 
-## Motivation
-Users working in low-light environments have requested a dark mode option to reduce eye strain.
+## Target Outcome
 
-## Proposed Approach
-- Add a `theme` field to user preferences (light / dark / system)
-- Implement CSS custom properties for colour tokens
-- Persist the preference in local storage and sync to the user profile
+Define a focused change that can be reviewed through the RLCR workflow and verified with clear acceptance criteria.
+
+## Directed Exploration
+
+- Requested directions: 3
+
+### Primary: Repo-Grounded Path 1
+
+- Rationale: Explore a distinct implementation angle against the current repository context.
+- Objective Evidence: To be filled during planning with concrete files, patterns, and risks.
 
 ## Open Questions
-- Should the default follow the OS preference (`prefers-color-scheme`)?
-- Which components need the most urgent theming work?
+- What constraints, integrations, or compatibility requirements must the plan preserve?
+- Which files or commands prove the change works?
 ```

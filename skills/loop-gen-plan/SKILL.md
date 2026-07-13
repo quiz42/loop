@@ -7,6 +7,8 @@ description: Generate a structured implementation plan from an idea file
 
 Generate a structured, AI-driven implementation plan from a raw idea or requirements document. The output plan is used as the entry point for the RLCR loop.
 
+The generated plan includes goal description, acceptance criteria with positive/negative verification intent, path boundaries, task routing, deliberation status, pending user decisions, and verification commands.
+
 ## Usage
 
 ```
