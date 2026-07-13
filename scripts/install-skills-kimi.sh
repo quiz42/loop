@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+#
+# Convenience wrapper: install Loop skills for Kimi target.
+#
+
 set -euo pipefail
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec python3 "$script_dir/install_tools.py" skills-kimi "$@"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+"$SCRIPT_DIR/install-skill.sh" --target kimi "$@"
