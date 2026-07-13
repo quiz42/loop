@@ -1,5 +1,8 @@
-# Access to todos.md is blocked
+# Todos File Access Blocked
 
-You cannot directly read or write `todos.md` during the RLCR loop.
+Do NOT create or access `round-*-todos.md` files.
 
-The loop framework manages task state automatically. Use the standard summary format to report your work, and the system will track progress.
+**Use the native Task tools instead (TaskCreate, TaskUpdate, TaskList).**
+
+The native task tools provide proper state tracking visible in the UI and
+integration with Claude Code's task management system.

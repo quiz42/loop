@@ -1,7 +1,17 @@
+
+**Optional fallback**: if you could not safely update the mutable section of `goal-tracker.md` directly, include this section in your summary:
+```markdown
 ## Goal Tracker Update Request
 
-If you need to update the goal tracker at `{{GOAL_TRACKER_FILE}}`, include a **Goal Tracker Update Request** section in your summary.
+### Requested Changes:
+- [E.g., "Mark Task X as completed with evidence: tests pass"]
+- [E.g., "Add to Blocking Side Issues: bug Y blocks AC-2"]
+- [E.g., "Add to Queued Side Issues: cleanup Z is non-blocking"]
+- [E.g., "Plan Evolution: changed approach from A to B because..."]
+- [E.g., "Defer Task Z because... (impact on AC: none/minimal)"]
 
-The section should specify exactly what changes to make (e.g., mark items complete, add new sub-goals, update progress notes).
+### Justification:
+[Explain why these changes are needed and how they serve the Ultimate Goal]
+```
 
-Codex will apply your requested changes during the review.
+Codex will review your request and reconcile the Goal Tracker if justified.

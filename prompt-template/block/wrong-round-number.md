@@ -1,7 +1,7 @@
-# Wrong round number in file path
+# Wrong Round Number
 
-You attempted to {{ACTION}} a file for round {{CLAUDE_ROUND}}, but the current round is {{CURRENT_ROUND}}.
+You are trying to {{ACTION}} `round-{{CLAUDE_ROUND}}-{{FILE_TYPE}}.md`, but the current round is **{{CURRENT_ROUND}}**.
 
-You must work with {{FILE_TYPE}} for the current round only.
+**Correct path**: `{{CORRECT_PATH}}`
 
-Correct path: {{CORRECT_PATH}}
+Do NOT increment the round number yourself.

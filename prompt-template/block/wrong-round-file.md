@@ -1,9 +1,9 @@
-# Wrong round file
+# Wrong Round File
 
-You are trying to access a {{FILE_TYPE}} for round {{CLAUDE_ROUND}}, but the current round is {{CURRENT_ROUND}}.
+You are trying to read `round-{{CLAUDE_ROUND}}-{{FILE_TYPE}}.md`, but the current round is **{{CURRENT_ROUND}}**.
 
-Work with files for the current round only.
+**Current round files**:
+- Prompt: `{{ACTIVE_LOOP_DIR}}/round-{{CURRENT_ROUND}}-prompt.md`
+- Summary: `{{ACTIVE_LOOP_DIR}}/round-{{CURRENT_ROUND}}-summary.md`
 
-Active loop directory: {{ACTIVE_LOOP_DIR}}
-
-Attempted path: {{FILE_PATH}}
+If you need this file, use: `cat {{FILE_PATH}}`

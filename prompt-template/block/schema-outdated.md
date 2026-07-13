@@ -1,5 +1,12 @@
-# Schema version is outdated
+# State Schema Outdated
 
-The {{FIELD_NAME}} field in the plan file uses an outdated schema.
+State file is missing required field: `{{FIELD_NAME}}`
 
-Update the plan file structure to match the current schema version. Refer to the loop documentation for the expected format.
+This indicates the session was started with an older version of loop.
+
+**Options:**
+1. Cancel the session: `/loop:cancel-rlcr-loop`
+2. Update loop plugin to version 1.1.2+
+3. Restart with the updated plugin
+
+The session will be terminated as 'unexpected' to preserve state information.

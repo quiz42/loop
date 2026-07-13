@@ -1,5 +1,5 @@
-# Wrong summary file location
+# Wrong Summary Location
 
-You attempted to write the summary to an incorrect location.
+Summary files MUST be in the loop directory.
 
-Write summary to the correct path: {{CORRECT_PATH}}
+**Correct path**: `{{CORRECT_PATH}}`

@@ -1,5 +1,12 @@
-# Writing to prompt files is blocked
+# Prompt File Write Blocked
 
-Writing to `.claude/` prompt files during an active RLCR loop is not allowed.
+You cannot write to `round-*-prompt.md` files.
 
-Prompt files are managed by the loop framework. Do not modify them directly.
+**Prompt files contain instructions FROM Codex TO you (Claude).**
+
+You cannot modify your own instructions. Your job is to:
+1. Read the current round's prompt file for instructions
+2. Execute the tasks described in the prompt
+3. Write your results to the summary file
+
+If the prompt contains errors, document this in your summary file.

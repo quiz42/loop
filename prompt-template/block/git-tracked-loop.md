@@ -1,5 +1,19 @@
-# .loop/ files are already tracked
+# Tracked Loop State Blocked
 
-You attempted to operate on `.loop/` runtime files that are already in git tracking.
+Detected tracked or staged files under `.loop/`.
 
-These files should never have been committed. Remove them from git tracking before proceeding.
+These files are local Loop loop state and must remain outside version control.
+
+## Required Fix
+
+1. Remove Loop state from the index:
+
+       git rm --cached -r .loop
+
+2. Keep only real project files staged.
+3. Retry the stop action after the local state is no longer tracked.
+
+## Important
+
+- Do NOT use `git add -f` on Loop state files.
+- Do NOT commit RLCR trackers, round summaries, contracts, or cancel/finalize markers.

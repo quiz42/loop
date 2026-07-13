@@ -4,4 +4,4 @@ Your `## BitLesson Delta` declaration does not match the expected BitLesson stat
 
 Review and fix:
 - `Action: none` -> `Lesson ID(s): NONE` (or omit Lesson IDs)
-- `Action: add|update` -> provide concrete Lesson ID(s) and ensure each exists in `.loop/bitlesson/lessons.md`
+- `Action: add|update` -> provide concrete Lesson ID(s) and ensure each exists in `.loop/bitlesson.md`

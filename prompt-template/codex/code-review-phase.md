@@ -1,25 +1,36 @@
-# Code Review Phase — Round {{REVIEW_ROUND}}
+# Code Review Phase - Round {{REVIEW_ROUND}}
 
-Review the implementation changes from this round.
+This file documents the code review invocation for audit purposes.
+Note: `codex review` does not accept prompt input; it performs automated code review based on git diff.
 
-**Base branch:** `{{BASE_BRANCH}}`
-**Base commit:** `{{BASE_COMMIT}}`
-**Review base:** `{{REVIEW_BASE}}`
-**Review base type:** {{REVIEW_BASE_TYPE}}
+## Review Configuration
 
----
+- **Base Branch**: {{BASE_BRANCH}}
+- **Review Round**: {{REVIEW_ROUND}}
+- **Timestamp**: {{TIMESTAMP}}
 
-## Review Scope
+## What This Phase Does
 
-Review all code changes introduced since the review base. Check:
+1. Runs `codex review --base {{BASE_BRANCH}}` to perform automated code review
+2. Scans output for `[P0-9]` severity markers indicating issues
+3. If issues found: Returns fix prompt to Claude for remediation
+4. If no issues: Transitions to Finalize Phase
 
-1. **Correctness** — does the code work as intended?
-2. **Contract adherence** — does the implementation fulfill the round contract?
-3. **Code quality** — is the code clean, readable, and maintainable?
-4. **Error handling** — are errors properly handled?
-5. **Testing** — are there tests for new functionality?
-6. **Open Questions** — note anything that needs clarification from the user
+## Expected Output Format
 
-If you have questions that require user input, include an **Open Questions** section.
+Codex review outputs issues in this format:
+```
+- [P0] Critical issue description - /path/to/file.py:line-range
+  Detailed explanation of the issue.
 
-Include a **Mainline Progress Verdict: yes/no/partial** section at the end of your review.
+- [P1] High priority issue - /path/to/file.py:line-range
+  Detailed explanation.
+```
+
+## Files Generated
+
+- `round-{{REVIEW_ROUND}}-review-prompt.md` - This audit file
+- `round-{{REVIEW_ROUND}}-review-result.md` - Review output (in loop directory)
+- `round-{{REVIEW_ROUND}}-codex-review.cmd` - Command invocation (in cache)
+- `round-{{REVIEW_ROUND}}-codex-review.out` - Stdout capture (in cache)
+- `round-{{REVIEW_ROUND}}-codex-review.log` - Stderr capture (in cache)

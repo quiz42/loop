@@ -1,5 +1,5 @@
-# Wrong contract file location
+# Wrong Round Contract Location
 
-You attempted to write the round contract to an incorrect location.
+Round contract files MUST be in the active loop directory.
 
-Write the round contract to the correct path: {{CORRECT_PATH}}
+**Correct path**: `{{CORRECT_PATH}}`

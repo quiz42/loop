@@ -1,9 +1,9 @@
-# Wrong file location
+# Wrong File Location
 
-You tried to {{ACTION}} {{FILE_PATH}}, but that file is outside the active loop directory.
+You are trying to read `{{FILE_PATH}}`, but loop files are in `{{ACTIVE_LOOP_DIR}}/`.
 
-Read from the active loop: {{ACTIVE_LOOP_DIR}}
+**Current round files**:
+- Prompt: `{{ACTIVE_LOOP_DIR}}/round-{{CURRENT_ROUND}}-prompt.md`
+- Summary: `{{ACTIVE_LOOP_DIR}}/round-{{CURRENT_ROUND}}-summary.md`
 
-Current round: {{CURRENT_ROUND}}
-
-Correct path: {{CORRECT_PATH}}
+If you need this file, use: `cat {{FILE_PATH}}`

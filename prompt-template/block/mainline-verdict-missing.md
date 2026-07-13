@@ -1,7 +1,13 @@
-# Mainline Progress Verdict is missing
+# Mainline Verdict Missing
 
-The implementation review at `{{REVIEW_RESULT_FILE}}` does not contain a required **Mainline Progress Verdict**.
+The implementation review output is missing the required line:
 
-Review prompt: `{{REVIEW_PROMPT_FILE}}`
+`Mainline Progress Verdict: ADVANCED / STALLED / REGRESSED`
 
-Every review must include a verdict on whether mainline progress was made. The codex reviewer must output a `Mainline Progress Verdict: yes/no/partial` section.
+Loop cannot safely update the drift state or choose the correct next-round prompt without this verdict.
+
+Retry the exit so Codex reruns the implementation review.
+
+Files:
+- Review result: {{REVIEW_RESULT_FILE}}
+- Review prompt: {{REVIEW_PROMPT_FILE}}

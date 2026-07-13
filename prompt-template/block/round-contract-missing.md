@@ -1,10 +1,13 @@
-# Round contract file is missing
+# Round Contract Missing
 
-The round contract file `{{ROUND_CONTRACT_FILE}}` does not exist.
+Before you try to exit this round, write the current round contract to:
+`{{ROUND_CONTRACT_FILE}}`
 
-Before proceeding with this round, you must create a round contract that specifies:
-- The goal for this round
-- The specific tasks to complete
-- The success criteria for this round
+The round contract must restate:
+- The single **mainline objective** for this round
+- The target ACs
+- Which issues are truly **blocking**
+- Which issues are **queued** and out of scope
+- The concrete success criteria for this round
 
-Write the round contract to the expected path before continuing work.
+Do not continue without a round contract. The loop uses it to prevent goal drift.

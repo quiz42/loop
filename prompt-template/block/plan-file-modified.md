@@ -1,7 +1,12 @@
-# Plan file has been modified
+# Plan File Modified
 
-The plan file `{{PLAN_FILE}}` has been modified during the loop.
+The plan file `{{PLAN_FILE}}` has been modified since the session started.
 
-The plan must remain stable during loop execution. If you need to adjust the plan, stop the loop first.
+**Modifying plan files is forbidden during an active session.**
 
-A backup of the original plan is available at: `{{BACKUP_PATH}}`
+If you need to change the plan:
+1. Cancel the current session: `/loop:cancel-rlcr-loop`
+2. Update the plan file
+3. Start a new session: `/loop:start-rlcr-loop {{PLAN_FILE}}`
+
+Backup available at: `{{BACKUP_PATH}}`

@@ -1,5 +1,8 @@
-# Wrong location for summary file
+# Bash Write Blocked: Use Write or Edit Tool
 
-Write summary to the correct path: {{CORRECT_PATH}}
+Do not use Bash commands to modify summary files.
 
-Do not write summary files to other locations. The loop framework expects summaries at the standard path for each round.
+**Use the Write or Edit tool instead**: `{{CORRECT_PATH}}`
+
+Bash commands like cat, echo, sed, awk, etc. bypass the validation hooks.
+Please use the proper tools to ensure correct round number validation.

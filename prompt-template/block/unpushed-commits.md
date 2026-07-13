@@ -1,5 +1,12 @@
-# Unpushed commits detected
+# Unpushed Commits Detected
 
-You have {{AHEAD_COUNT}} unpushed commits on branch `{{CURRENT_BRANCH}}`.
+You are trying to stop, but you have **{{AHEAD_COUNT}} unpushed commit(s)** on branch `{{CURRENT_BRANCH}}`.
 
-Please push before exiting the loop. Push-every-round mode is enabled and expects each round to be pushed to the remote.
+Since `--push-every-round` is enabled, you must push your commits before exiting.
+
+**Required Action**:
+```bash
+git push origin {{CURRENT_BRANCH}}
+```
+
+After pushing all commits, you may attempt to exit again.

@@ -1,5 +1,7 @@
-# Round contract access blocked during Finalize Phase
+# Finalize Contract Access Blocked
 
-You attempted to {{ACTION}} the round contract file during the Finalize Phase.
+There is no active `round-N-contract.md` during the Finalize Phase.
 
-Round contracts are only relevant during the Implementation Phase. During Finalize Phase, focus on writing the finalize summary instead.
+- Do not {{ACTION}} historical round contract files.
+- Use `finalize-summary.md` for finalize-only notes.
+- Use `goal-tracker.md` if you need the current mainline/backlog state.

@@ -1,45 +1,161 @@
 ---
 name: loop-refine-plan
-description: Refine and iterate on a plan using RLCR loop feedback
+description: Refine an annotated implementation plan into a comment-free plan and a QA ledger while preserving the gen-plan schema.
+type: flow
+user-invocable: false
 ---
 
-# Loop Refine-Plan
+# Loop Refine Plan
 
-Refine an existing implementation plan by incorporating feedback from the RLCR loop, Codex review, or manual review. This is not a standalone CLI command — it is a workflow practice of editing the plan file and re-running the loop with the updated plan.
+Refines an annotated plan that contains `CMT:` / `ENDCMT` blocks into a comment-free plan plus a QA ledger, while preserving the `gen-plan` structure and convergence state.
 
-## Concept
+The installer hydrates this skill with an absolute runtime root path:
 
-The RLCR loop evaluates a plan file each iteration. When a round produces feedback indicating the plan needs adjustment — scope changes, missing steps, incorrect assumptions — you refine the plan file and continue the loop. Refinement is the human-in-the-loop step of the RLCR workflow.
+```bash
+{{LOOP_RUNTIME_ROOT}}
+```
 
-## Workflow
+```mermaid
+flowchart TD
+    BEGIN([BEGIN]) --> SETUP[Parse arguments and derive paths<br/>Resolve mode, output path, QA path, alt-language]
+    SETUP --> LOAD_CFG[Load merged config<br/>Reuse loop config precedence and defaults]
+    LOAD_CFG --> VALIDATE[Validate IO<br/>Run: {{LOOP_RUNTIME_ROOT}}/scripts/validate-refine-plan-io.sh --input &lt;annotated-plan&gt; [--output ...] [--qa-dir ...] [--discussion|--direct]]
+    VALIDATE --> VALID_OK{Validation passed?}
+    VALID_OK -->|No| REPORT_VALIDATION[Report validation error<br/>Stop]
+    REPORT_VALIDATION --> END_FAIL([END])
+    VALID_OK --> EXTRACT[Read input plan and extract valid<br/>CMT:/ENDCMT blocks with a stateful scanner]
+    EXTRACT --> PARSE_OK{Parse succeeded?}
+    PARSE_OK -->|No| REPORT_PARSE[Report parse error with<br/>line, column, heading, context<br/>Stop]
+    REPORT_PARSE --> END_FAIL
+    PARSE_OK --> CLASSIFY[Classify comments:<br/>question, change_request, research_request]
+    CLASSIFY --> AMBIG{Ambiguous comments?}
+    AMBIG -->|Yes, discussion mode| ASK_USER[Ask the minimum user question<br/>needed to continue]
+    ASK_USER --> PROCESS
+    AMBIG -->|No| PROCESS[Process comments in order:<br/>answer, refine plan, or do targeted repo research]
+    PROCESS --> REFINE[Generate refined plan text<br/>Keep required gen-plan sections intact]
+    REFINE --> PLAN_CHECK{Plan still valid?<br/>No CMT markers, references consistent,<br/>routing tags valid}
+    PLAN_CHECK -->|No, fixable| FIX[Repair internal inconsistencies]
+    FIX --> PLAN_CHECK
+    PLAN_CHECK -->|No, blocking| REPORT_BLOCK[Report blocking inconsistency<br/>Stop]
+    REPORT_BLOCK --> END_FAIL
+    PLAN_CHECK -->|Yes| QA[Populate QA document from<br/>{{LOOP_RUNTIME_ROOT}}/prompt-template/plan/refine-plan-qa-template.md]
+    QA --> ALT_LANG{Generate translated variants?}
+    ALT_LANG -->|Yes| VARIANTS[Translate refined plan and QA<br/>Keep identifiers unchanged]
+    ALT_LANG -->|No| ATOMIC
+    VARIANTS --> ATOMIC[Write refined plan, QA, and variants<br/>atomically via temp files]
+    ATOMIC --> REPORT_SUCCESS[Report success:<br/>paths, counts, mode, convergence status]
+    REPORT_SUCCESS --> END_SUCCESS([END])
+```
 
-1. Start or run the RLCR loop: `python3 scripts/loop.py start-rlcr-loop plan.md`
-2. Review the loop output or monitor: `python3 scripts/loop.py monitor rlcr`
-3. Cancel the loop if a plan-level change is needed: `python3 scripts/loop.py cancel-rlcr-loop --reason "Plan needs restructuring"`
-4. Edit `plan.md` to address the feedback.
-5. Re-run the loop with the refined plan.
+## Input Requirements
 
-## Plan Editing Guidelines
+**Required Arguments:**
+- `--input <path/to/annotated-plan.md>` - Input plan that already follows the `gen-plan` schema and contains at least one `CMT:` / `ENDCMT` block
 
-- Keep tasks atomic: each step should be independently verifiable.
-- Add acceptance criteria to ambiguous tasks so Codex review has a clear target.
-- Remove or reorder steps that caused repeated loop failures.
-- Use `ask-codex` or `ask-gemini` to get targeted suggestions before editing:
-  ```
-  python3 scripts/ask_tool.py codex "Given this loop failure, how should I restructure the plan?"
-  ```
+**Optional Arguments:**
+- `--output <path/to/refined-plan.md>` - Output path for the refined plan; defaults to in-place mode (`--input`)
+- `--qa-dir <path/to/qa-dir>` - Directory for the generated QA ledger; defaults to `.loop/plan_qa`
+- `--alt-language <language-or-code>` - Optional translated output language for plan and QA variants
+- `--discussion` - Ask the user to resolve ambiguous classifications or language decisions
+- `--direct` - Resolve ambiguity with the smallest safe assumption and record it in QA
 
-## Iteration Strategy
+**Argument Rules:**
+- `--discussion` and `--direct` are mutually exclusive
+- The validator does not accept `--alt-language`, so do not pass that flag to `validate-refine-plan-io.sh`
+- If `--output` is omitted, refine the plan in place and still write the QA document separately
 
-| Situation | Action |
-|---|---|
-| Minor wording or scope issue | Edit plan in place, re-run loop |
-| Structural issue across multiple steps | Cancel loop, reorganize plan, restart |
-| Unclear requirements | Use `ask-gemini` to clarify before editing |
-| Repeated Codex review failures on same step | Break the step into smaller sub-tasks |
+## Workflow Guarantees
 
-## Notes
+The refinement flow must:
 
-- The plan file passed to `start-rlcr-loop` is the source of truth for each run.
-- Use `--track-plan-file` when starting the loop to have changes to the plan file reflected across iterations automatically.
-- Frequent small refinements outperform large rewrites; change one thing at a time and observe the effect.
+- Preserve the `gen-plan` schema instead of inventing new top-level sections
+- Remove all resolved `CMT:` / `ENDCMT` blocks from the final plan
+- Keep required sections intact:
+  - `## Goal Description`
+  - `## Acceptance Criteria`
+  - `## Path Boundaries`
+  - `## Feasibility Hints and Suggestions`
+  - `## Dependencies and Sequence`
+  - `## Task Breakdown`
+  - `## Claude-Codex Deliberation`
+  - `## Pending User Decisions`
+  - `## Implementation Notes`
+- Preserve optional sections when present, including the original design draft appendix
+- Keep task routing tags restricted to `coding` or `analyze`
+- Generate a QA ledger from the shipped QA template
+- Write the refined plan, QA file, and any language variants atomically
+
+## Classification And Output
+
+Each extracted raw comment block receives one dominant classification:
+
+- `question`
+- `change_request`
+- `research_request`
+
+The flow produces:
+
+- A refined plan with comment blocks removed and approved refinements applied
+- A QA ledger that records:
+  - one row per raw `CMT-N`
+  - classification and disposition
+  - answers to questions
+  - research findings
+  - applied plan changes
+  - remaining decisions
+  - refinement metadata and convergence status
+
+## Supported Alternate Languages
+
+`--alt-language` supports these normalized values:
+
+| Language | Code | Variant Suffix |
+|----------|------|----------------|
+| Chinese | `zh` | `_zh` |
+| Korean | `ko` | `_ko` |
+| Japanese | `ja` | `_ja` |
+| Spanish | `es` | `_es` |
+| French | `fr` | `_fr` |
+| German | `de` | `_de` |
+| Portuguese | `pt` | `_pt` |
+| Russian | `ru` | `_ru` |
+| Arabic | `ar` | `_ar` |
+
+Rules:
+
+- Accept either the language name or ISO code
+- Treat `English` / `en` as a no-op
+- Keep identifiers unchanged in translated variants
+- If the alternate language matches the main plan language, skip variant generation
+
+## Validation Exit Codes
+
+| Exit Code | Meaning |
+|-----------|---------|
+| 0 | Success - continue |
+| 1 | Input file not found |
+| 2 | Input file is empty |
+| 3 | Input file has no `CMT:` blocks |
+| 4 | Input file is missing required `gen-plan` sections |
+| 5 | Output directory does not exist or is not writable |
+| 6 | QA directory is not writable |
+| 7 | Invalid arguments |
+
+## Usage
+
+```bash
+# Start the flow
+/flow:loop-refine-plan
+
+# The flow will ask for:
+# - Input annotated plan path
+# - Optional output refined plan path
+# - Optional QA directory
+# - Optional execution mode and alternate language
+```
+
+Or with the skill only (no auto-execution):
+
+```bash
+/skill:loop-refine-plan
+```

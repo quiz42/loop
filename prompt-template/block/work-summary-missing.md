@@ -1,7 +1,16 @@
-# Work summary is missing
+# Work Summary Missing
 
-The expected work summary file was not created during this round.
+You attempted to exit without writing your work summary.
 
-Please write your work summary to: {{SUMMARY_FILE}}
+**Required Action**: Write your work summary to:
+```
+{{SUMMARY_FILE}}
+```
 
-The summary should describe what was accomplished, decisions made, and any items deferred to future rounds.
+The summary should include:
+- What was implemented
+- Files created/modified
+- Tests added/passed
+- Any remaining items
+
+After writing the summary, you may attempt to exit again.

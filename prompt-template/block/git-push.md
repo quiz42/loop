@@ -1,5 +1,9 @@
-# Git push is blocked
+# Git Push Blocked
 
-You attempted to run `git push` during the RLCR loop.
+Current commits should stay local - no need to push to remote.
+The loop will handle commits locally until completion.
 
-Pushing is not allowed by default. Use the `--push-every-round` flag when starting the loop if you need to push after each round.
+If you need to push, use `--push-every-round` when starting the loop:
+```
+/loop:start-rlcr-loop plan.md --push-every-round
+```

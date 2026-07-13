@@ -1,36 +1,68 @@
-# Round {{CURRENT_ROUND}} — Drift Replan Required
+Your work is not finished. Read and execute the below with ultrathink.
 
-The implementation has stalled for **{{STALL_COUNT}}** consecutive rounds without mainline progress.
+## Drift Recovery Mode
 
-Last mainline verdict: **{{LAST_MAINLINE_VERDICT}}**
+Codex judged the recent implementation rounds as failing to advance the mainline.
 
-Review the plan at `{{PLAN_FILE}}` and the goal tracker at `{{GOAL_TRACKER_FILE}}`.
+- Consecutive stalled/regressed rounds: {{STALL_COUNT}}
+- Last mainline verdict: {{LAST_MAINLINE_VERDICT}}
 
-<!-- CODEX's REVIEW RESULT  START  -->
-{{REVIEW_CONTENT}}
-<!-- CODEX's REVIEW RESULT  END  -->
+This round is a **drift recovery round**. Do not continue with normal issue-clearing behavior.
+
+## Original Implementation Plan
+
+**IMPORTANT**: Re-anchor on the original plan first:
+@{{PLAN_FILE}}
+
+## Required Recovery Re-anchor
+
+Before changing code:
+- Re-read @{{PLAN_FILE}}
+- Re-read @{{GOAL_TRACKER_FILE}}
+- Re-read the recent round summaries and review results that led here
+- Rewrite the round contract at @{{ROUND_CONTRACT_FILE}}
+
+Your recovery contract must contain:
+- Exactly one recovered **mainline objective**
+- The 1-2 target ACs that prove mainline progress this round
+- The root cause of recent drift or stagnation
+- Which issues are truly **blocking** the recovered mainline objective
+- Which issues remain **queued** and explicitly out of scope
+- Concrete success criteria that would change the verdict back to `ADVANCED`
+
+Do not start implementation until the recovery contract exists.
+
+## Task Lane Rules
+
+Use the Task system (TaskCreate, TaskUpdate, TaskList) with one required tag per task:
+- `[mainline]` for plan-derived work that directly advances the recovered objective
+- `[blocking]` for issues that prevent the recovered mainline objective from succeeding safely
+- `[queued]` for non-blocking bugs, cleanup, or follow-up work
+
+Rules:
+- This round must prove mainline movement, not just reduce noise
+- `[blocking]` work is allowed only when it directly unblocks the recovered mainline objective
+- `[queued]` work must stay documented but must NOT replace the recovered objective
+- If a new issue does not block the recovered objective, tag it `[queued]` and keep moving on mainline work
 
 ---
-
-## Replan Required
-
-The current approach is not making mainline progress. You must:
-
-1. Analyze why the current plan is not working
-2. Revise the approach — try a fundamentally different strategy
-3. Update the goal tracker if the direction has changed
-4. Write a round contract for this round that reflects the replanned approach
+Below is Codex's review result:
+<!-- CODEX's REVIEW RESULT START -->
+{{REVIEW_CONTENT}}
+<!-- CODEX's REVIEW RESULT  END  -->
+---
 
 ## Goal Tracker Reference
 
-See `{{GOAL_TRACKER_FILE}}` for the current goal state.
+Before starting work, **read and update** @{{GOAL_TRACKER_FILE}} as needed:
+- Keep the immutable section unchanged
+- Record the drift/stagnation cause in the mutable section if it changed planning
+- Keep blocking vs queued issue classification accurate
+- Ensure the tracker and contract now describe the same recovered mainline objective
 
-## Round Contract
+## Recovery Guardrails
 
-Write your revised round contract to `{{ROUND_CONTRACT_FILE}}` before starting.
-
-## Bitter Lesson Reference
-
-See `{{BITLESSON_FILE}}` for methodology guidance.
-
-After replanning, implement the new approach for this round and commit your work.
+- Do not spend this round mostly on queued cleanup
+- Do not broaden scope to compensate for previous stalls
+- If the original approach was flawed, log the plan evolution explicitly instead of silently changing direction
+- If you cannot produce a credible recovered mainline objective, say so in the summary with concrete blockers

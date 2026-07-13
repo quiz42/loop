@@ -1,5 +1,7 @@
-# Plan backup file is protected
+# Plan Backup Protected
 
-Writing to or editing the plan backup file is not allowed during the RLCR loop.
+The `plan.md` file in the loop directory is a backup of the original plan file and cannot be modified.
 
-The backup exists as a reference only. Do not modify it. Work with the active plan file instead.
+This backup ensures plan integrity throughout the session.
+
+If you need to reference the plan, read it instead of modifying it.

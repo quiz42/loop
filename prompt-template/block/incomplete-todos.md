@@ -1,9 +1,12 @@
-# Incomplete tasks detected
+# Incomplete Tasks Detected
 
-The loop cannot exit while tasks are still pending or in progress.
-
-Finish all tasks before requesting loop completion. Incomplete tasks:
+You are trying to stop, but you still have **incomplete tasks**:
 
 {{INCOMPLETE_LIST}}
 
-Mark each task as completed once you finish it, and then try again.
+**Required Action**:
+1. Complete all remaining tasks before attempting to stop
+2. Mark each task as completed using the **TaskUpdate** tool (set status to "completed")
+3. Only after ALL tasks are completed, you may proceed to write your summary and stop
+
+Do NOT proceed to Codex review until all tasks are finished. This saves time and ensures thorough work.

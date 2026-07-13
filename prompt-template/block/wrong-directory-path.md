@@ -1,5 +1,6 @@
-# Wrong directory path
+# Wrong Directory Path
 
-You tried to {{ACTION}} {{FILE_PATH}}, but the correct path is {{CORRECT_PATH}}.
+You are trying to {{ACTION}}: `{{FILE_PATH}}`
+Correct path: `{{CORRECT_PATH}}`
 
-Files must be located under the active loop directory. Use the correct path above.
+If you need this file, use: `cat {{FILE_PATH}}`

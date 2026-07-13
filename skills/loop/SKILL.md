@@ -1,104 +1,229 @@
 ---
 name: loop
-description: Main loop plugin skill covering all loop commands
+description: Iterative development with AI review. Provides RLCR (Ralph-Loop with Codex Review) for implementation planning and code review loops.
+user-invocable: false
+disable-model-invocation: true
 ---
 
-# Loop
+# Loop - Iterative Development with AI Review
 
-The loop plugin drives iterative AI-assisted development through a structured workflow: generate a plan, refine it, then run the RLCR (Ralph-Loop with Codex Review) loop until all plan steps pass automated review.
+Loop creates a feedback loop where AI implements your plan while another AI independently reviews the work, ensuring quality through continuous refinement.
 
-## Commands Overview
+## Runtime Root
 
-| Command | Purpose |
-|---|---|
-| `gen-plan` | Generate a structured plan from an idea file |
-| `start-rlcr-loop` | Start the iterative RLCR development loop |
-| `cancel-rlcr-loop` | Stop a running loop |
-| `monitor rlcr` | Watch loop status in real time |
-| `monitor codex` | Watch Codex subprocess output |
-| `monitor gemini` | Watch Gemini subprocess output |
+The installer hydrates this skill with an absolute runtime root path:
 
-## Usage
-
-```
-python3 scripts/loop.py COMMAND [OPTIONS]
+```bash
+{{LOOP_RUNTIME_ROOT}}
 ```
 
-## Commands
+All command examples below use `{{LOOP_RUNTIME_ROOT}}`.
 
-### gen-plan
+## Core Philosophy
 
-Generate a structured implementation plan from an idea file.
+**Iteration over Perfection**: Instead of expecting perfect output in one shot, Loop leverages an iterative feedback loop where:
+- AI implements your plan
+- Another AI independently reviews progress
+- Issues are caught and addressed early
+- Work continues until all acceptance criteria are met
+
+## Available Workflows
+
+### 1. RLCR Loop - Iterative Development with Review
+
+The RLCR (Ralph-Loop with Codex Review) loop has two phases:
+
+**Phase 1: Implementation**
+- AI works on the implementation plan
+- AI writes a summary of work completed
+- Codex reviews the summary for completeness and correctness
+- If issues found → feedback loop continues
+- If Codex outputs "COMPLETE" → enters Review Phase
+
+**Phase 2: Code Review**
+- `codex review --base <branch>` checks code quality
+- Issues marked with `[P0-9]` severity markers
+- If issues found → AI fixes them and continues
+- If no issues → loop completes with Finalize Phase
+- On Codex CLI `0.114.0+` with `codex_hooks` enabled, Loop installs a native `Stop` hook so exit gating runs automatically
+
+### 2. Generate Plan - Structured Plan from Draft
+
+Transforms a rough draft document into a structured implementation plan with:
+- Clear goal description
+- Acceptance criteria in AC-X format with TDD-style positive/negative tests
+- Path boundaries (upper/lower bounds, allowed choices)
+- Feasibility hints and conceptual approach
+- Dependencies and milestone sequencing
+
+## Commands Reference
+
+### Start RLCR Loop
+
+```bash
+# With a plan file
+"{{LOOP_RUNTIME_ROOT}}/scripts/setup-rlcr-loop.sh" path/to/plan.md
+
+# Or without plan (review-only mode)
+"{{LOOP_RUNTIME_ROOT}}/scripts/setup-rlcr-loop.sh" --skip-impl
+```
+
+After each round, write the required summary and stop/exit normally. Loop's native Codex `Stop` hook handles review gating automatically.
+
+**Common Options:**
+- `--max N` - Maximum iterations before auto-stop (default: 42)
+- `--codex-model MODEL:EFFORT` - Codex model and reasoning effort for `codex exec` (default: gpt-5.5:high)
+- Review phase `codex review` uses `gpt-5.5:high`
+- `--codex-timeout SECONDS` - Timeout for each Codex review (default: 5400)
+- `--base-branch BRANCH` - Base branch for code review (auto-detects if not specified)
+- `--full-review-round N` - Interval for full alignment checks (default: 5)
+- `--skip-impl` - Skip implementation phase, go directly to code review
+- `--track-plan-file` - Enforce plan-file immutability when tracked in git
+- `--push-every-round` - Require git push after each round
+- `--claude-answer-codex` - Let Claude answer Codex Open Questions directly (default is AskUserQuestion)
+- `--agent-teams` - Enable Agent Teams mode
+- `--yolo` - Skip Plan Understanding Quiz and enable --claude-answer-codex
+- `--skip-quiz` - Skip the Plan Understanding Quiz only
+- `--privacy` - Disable methodology analysis at loop exit (default: analysis enabled)
+
+### Cancel RLCR Loop
+
+```bash
+"{{LOOP_RUNTIME_ROOT}}/scripts/cancel-rlcr-loop.sh"
+# or force cancel during finalize phase
+"{{LOOP_RUNTIME_ROOT}}/scripts/cancel-rlcr-loop.sh" --force
+```
+
+### Generate Plan from Draft
+
+```bash
+"{{LOOP_RUNTIME_ROOT}}/scripts/validate-gen-plan-io.sh" --input path/to/draft.md --output path/to/plan.md
+```
+
+Then follow the workflow in this skill to generate the structured plan content.
+
+### Ask Codex (One-shot Consultation)
+
+```bash
+"{{LOOP_RUNTIME_ROOT}}/scripts/ask-codex.sh" [--codex-model MODEL:EFFORT] [--codex-timeout SECONDS] "your question"
+```
+
+## Plan File Structure
+
+A good plan file should include:
+
+```markdown
+# Plan Title
+
+## Goal Description
+Clear description of what needs to be accomplished
+
+## Acceptance Criteria
+
+- AC-1: First criterion
+  - Positive Tests (expected to PASS):
+    - Test case that should succeed
+  - Negative Tests (expected to FAIL):
+    - Test case that should fail
+
+## Path Boundaries
+
+### Upper Bound (Maximum Scope)
+Most comprehensive acceptable implementation
+
+### Lower Bound (Minimum Scope)
+Minimum viable implementation
+
+### Allowed Choices
+- Can use: technologies, approaches allowed
+- Cannot use: prohibited technologies
+
+## Dependencies and Sequence
+
+### Milestones
+1. Milestone 1: Description
+   - Phase A: ...
+   - Phase B: ...
+
+## Implementation Notes
+- Code should NOT contain plan terminology like "AC-", "Milestone", "Step"
+```
+
+## Goal Tracker System
+
+The RLCR loop uses a Goal Tracker to prevent goal drift:
+
+- **IMMUTABLE SECTION**: Ultimate Goal and Acceptance Criteria (set in Round 0, never changed)
+- **MUTABLE SECTION**: Active Tasks, Completed Items, Deferred Items, Plan Evolution Log
+
+### Key Principles
+
+1. **Acceptance Criteria**: Each task maps to a specific AC
+2. **Plan Evolution Log**: Document any plan changes with justification
+3. **Explicit Deferrals**: Deferred tasks require strong justification
+4. **Full Alignment Checks**: Every N rounds (default: 5), comprehensive goal alignment audit
+
+## Important Rules
+
+1. **Write summaries**: Always write work summary to the specified file before exiting
+2. **Maintain Goal Tracker**: Keep goal-tracker.md up-to-date with progress
+3. **Be thorough**: Include details about implementation, files changed, tests added
+4. **No cheating**: Don't try to exit by editing state files or running cancel commands
+5. **Use the native Stop hook on Codex**: After writing the required summary, stop/exit normally so Codex runs the Loop Stop hook
+6. **Trust the process**: External review helps improve implementation quality
+
+## Prerequisites
+
+- `codex` - OpenAI Codex CLI (for review)
+
+
+## Directory Structure
+
+Loop stores all data in `.loop/`:
 
 ```
-python3 scripts/loop.py gen-plan [--input IDEA.md] [--output plan.md] [--title TITLE]
+.loop/
+├── rlcr/           # RLCR loop data
+│   └── <timestamp>/
+│       ├── state.md
+│       ├── goal-tracker.md
+│       ├── round-N-summary.md
+│       ├── round-N-review-result.md
+│       ├── finalize-state.md
+│       ├── finalize-summary.md
+│       ├── methodology-analysis-state.md
+│       ├── methodology-analysis-report.md
+│       ├── methodology-analysis-done.md
+│       └── complete-state.md
+└── skill/          # One-shot skill results
+    └── <timestamp>/
+        ├── input.md
+        ├── output.md
+        └── metadata.md
 ```
 
-### start-rlcr-loop
+## Monitoring
 
-Start the RLCR loop to iteratively implement and review a plan.
+Use the monitor script to track loop progress:
 
-```
-python3 scripts/loop.py start-rlcr-loop [PLAN.md] [--codex-model MODEL] [--codex-effort high] [--max-iterations 42] [--agent-teams] [--track-plan-file] [--push-every-round]
-```
-
-### cancel-rlcr-loop
-
-Gracefully stop a running loop and record a reason.
-
-```
-python3 scripts/loop.py cancel-rlcr-loop [--reason REASON]
+```bash
+source "{{LOOP_RUNTIME_ROOT}}/scripts/loop.sh"
+loop monitor rlcr   # Monitor RLCR loop
 ```
 
-### monitor
+## Exit Codes
 
-Stream live output from the loop or an AI subprocess.
+### ask-codex.sh
+- `0` - Success
+- `1` - Validation error
+- `124` - Timeout
 
-```
-python3 scripts/loop.py monitor rlcr [--once]
-python3 scripts/loop.py monitor codex [--once]
-python3 scripts/loop.py monitor gemini [--once]
-```
-
-## End-to-End Workflow
-
-1. Write your idea into `IDEA.md`.
-2. Generate a plan:
-   ```
-   python3 scripts/loop.py gen-plan --input IDEA.md --output plan.md --title "My Feature"
-   ```
-3. Review `plan.md` and edit as needed (see `loop-refine-plan` skill).
-4. Start the RLCR loop:
-   ```
-   python3 scripts/loop.py start-rlcr-loop plan.md --codex-effort high --push-every-round
-   ```
-5. Monitor progress:
-   ```
-   python3 scripts/loop.py monitor rlcr
-   ```
-6. If a plan-level change is needed, cancel and refine:
-   ```
-   python3 scripts/loop.py cancel-rlcr-loop --reason "Scope change"
-   # edit plan.md, then restart the loop
-   ```
-
-## Configuration
-
-Default values are read from `config/default_config.json`:
-
-| Key | Default | Description |
-|---|---|---|
-| `codex_model` | `gpt-5.5` | Codex model used for review rounds |
-| `codex_effort` | `high` | Codex reasoning effort level |
-| `bitlesson_model` | `haiku` | Model used for bitlesson generation |
-| `agent_teams` | `false` | Enable multi-agent team mode |
-| `alternative_plan_language` | `""` | Override plan language (keep empty for English) |
-| `gen_plan_mode` | `discussion` | Plan generation mode |
-
-## Related Skills
-
-- `loop-gen-plan` — detailed gen-plan options and workflow
-- `loop-rlcr` — detailed RLCR loop options and monitoring
-- `loop-refine-plan` — strategies for refining plans between iterations
-- `ask-codex` — one-off Codex queries outside the loop
-- `ask-gemini` — one-off Gemini queries outside the loop
+### validate-gen-plan-io.sh
+- `0` - Success
+- `1` - Input file not found
+- `2` - Input file is empty
+- `3` - Output directory does not exist
+- `4` - Output file already exists
+- `5` - No write permission
+- `6` - Invalid arguments
+- `7` - Plan template file not found

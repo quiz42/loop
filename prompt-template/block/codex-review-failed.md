@@ -1,22 +1,18 @@
-# Codex review failed
+# Codex Review Failed
 
-The Codex review for round {{ROUND_NUMBER}} failed unexpectedly.
+The Codex review process failed to produce output.
 
-**Failure reason:** {{FAILURE_REASON}}
+**Exit Code**: {{CODEX_EXIT_CODE}}
+**Review Result File**: {{REVIEW_RESULT_FILE}} (not created)
 
-**Exit code:** {{EXIT_CODE}}
+**Debug Files**:
+- Command: {{CODEX_CMD_FILE}}
+- Stdout: {{CODEX_STDOUT_FILE}}
+- Stderr: {{CODEX_STDERR_FILE}}
 
-**Base branch:** {{BASE_BRANCH}}
-
-**Review result path:** `{{REVIEW_RESULT_FILE}}`
-
-**Codex command file:** `{{CODEX_CMD_FILE}}`
-
-**Codex log file:** `{{CODEX_LOG_FILE}}`
-
-Stderr output:
+**Stderr (last 50 lines)**:
 ```
 {{STDERR_CONTENT}}
 ```
 
-Check the log file for details. You may need to retry the review manually.
+Please check the debug files for more details. The system will attempt another review when you exit.

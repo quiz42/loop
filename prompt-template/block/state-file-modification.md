@@ -1,5 +1,3 @@
-# State file modification is blocked
+# State File Modification Blocked
 
-Modifying the loop state file directly is not allowed during an active RLCR loop.
-
-The state file is managed exclusively by the loop framework. Do not attempt to read or write it during loop execution.
+You cannot modify `state.md`. This file is managed by the loop system. Modifying it would corrupt the loop state. If you think the work is done, just stop and another round of review will be auto-triggered. 

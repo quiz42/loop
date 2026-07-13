@@ -1,5 +1,7 @@
-# Direct execution of stop hook is blocked
+# Direct Execution of Hook Scripts Blocked
 
-This hook script is designed to be called by the loop framework, not executed directly.
+You are attempting to directly execute a hook script via Bash. This is not allowed during an active loop.
 
-Use the appropriate loop command or exit mechanism instead of invoking hook scripts manually.
+Hook scripts are managed by the hooks system and are triggered automatically at the appropriate time. You should NOT execute them manually.
+
+Simply complete your work and end your response. The hooks system will handle the rest automatically.

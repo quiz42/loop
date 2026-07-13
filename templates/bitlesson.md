@@ -1,27 +1,23 @@
-# Bitter Lesson Log
+# BitLesson Knowledge Base
 
-This file records small, concrete lessons learned during iterative development.
-Each entry captures what failed or surprised you, why it happened, and what to do differently.
+This file is project-specific. Keep entries precise and reusable for future rounds.
 
-## How to use
+## Entry Template (Strict)
 
-- Run `scripts/bitlesson-init.sh` to initialize this log in your project.
-- Add entries manually or via `scripts/bitlesson-select.sh` after each iteration.
-- Keep entries short and specific. One lesson per entry.
-- Use `scripts/bitlesson-validate-delta.sh` to check that new entries meet format requirements.
+Use this exact field order for every entry:
 
-## Format
-
-Each entry should follow this structure:
-
-```
-### YYYY-MM-DD: Short title
-
-**What happened:** Brief description of the failure or surprise.
-**Why:** Root cause.
-**Lesson:** What to do differently next time.
+```markdown
+## Lesson: <unique-id>
+Lesson ID: <BL-YYYYMMDD-short-name>
+Scope: <component/subsystem/files>
+Problem Description: <specific failure mode with trigger conditions>
+Root Cause: <direct technical cause>
+Solution: <exact fix that resolved the problem>
+Constraints: <limits, assumptions, non-goals>
+Validation Evidence: <tests/commands/logs/PR evidence>
+Source Rounds: <round numbers where problem appeared and was solved>
 ```
 
 ## Entries
 
-<!-- Add entries below this line -->
+<!-- Add lessons below using the strict template. -->

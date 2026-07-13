@@ -1,7 +1,7 @@
-# Round contract write via Bash is blocked
+# Round Contract Bash Write Blocked
 
-You attempted to write the round contract using a Bash command. This is not allowed.
+Do not use Bash commands to modify round contract files.
 
-Use the Write or Edit tool instead: {{CORRECT_PATH}}
+Use the `Write` or `Edit` tool instead:
 
-Round contract files must be created through the proper tool interface, not shell redirection.
+`{{CORRECT_PATH}}`
