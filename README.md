@@ -2,27 +2,59 @@
 
 **Current Version: 0.1.0**
 
-A Claude Code plugin that provides iterative development with independent AI review. Build with confidence through continuous feedback loops.
+Loop is a Claude Code plugin that turns a single build agent into a self-correcting pair: Claude writes the code, Codex reviews it independently, and the two keep exchanging feedback until your acceptance criteria are actually met.
+
+## Overview
+
+Most AI coding tools stop at the first draft. Loop treats that draft as the starting point. It runs a closed feedback loop between two independent agents so mistakes are caught and fixed automatically, round after round, instead of landing in your branch.
+
+- **Claude** implements against your plan.
+- **Codex** reviews the work from the outside, with no stake in defending it.
+- The loop repeats until the code is clean and every acceptance criterion is satisfied.
 
 ## What is RLCR?
 
-**RLCR** stands for **Ralph-Loop with Codex Review**, inspired by the official ralph-loop plugin and enhanced with independent Codex review. The name also reads as **Reinforcement Learning with Code Review** -- reflecting the iterative cycle where AI-generated code is continuously refined through external review feedback.
-
-## Core Concepts
-
-- **Iteration over Perfection** -- Instead of expecting perfect output in one shot, Loop leverages continuous feedback loops where issues are caught early and refined incrementally.
-- **One Build + One Review** -- Claude implements, Codex independently reviews. No blind spots.
-- **Ralph Loop with Swarm Mode** -- Iterative refinement continues until all acceptance criteria are met. Optionally parallelize with Agent Teams.
-- **Begin with the End in Mind** -- Before the loop starts, Loop verifies that *you* understand the plan you are about to execute. The human must remain the architect. ([Details](docs/usage.md#begin-with-the-end-in-mind))
+**RLCR** = **Ralph-Loop with Codex Review**. It builds on the ralph-loop idea (drive an agent in a tight, repeating cycle) and adds a second, independent reviewer so the builder is never grading its own homework. Read another way -- **Reinforcement Learning with Code Review** -- the name captures the same intent: output improves because every iteration is scored by an outside critic.
 
 ## How It Works
 
-<p align="center">
-  <img src="docs/images/rlcr-workflow.svg" alt="RLCR Workflow" width="680"/>
-</p>
+```mermaid
+flowchart LR
+    Plan["Your Plan<br/>(plan.md)"] --> Implement
 
-The loop has two phases: **Implementation** (Claude works, Codex reviews summaries) and **Code Review** (Codex checks code quality with severity markers). Issues feed back into implementation until resolved.
+    subgraph impl [Implementation Phase]
+        Implement["Claude:<br/>implement & summarize"]
+        SummaryCheck{"Codex:<br/>round complete?"}
+        Implement --> SummaryCheck
+        SummaryCheck -->|"not yet"| Implement
+    end
 
+    subgraph review [Code Review Phase]
+        CodeReview{"Codex:<br/>review code (P0-P9)"}
+    end
+
+    SummaryCheck -->|"COMPLETE"| CodeReview
+    CodeReview -->|"issues found"| Implement
+    CodeReview -->|"no issues"| Done(["Done"])
+```
+
+The loop moves through two phases:
+
+1. **Implementation Phase** -- Claude works through the plan and summarizes each round; Codex checks the summary and sends it back until the round is marked `COMPLETE`.
+2. **Code Review Phase** -- Codex reviews the actual diff and tags findings with `[P0-P9]` severity markers. Anything worth fixing routes back into implementation; a clean pass ends the loop.
+
+## Features
+
+- **Two independent agents** -- A builder (Claude) and an outside reviewer (Codex) with separate context, so review is not self-assessment.
+- **Iterate until criteria are met** -- Rounds continue until every acceptance criterion passes and no issues remain, not until the first plausible-looking answer.
+- **Plan-understanding pre-flight** -- Before the loop runs, Loop checks that *you* understand the plan you are about to automate, keeping the human as the architect. ([Details](docs/usage.md#begin-with-the-end-in-mind))
+- **Optional parallel execution** -- Agent Teams mode can split work across multiple workers when a task benefits from parallelism.
+
+## Requirements
+
+- [Claude Code](https://docs.claude.com/en/docs/claude-code) with plugin support.
+- [Codex CLI](https://github.com/openai/codex) for the review agent.
+- (Optional) Gemini CLI for `/rloop:ask-gemini` deep-research queries.
 
 ## Install
 
@@ -33,7 +65,7 @@ git clone https://github.com/FrankDan77/loop.git
 claude --plugin-dir /path/to/loop
 ```
 
-Requires [codex CLI](https://github.com/openai/codex) for review. See the full [Installation Guide](docs/install-for-claude.md) for prerequisites, and the [Codex](docs/install-for-codex.md) and [Kimi](docs/install-for-kimi.md) guides for other runtimes.
+See the full [Installation Guide](docs/install-for-claude.md) for prerequisites, and the [Codex guide](docs/install-for-codex.md) for the review runtime.
 
 ### Command naming
 
@@ -41,7 +73,7 @@ Inside Claude Code the plugin commands use the `/rloop:` prefix (for example `/r
 
 ## Quick Start
 
-1. **Generate an idea draft** from a loose thought (optional — skip if you already have a draft):
+1. **Generate an idea draft** from a loose thought (optional -- skip if you already have a draft):
    ```bash
    /rloop:gen-idea "add undo/redo to the editor"
    ```
@@ -69,7 +101,7 @@ Inside Claude Code the plugin commands use the `/rloop:` prefix (for example `/r
 
 6. **Monitor progress (in another terminal, not inside Claude Code)**:
    ```bash
-   source <path/to/loop>/scripts/loop.sh # Or just add it into your .bashec or .zshrc
+   source <path/to/loop>/scripts/loop.sh # Or just add it into your .bashrc or .zshrc
    loop monitor rlcr       # RLCR loop
    loop monitor skill      # All skill invocations (codex + gemini)
    loop monitor codex      # Codex invocations only
@@ -95,7 +127,6 @@ Log:      .loop/rlcr/2026-07-13_15-42-07/loop.log
 - [Usage Guide](docs/usage.md) -- Commands, options, environment variables
 - [Install for Claude Code](docs/install-for-claude.md) -- Full installation instructions
 - [Install for Codex](docs/install-for-codex.md) -- Codex skill runtime setup
-- [Install for Kimi](docs/install-for-kimi.md) -- Kimi CLI skill setup
 - [Configuration](docs/usage.md#configuration) -- Shared config hierarchy and override rules
 - [Bitter Lesson Workflow](docs/bitlesson.md) -- Project memory, selector routing, and delta validation
 
