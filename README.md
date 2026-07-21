@@ -65,7 +65,7 @@ git clone https://github.com/FrankDan77/loop.git
 claude --plugin-dir /path/to/loop
 ```
 
-See the full [Installation Guide](docs/install-for-claude.md) for prerequisites, and the [Codex guide](docs/install-for-codex.md) for the review runtime.
+See the full [Installation Guide](docs/install-for-claude.md) for prerequisites. Loop can also be installed as skills into other agent runtimes -- see the [Codex guide](docs/install-for-codex.md) and the [Kimi guide](docs/install-for-kimi.md).
 
 ### Command naming
 
@@ -127,6 +127,7 @@ Log:      .loop/rlcr/2026-07-13_15-42-07/loop.log
 - [Usage Guide](docs/usage.md) -- Commands, options, environment variables
 - [Install for Claude Code](docs/install-for-claude.md) -- Full installation instructions
 - [Install for Codex](docs/install-for-codex.md) -- Codex skill runtime setup
+- [Install for Kimi](docs/install-for-kimi.md) -- Kimi CLI skill setup
 - [Configuration](docs/usage.md#configuration) -- Shared config hierarchy and override rules
 - [Bitter Lesson Workflow](docs/bitlesson.md) -- Project memory, selector routing, and delta validation
 
