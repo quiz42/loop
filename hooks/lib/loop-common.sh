@@ -255,6 +255,41 @@ extract_session_id() {
     printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null || echo ""
 }
 
+# Persist a Claude session_id into a state file's frontmatter, but only when
+# the field is currently empty. Idempotent and safe under `set -euo pipefail`.
+#
+# This is the backfill safety net for the PostToolUse recorder
+# (loop-post-bash-hook.sh): the Stop hook always has the authoritative
+# session_id, so calling this each round guarantees completed loops
+# (complete-state.md) retain a resolvable session id even if the one-shot
+# PostToolUse signal was never consumed.
+#
+# Usage: persist_session_id_if_empty "$state_file" "$session_id"
+# Returns 0 in all no-op and success cases.
+persist_session_id_if_empty() {
+    local state_file="$1"
+    local session_id="$2"
+
+    [[ -z "$state_file" || ! -f "$state_file" ]] && return 0
+    [[ -z "$session_id" ]] && return 0
+
+    # Read the current value using the same portable frontmatter-body + grep
+    # extraction used elsewhere (avoids BSD-sed nested-block incompatibility).
+    local current
+    current=$(sed -n '/^---$/,/^---$/{ /^---$/d; p; }' "$state_file" 2>/dev/null | grep "^${FIELD_SESSION_ID}:" | sed "s/^${FIELD_SESSION_ID}: *//" | tr -d ' ' || true)
+    [[ -n "$current" ]] && return 0
+
+    # Replace the empty field line only (safe awk handles special chars in id).
+    local temp_file="${state_file}.tmp.$$"
+    awk -v new_id="$session_id" -v field="${FIELD_SESSION_ID}" '
+        $0 ~ "^" field ":[[:space:]]*$" {
+            print field ": " new_id
+            next
+        }
+        { print }
+    ' "$state_file" > "$temp_file" && mv "$temp_file" "$state_file"
+}
+
 # Background-task helpers (expand_leading_tilde, extract_transcript_path,
 # derive_loop_start_iso_ts, list/has/count_pending_background_task[_ids],
 # handle_bg_task_short_circuit) live in loop-bg-tasks.sh and are sourced

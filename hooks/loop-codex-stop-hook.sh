@@ -122,6 +122,14 @@ if ! parse_state_file "$STATE_FILE" 2>/dev/null; then
     echo "Warning: parse_state_file returned non-zero, proceeding to schema validation" >&2
 fi
 
+# Backfill the owning Claude session id if the PostToolUse recorder missed it,
+# so completed loops (complete-state.md) always retain a resolvable session id.
+# Runs every round (including finalize/methodology phases, whose files later
+# mv to complete-state.md), so the id is guaranteed present by completion.
+if [[ -n "$HOOK_SESSION_ID" ]]; then
+    persist_session_id_if_empty "$STATE_FILE" "$HOOK_SESSION_ID"
+fi
+
 # Map STATE_* variables to local names for backward compatibility
 PLAN_TRACKED="$STATE_PLAN_TRACKED"
 START_BRANCH="$STATE_START_BRANCH"

@@ -1053,6 +1053,96 @@ else
 fi
 
 # ========================================
+# Test: persist_session_id_if_empty backfills an empty session_id
+# ========================================
+
+setup_test_dir
+BACKFILL_STATE="$TEST_DIR/backfill-state.md"
+cat > "$BACKFILL_STATE" << 'EOF'
+---
+current_round: 2
+max_iterations: 10
+session_id:
+review_started: false
+base_branch: main
+---
+EOF
+
+persist_session_id_if_empty "$BACKFILL_STATE" "stop-hook-session-123"
+BACKFILLED_ID=$(grep "^session_id:" "$BACKFILL_STATE" | sed 's/session_id: *//' | tr -d ' ')
+if [[ "$BACKFILLED_ID" == "stop-hook-session-123" ]]; then
+    pass "persist_session_id_if_empty backfills empty session_id"
+else
+    fail "persist_session_id_if_empty backfills empty session_id" "stop-hook-session-123" "$BACKFILLED_ID"
+fi
+
+# Other frontmatter fields must be preserved untouched
+if grep -q "^current_round: 2$" "$BACKFILL_STATE" && grep -q "^review_started: false$" "$BACKFILL_STATE"; then
+    pass "persist_session_id_if_empty preserves other fields"
+else
+    fail "persist_session_id_if_empty preserves other fields" "current_round/review_started intact" "modified"
+fi
+
+# ========================================
+# Test: backfilled session_id survives mv to complete-state.md
+# ========================================
+
+COMPLETE_STATE="$TEST_DIR/complete-state.md"
+mv "$BACKFILL_STATE" "$COMPLETE_STATE"
+COMPLETE_ID=$(grep "^session_id:" "$COMPLETE_STATE" | sed 's/session_id: *//' | tr -d ' ')
+if [[ "$COMPLETE_ID" == "stop-hook-session-123" ]]; then
+    pass "backfilled session_id survives into complete-state.md"
+else
+    fail "backfilled session_id survives into complete-state.md" "stop-hook-session-123" "$COMPLETE_ID"
+fi
+
+# ========================================
+# Test: persist_session_id_if_empty is idempotent (does not overwrite)
+# ========================================
+
+setup_test_dir
+IDEMPOTENT_STATE="$TEST_DIR/idempotent-state.md"
+cat > "$IDEMPOTENT_STATE" << 'EOF'
+---
+current_round: 0
+max_iterations: 10
+session_id: original-session-abc
+review_started: false
+base_branch: main
+---
+EOF
+
+persist_session_id_if_empty "$IDEMPOTENT_STATE" "should-not-overwrite"
+IDEMPOTENT_ID=$(grep "^session_id:" "$IDEMPOTENT_STATE" | sed 's/session_id: *//' | tr -d ' ')
+if [[ "$IDEMPOTENT_ID" == "original-session-abc" ]]; then
+    pass "persist_session_id_if_empty does not overwrite an existing session_id"
+else
+    fail "persist_session_id_if_empty does not overwrite an existing session_id" "original-session-abc" "$IDEMPOTENT_ID"
+fi
+
+# ========================================
+# Test: persist_session_id_if_empty no-ops on empty session id argument
+# ========================================
+
+setup_test_dir
+EMPTYARG_STATE="$TEST_DIR/emptyarg-state.md"
+cat > "$EMPTYARG_STATE" << 'EOF'
+---
+current_round: 0
+session_id:
+review_started: false
+---
+EOF
+
+persist_session_id_if_empty "$EMPTYARG_STATE" ""
+EMPTYARG_ID=$(grep "^session_id:" "$EMPTYARG_STATE" | sed 's/session_id: *//' | tr -d ' ')
+if [[ -z "$EMPTYARG_ID" ]]; then
+    pass "persist_session_id_if_empty no-ops when session id argument is empty"
+else
+    fail "persist_session_id_if_empty no-ops when session id argument is empty" "empty" "$EMPTYARG_ID"
+fi
+
+# ========================================
 # Print Summary
 # ========================================
 
