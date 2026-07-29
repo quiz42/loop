@@ -25,10 +25,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
-# Source portable timeout wrapper
-source "$SCRIPT_DIR/portable-timeout.sh"
-
-# Source shared loop library for DEFAULT_CODEX_MODEL and DEFAULT_CODEX_EFFORT
+# Source shared loop library for DEFAULT_CODEX_MODEL, DEFAULT_CODEX_EFFORT,
+# and run_with_timeout
 HOOKS_LIB_DIR="$(cd "$SCRIPT_DIR/../hooks/lib" && pwd)"
 source "$HOOKS_LIB_DIR/loop-common.sh"
 

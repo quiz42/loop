@@ -19,12 +19,8 @@ DEFAULT_CODEX_TIMEOUT=5400
 DEFAULT_MAX_ITERATIONS=42
 DEFAULT_FULL_REVIEW_ROUND=5
 
-# Default timeout for git operations (30 seconds)
-GIT_TIMEOUT=30
-
-# Source portable timeout wrapper
+# run_with_timeout and GIT_TIMEOUT (default 30s) are provided by loop-common.sh
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-source "$SCRIPT_DIR/portable-timeout.sh"
 
 # Source shared loop library (provides runtime-aware DEFAULT_CODEX_MODEL and other constants)
 # Callers can override by exporting DEFAULT_CODEX_MODEL/DEFAULT_CODEX_EFFORT/DEFAULT_AGENT_TEAMS

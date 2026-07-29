@@ -42,6 +42,11 @@ readonly FIELD_PRIVACY_MODE="privacy_mode"
 readonly FIELD_MAINLINE_STALL_COUNT="mainline_stall_count"
 readonly FIELD_LAST_MAINLINE_VERDICT="last_mainline_verdict"
 readonly FIELD_DRIFT_STATUS="drift_status"
+readonly FIELD_REVIEWED_COMMIT="reviewed_commit"
+readonly FIELD_REVIEWED_AT="reviewed_at"
+readonly FIELD_REVIEWED_BASE="reviewed_base"
+readonly FIELD_HEAD_COMMIT="head_commit"
+readonly FIELD_ENDED_AT="ended_at"
 
 readonly MAINLINE_VERDICT_ADVANCED="advanced"
 readonly MAINLINE_VERDICT_STALLED="stalled"
@@ -176,6 +181,14 @@ export PLUGIN_ROOT="${PLUGIN_ROOT:-$LOOP_COMMON_PLUGIN_ROOT}"
 # Shared project-root resolver (CLAUDE_PROJECT_DIR -> git toplevel,
 # realpath-canonicalized). Must load before any caller needs PROJECT_ROOT.
 source "$LOOP_COMMON_DIR/project-root.sh"
+
+# Portable timeout wrapper (run_with_timeout) for git/CLI subprocess calls.
+# Sourced here unconditionally so every loop-common.sh caller gets it for
+# free, instead of each caller needing its own `source portable-timeout.sh`.
+source "$LOOP_COMMON_PLUGIN_ROOT/scripts/portable-timeout.sh"
+
+# Default timeout for git operations; callers may override before sourcing.
+GIT_TIMEOUT="${GIT_TIMEOUT:-30}"
 
 _lc_errexit=false; [[ -o errexit ]] && _lc_errexit=true
 _lc_nounset=false; [[ -o nounset ]] && _lc_nounset=true
@@ -1569,17 +1582,49 @@ Rules:
         "CORRECT_PATH=$correct_path"
 }
 
+# Record the true HEAD commit and end timestamp into a state file's
+# frontmatter (D17 Run Recorder). Best-effort: git failures leave the
+# fields absent rather than blocking the exit path that calls this.
+#
+# Usage: record_head_commit_and_ended_at "$state_file" "$project_root"
+record_head_commit_and_ended_at() {
+    local state_file="$1"
+    local project_root="$2"
+
+    [[ -z "$state_file" || ! -f "$state_file" ]] && return 0
+
+    local head_commit
+    head_commit=$(run_with_timeout "$GIT_TIMEOUT" git -C "$project_root" rev-parse HEAD 2>/dev/null || true)
+    [[ -z "$head_commit" ]] && return 0
+
+    local ended_at
+    ended_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    # Unlike persist_session_id_if_empty's replace-only pattern, this must
+    # insert the fields when absent: state.md's template (setup-rlcr-loop.sh)
+    # never pre-declares head_commit/ended_at as empty placeholder lines the
+    # way it does for session_id, so a replace-only match would silently
+    # no-op on every real state file. upsert_state_fields inserts-or-replaces.
+    upsert_state_fields "$state_file" \
+        "${FIELD_HEAD_COMMIT}=${head_commit}" \
+        "${FIELD_ENDED_AT}=${ended_at}"
+}
+
 # End the loop by renaming state.md to indicate exit reason
 # Usage: end_loop "$loop_dir" "$state_file" "complete|cancel|maxiter|stop|unexpected"
 # Arguments:
 #   $1 - loop_dir: Path to the loop directory
 #   $2 - state_file: Path to the state.md file
 #   $3 - reason: One of complete, cancel, maxiter, stop, unexpected
+#   $4 - project_root (optional): repo root to resolve HEAD from; when
+#        omitted, head_commit/ended_at are not appended (caller already
+#        recorded them, e.g. via record_head_commit_and_ended_at)
 # Returns: 0 on success, 1 on failure
 end_loop() {
     local loop_dir="$1"
     local state_file="$2"
     local reason="$3"  # complete, cancel, maxiter, stop, unexpected
+    local project_root="${4:-}"
 
     # Validate reason
     case "$reason" in
@@ -1594,6 +1639,7 @@ end_loop() {
     local target_name="${reason}-state.md"
 
     if [[ -f "$state_file" ]]; then
+        [[ -n "$project_root" ]] && record_head_commit_and_ended_at "$state_file" "$project_root"
         mv "$state_file" "$loop_dir/$target_name"
         echo "Loop ended: $reason" >&2
         echo "State preserved as: $loop_dir/$target_name" >&2

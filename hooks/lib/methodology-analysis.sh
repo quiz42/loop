@@ -164,6 +164,7 @@ complete_methodology_analysis() {
 
     # Rename methodology-analysis-state.md to the terminal state
     local target_name="${exit_reason}-state.md"
+    record_head_commit_and_ended_at "$LOOP_DIR/methodology-analysis-state.md" "${PROJECT_ROOT:-}"
     mv "$LOOP_DIR/methodology-analysis-state.md" "$LOOP_DIR/$target_name"
     echo "Methodology analysis complete. State preserved as: $LOOP_DIR/$target_name" >&2
 

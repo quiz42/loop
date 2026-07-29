@@ -243,6 +243,92 @@ else
 fi
 
 echo ""
+echo "=== Test: D17 Run Recorder (record_head_commit_and_ended_at) ==="
+echo ""
+
+# Test D17-1: record_head_commit_and_ended_at appends head_commit and ended_at
+echo "Test D17-1: record_head_commit_and_ended_at appends head_commit and ended_at"
+D17_TEST_DIR="$TEST_DIR/.loop/rlcr/2024-01-04_12-00-00"
+mkdir -p "$D17_TEST_DIR"
+cat > "$D17_TEST_DIR/state.md" << 'EOF'
+---
+current_round: 3
+max_iterations: 10
+review_started: true
+---
+EOF
+
+EXPECTED_HEAD=$(git -C "$TEST_DIR" rev-parse HEAD)
+record_head_commit_and_ended_at "$D17_TEST_DIR/state.md" "$TEST_DIR"
+
+RECORDED_HEAD=$(grep "^head_commit:" "$D17_TEST_DIR/state.md" | sed 's/head_commit: *//' | tr -d ' ')
+RECORDED_ENDED_AT=$(grep "^ended_at:" "$D17_TEST_DIR/state.md" | sed 's/ended_at: *//' | tr -d ' ')
+
+if [[ "$RECORDED_HEAD" == "$EXPECTED_HEAD" ]] && [[ -n "$RECORDED_ENDED_AT" ]]; then
+    pass "record_head_commit_and_ended_at appends head_commit and ended_at"
+else
+    fail "record_head_commit_and_ended_at" "head_commit=$EXPECTED_HEAD, ended_at non-empty" "head_commit=$RECORDED_HEAD, ended_at=$RECORDED_ENDED_AT"
+fi
+
+# Test D17-2: record_head_commit_and_ended_at preserves existing fields
+echo "Test D17-2: record_head_commit_and_ended_at preserves other fields"
+if grep -q "^current_round: 3$" "$D17_TEST_DIR/state.md" && grep -q "^review_started: true$" "$D17_TEST_DIR/state.md"; then
+    pass "record_head_commit_and_ended_at preserves other fields"
+else
+    fail "record_head_commit_and_ended_at preserves fields" "current_round/review_started intact" "modified"
+fi
+
+# Test D17-3: end_loop with project_root appends head_commit/ended_at before rename
+echo "Test D17-3: end_loop with project_root appends head_commit/ended_at before rename"
+mkdir -p "$END_LOOP_TEST_DIR"
+cat > "$END_LOOP_TEST_DIR/state.md" << 'EOF'
+---
+current_round: 5
+---
+EOF
+
+end_loop "$END_LOOP_TEST_DIR" "$END_LOOP_TEST_DIR/state.md" "complete" "$TEST_DIR" >/dev/null 2>&1
+COMPLETE_STATE_FILE="$END_LOOP_TEST_DIR/complete-state.md"
+
+if [[ -f "$COMPLETE_STATE_FILE" ]] && grep -q "^head_commit: $EXPECTED_HEAD$" "$COMPLETE_STATE_FILE" && grep -q "^ended_at:" "$COMPLETE_STATE_FILE"; then
+    pass "end_loop with project_root appends head_commit/ended_at before rename"
+else
+    fail "end_loop with project_root" "complete-state.md with head_commit/ended_at" "$(cat "$COMPLETE_STATE_FILE" 2>/dev/null || echo 'file missing')"
+fi
+rm -f "$COMPLETE_STATE_FILE"
+
+# Test D17-4: end_loop WITHOUT project_root does not append head_commit/ended_at (backward compat)
+echo "Test D17-4: end_loop without project_root omits head_commit/ended_at (backward compat)"
+mkdir -p "$END_LOOP_TEST_DIR"
+cat > "$END_LOOP_TEST_DIR/state.md" << 'EOF'
+---
+current_round: 5
+---
+EOF
+
+end_loop "$END_LOOP_TEST_DIR" "$END_LOOP_TEST_DIR/state.md" "complete" >/dev/null 2>&1
+COMPLETE_STATE_FILE="$END_LOOP_TEST_DIR/complete-state.md"
+
+if [[ -f "$COMPLETE_STATE_FILE" ]] && ! grep -q "^head_commit:" "$COMPLETE_STATE_FILE" && ! grep -q "^ended_at:" "$COMPLETE_STATE_FILE"; then
+    pass "end_loop without project_root omits head_commit/ended_at"
+else
+    fail "end_loop without project_root" "no head_commit/ended_at fields" "$(cat "$COMPLETE_STATE_FILE" 2>/dev/null || echo 'file missing')"
+fi
+rm -f "$COMPLETE_STATE_FILE"
+
+# Test D17-5: record_head_commit_and_ended_at no-ops when state file missing
+echo "Test D17-5: record_head_commit_and_ended_at no-ops on missing state file"
+set +e
+record_head_commit_and_ended_at "$TEST_DIR/.loop/rlcr/does-not-exist/state.md" "$TEST_DIR"
+D17_EXIT_CODE=$?
+set -e
+if [[ $D17_EXIT_CODE -eq 0 ]]; then
+    pass "record_head_commit_and_ended_at no-ops on missing state file"
+else
+    fail "record_head_commit_and_ended_at missing state file" "exit 0" "exit $D17_EXIT_CODE"
+fi
+
+echo ""
 echo "=== Test: Path Detection (New vs Legacy) ==="
 echo ""
 

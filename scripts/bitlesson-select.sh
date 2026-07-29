@@ -25,10 +25,8 @@ CODEX_FALLBACK_MODEL="${CODEX_FALLBACK_MODEL:-$DEFAULT_CODEX_MODEL}"
 PROVIDER_MODE="$(get_config_value "$MERGED_CONFIG" "provider_mode")"
 PROVIDER_MODE="${PROVIDER_MODE:-auto}"
 
-# Source portable timeout wrapper
-source "$SCRIPT_DIR/portable-timeout.sh"
-
-# Source shared loop library (kept for consistency with ask-codex.sh)
+# Source shared loop library (kept for consistency with ask-codex.sh); also
+# provides run_with_timeout
 HOOKS_LIB_DIR="$(cd "$SCRIPT_DIR/../hooks/lib" && pwd)"
 source "$HOOKS_LIB_DIR/loop-common.sh"
 
