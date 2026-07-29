@@ -14,6 +14,40 @@
       },
       "canonical_json": "{\"a\":\"café\",\"array\":[3,2,1],\"nested\":{\"a\":null,\"é\":true},\"z\":\"Å\"}",
       "sha256": "d89d75a23d4486106f4ccf8e7c544c65fb27ac843b677ec73b62137712111a62"
+    },
+    {
+      "name": "control-quote-and-backslash-escaping",
+      "input": {
+        "s": "a\tb\u0001c\"d\\e"
+      },
+      "canonical_utf8_hex": "7b2273223a22615c74625c7530303031635c22645c5c65227d",
+      "sha256": "d4e9873ac1950602ba6466c2419c177386f404bc218b8cb41b69bab75655ea8f"
+    },
+    {
+      "name": "empty-containers",
+      "input": {
+        "b": [],
+        "a": {}
+      },
+      "canonical_utf8_hex": "7b2261223a7b7d2c2262223a5b5d7d",
+      "sha256": "aeeba1e56a144077f89e26c930dad7cf933e9383cfb8e33ddff618233b29be76"
+    },
+    {
+      "name": "large-integer",
+      "input": {
+        "n": 1180591620717411303424
+      },
+      "canonical_utf8_hex": "7b226e223a313138303539313632303731373431313330333432347d",
+      "sha256": "b69ef9299f5d6958cce991bf150e23cf960a2d5295e188735d6c700ab34ff975"
+    },
+    {
+      "name": "unicode-code-point-ordering",
+      "input": {
+        "\uff3a": "high-bmp",
+        "\ud83d\ude00": "astral"
+      },
+      "canonical_utf8_hex": "7b22efbcba223a22686967682d626d70222c22f09f9880223a2261737472616c227d",
+      "sha256": "d6ee21e200e18431b88c7c0842da7b8382ad66fc4eba1b3eb6be2a9d1201d714"
     }
   ]
 }

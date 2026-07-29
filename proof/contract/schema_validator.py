@@ -5,6 +5,33 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
 
 
+_SUPPORTED_SCHEMA_KEYWORDS = frozenset(
+    {
+        "$schema",
+        "$id",
+        "title",
+        "description",
+        "type",
+        "required",
+        "properties",
+        "additionalProperties",
+        "enum",
+        "const",
+        "items",
+        "minItems",
+        "pattern",
+        "oneOf",
+        "anyOf",
+        "x-canonical-payload",
+        "x-unknown-field-policy",
+    }
+)
+_JSON_SCHEMA_TYPES = frozenset(
+    {"array", "boolean", "integer", "null", "number", "object", "string"}
+)
+_STRING_SCHEMA_ANNOTATIONS = ("$schema", "$id", "title", "description")
+
+
 @dataclass(frozen=True)
 class ValidationIssue:
     """One actionable schema error or forward-compatibility warning."""
@@ -36,10 +63,8 @@ def validate_instance(instance: Any, schema: Dict[str, Any]) -> ValidationResult
     canonical payload, which rejects floats recursively before hashing can drift.
     """
     result = ValidationResult()
-    if not isinstance(schema, dict):
-        result.errors.append(
-            ValidationIssue("$", "schema", "A schema must be an object.")
-        )
+    result.errors.extend(schema_issues(schema))
+    if result.errors:
         return result
 
     if schema.get("x-canonical-payload") is True:
@@ -47,6 +72,215 @@ def validate_instance(instance: Any, schema: Dict[str, Any]) -> ValidationResult
 
     _validate(instance, schema, "$", result, schema.get("x-unknown-field-policy"))
     return result
+
+
+def schema_issues(schema: Any) -> List[ValidationIssue]:
+    """Return fail-closed diagnostics for unsupported Proof schema constructs."""
+    issues: List[ValidationIssue] = []
+    _collect_schema_issues(schema, "$", issues)
+    return issues
+
+
+def _collect_schema_issues(
+    schema: Any, path: str, issues: List[ValidationIssue]
+) -> None:
+    """Walk schema positions without confusing object property names for keywords."""
+    if not isinstance(schema, dict):
+        issues.append(ValidationIssue(path, "schema", "A subschema must be an object."))
+        return
+
+    for keyword in schema:
+        if keyword not in _SUPPORTED_SCHEMA_KEYWORDS:
+            issues.append(
+                ValidationIssue(
+                    path,
+                    "unsupported-schema-keyword",
+                    f"Unsupported Proof schema keyword {keyword!r}.",
+                )
+            )
+
+    _collect_keyword_value_issues(schema, path, issues)
+    _collect_extension_issues(schema, path, issues)
+    if "pattern" in schema:
+        _collect_pattern_issues(schema["pattern"], path, issues)
+    _collect_property_schemas(schema, path, issues)
+    if "items" in schema:
+        _collect_child_schema(schema["items"], f"{path}.items", issues)
+
+    if "additionalProperties" in schema:
+        additional_properties = schema["additionalProperties"]
+        if isinstance(additional_properties, dict):
+            _collect_schema_issues(
+                additional_properties, f"{path}.additionalProperties", issues
+            )
+        elif not isinstance(additional_properties, bool):
+            issues.append(
+                ValidationIssue(
+                    path,
+                    "schema",
+                    "Schema additionalProperties must be a boolean or a subschema.",
+                )
+            )
+
+    for keyword in ("oneOf", "anyOf"):
+        if keyword not in schema:
+            continue
+        branches = schema[keyword]
+        if not isinstance(branches, list) or not branches:
+            issues.append(
+                ValidationIssue(
+                    path, "schema", f"Schema {keyword} must be a non-empty array."
+                )
+            )
+            continue
+        for index, branch in enumerate(branches):
+            _collect_schema_issues(branch, f"{path}.{keyword}[{index}]", issues)
+
+
+def _collect_keyword_value_issues(
+    schema: Dict[str, Any], path: str, issues: List[ValidationIssue]
+) -> None:
+    """Reject malformed values for implemented keywords before validation runs."""
+    for keyword in _STRING_SCHEMA_ANNOTATIONS:
+        if keyword in schema and not isinstance(schema[keyword], str):
+            issues.append(
+                ValidationIssue(path, "schema", f"Schema {keyword} must be a string.")
+            )
+
+    if "type" in schema and not _is_valid_type_declaration(schema["type"]):
+        issues.append(
+            ValidationIssue(
+                path,
+                "schema",
+                "Schema type must be a supported JSON type or a non-empty array of them.",
+            )
+        )
+
+    if "required" in schema:
+        required = schema["required"]
+        if (
+            not isinstance(required, list)
+            or not all(isinstance(property_name, str) for property_name in required)
+            or len(set(required)) != len(required)
+        ):
+            issues.append(
+                ValidationIssue(
+                    path,
+                    "schema",
+                    "Schema required must be an array of unique property names.",
+                )
+            )
+
+    if "enum" in schema and (
+        not isinstance(schema["enum"], list) or not schema["enum"]
+    ):
+        issues.append(
+            ValidationIssue(path, "schema", "Schema enum must be a non-empty array.")
+        )
+
+    if "minItems" in schema:
+        min_items = schema["minItems"]
+        if (
+            not isinstance(min_items, int)
+            or isinstance(min_items, bool)
+            or min_items < 0
+        ):
+            issues.append(
+                ValidationIssue(
+                    path,
+                    "schema",
+                    "Schema minItems must be a non-negative integer.",
+                )
+            )
+
+
+def _is_valid_type_declaration(value: Any) -> bool:
+    """Return whether a ``type`` value is usable by ``_matches_type``."""
+    if isinstance(value, str):
+        return value in _JSON_SCHEMA_TYPES
+    if not isinstance(value, list) or not value:
+        return False
+    return all(
+        isinstance(item, str) and item in _JSON_SCHEMA_TYPES for item in value
+    ) and len(set(value)) == len(value)
+
+
+def _collect_extension_issues(
+    schema: Dict[str, Any], path: str, issues: List[ValidationIssue]
+) -> None:
+    """Validate the two registered Proof extensions before they affect behavior."""
+    if "x-canonical-payload" in schema:
+        if schema["x-canonical-payload"] is not True:
+            issues.append(
+                ValidationIssue(
+                    path,
+                    "schema",
+                    "x-canonical-payload must be true when declared.",
+                )
+            )
+        elif path != "$":
+            issues.append(
+                ValidationIssue(
+                    path,
+                    "schema",
+                    "x-canonical-payload may be declared only on a root Proof schema.",
+                )
+            )
+    if (
+        "x-unknown-field-policy" in schema
+        and schema["x-unknown-field-policy"] != "warn"
+    ):
+        issues.append(
+            ValidationIssue(
+                path,
+                "schema",
+                "x-unknown-field-policy must be 'warn' when declared.",
+            )
+        )
+
+
+def _collect_property_schemas(
+    schema: Dict[str, Any], path: str, issues: List[ValidationIssue]
+) -> None:
+    """Walk schema values below ``properties`` while leaving property names opaque."""
+    if "properties" not in schema:
+        return
+    properties = schema["properties"]
+    if not isinstance(properties, dict):
+        issues.append(ValidationIssue(path, "schema", "Schema properties must be an object."))
+        return
+    for property_name, property_schema in properties.items():
+        _collect_schema_issues(
+            property_schema, f"{path}.properties.{property_name}", issues
+        )
+
+
+def _collect_pattern_issues(
+    pattern: Any, path: str, issues: List[ValidationIssue]
+) -> None:
+    """Restrict v0 patterns to the anchored complete-value subset we implement."""
+    if not isinstance(pattern, str) or not pattern.startswith("^") or not pattern.endswith("$"):
+        issues.append(
+            ValidationIssue(
+                path,
+                "unsupported-schema-pattern",
+                "Proof v0 patterns must be anchored complete-value expressions.",
+            )
+        )
+        return
+    try:
+        re.compile(pattern)
+    except re.error as error:
+        issues.append(
+            ValidationIssue(path, "schema", f"Invalid schema pattern: {error}.")
+        )
+
+
+def _collect_child_schema(
+    child: Any, path: str, issues: List[ValidationIssue]
+) -> None:
+    """Walk an optional schema-valued keyword used by the supported subset."""
+    _collect_schema_issues(child, path, issues)
 
 
 def _reject_floats(value: Any, path: str, result: ValidationResult) -> None:
@@ -110,7 +344,7 @@ def _validate(
 
     if "pattern" in schema and isinstance(instance, str):
         try:
-            matches = re.search(schema["pattern"], instance)
+            matches = re.fullmatch(schema["pattern"], instance)
         except re.error as error:
             result.errors.append(
                 ValidationIssue(path, "pattern", f"Invalid schema pattern: {error}.")
@@ -193,10 +427,6 @@ def _validate_array(
         _validate(item, item_schema, f"{path}[{index}]", item_result, unknown_policy)
         result.errors.extend(item_result.errors)
         result.warnings.extend(item_result.warnings)
-        if item_result.errors:
-            result.errors.append(
-                ValidationIssue(f"{path}[{index}]", "items", "Item does not satisfy its schema.")
-            )
 
 
 def _validate_object(

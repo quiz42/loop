@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://loop.local/schema/proof-bundle-v0.schema.json",
   "title": "Proof Bundle v0",
-  "description": "The portable canonical manifest for one Proof of Loop export. Unknown fields at every object level are retained and reported as warnings by readers; they are never discarded.",
+  "description": "The portable canonical manifest for one Proof of Loop export. Unknown object properties are retained and reported as warnings by readers; unknown enum values remain invalid for this version-pinned contract.",
   "x-unknown-field-policy": "warn",
   "x-canonical-payload": true,
   "type": "object",
@@ -138,9 +138,8 @@
           "type": "string"
         },
         "acceptance_criteria": {
-          "description": "The stable acceptance criteria in their recorded order.",
+          "description": "The stable acceptance criteria in their recorded order; this can be empty only when a legacy or unparseable source artifact supplied no criteria.",
           "type": "array",
-          "minItems": 1,
           "items": {
             "description": "One immutable acceptance criterion.",
             "type": "object",

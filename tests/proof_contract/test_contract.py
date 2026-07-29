@@ -50,7 +50,11 @@ class CanonicalizationVectorTests(unittest.TestCase):
         for vector in vectors:
             with self.subTest(vector=vector["name"]):
                 actual = canonical_json_bytes(vector["input"])
-                self.assertEqual(actual, vector["canonical_json"].encode("utf-8"))
+                if "canonical_json" in vector:
+                    expected = vector["canonical_json"].encode("utf-8")
+                else:
+                    expected = bytes.fromhex(vector["canonical_utf8_hex"])
+                self.assertEqual(actual, expected)
                 self.assertEqual(hashlib.sha256(actual).hexdigest(), vector["sha256"])
 
     def test_floating_point_values_are_rejected_at_every_depth(self):
@@ -135,6 +139,11 @@ class SchemaValidationTests(unittest.TestCase):
         self.assertTrue(validate_instance(self.bundle, self.bundle_schema).is_valid)
         self.assertTrue(validate_instance(self.profile, self.profile_schema).is_valid)
 
+    def test_empty_acceptance_criteria_are_readable_legacy_evidence(self):
+        bundle = deepcopy(self.bundle)
+        bundle["specification"]["acceptance_criteria"] = []
+        self.assertTrue(validate_instance(bundle, self.bundle_schema).is_valid)
+
     def test_every_public_field_has_a_description(self):
         for schema in (self.bundle_schema, self.profile_schema):
             for property_schema in walk_public_properties(schema):
@@ -170,8 +179,7 @@ class SchemaValidationTests(unittest.TestCase):
             ("required transport", "required", lambda value: value.pop("transport")),
             ("enum", "enum", lambda value: value["run"].__setitem__("terminal_state", "running")),
             ("const", "const", lambda value: value.__setitem__("schema_version", "proof-bundle-v1")),
-            ("items", "items", lambda value: value.__setitem__("evidence", ["not-an-evidence-object"])),
-            ("minItems", "minItems", lambda value: value["specification"].__setitem__("acceptance_criteria", [])),
+            ("items", "type", lambda value: value.__setitem__("evidence", ["not-an-evidence-object"])),
             ("pattern", "pattern", lambda value: value["transport"].__setitem__("exported_at", "tomorrow")),
             ("oneOf", "oneOf", lambda value: value["evidence"][0].__setitem__("omitted_reason", True)),
             ("anyOf", "anyOf", lambda value: value["source"].__setitem__("head_commit", True)),
@@ -187,19 +195,22 @@ class SchemaValidationTests(unittest.TestCase):
 
     def test_profile_keyword_violations_are_rejected(self):
         cases = [
-            ("type", lambda value: value.__setitem__("max_bundle_bytes", True)),
-            ("required", lambda value: value.pop("secret_scan")),
-            ("enum", lambda value: value["secret_scan"].__setitem__("fail_on", ["unknown-class"])),
-            ("const", lambda value: value.__setitem__("version", "1")),
-            ("items", lambda value: value.__setitem__("omit_paths", [False])),
-            ("minItems", lambda value: value.__setitem__("required_evidence_kinds", [])),
-            ("pattern", lambda value: value.__setitem__("name", "Public V0")),
+            ("type", "type", lambda value: value.__setitem__("max_bundle_bytes", True)),
+            ("required", "required", lambda value: value.pop("secret_scan")),
+            ("enum", "enum", lambda value: value["secret_scan"].__setitem__("fail_on", ["unknown-class"])),
+            ("const", "const", lambda value: value.__setitem__("version", "1")),
+            ("items", "type", lambda value: value.__setitem__("omit_paths", [False])),
+            ("minItems", "minItems", lambda value: value.__setitem__("required_evidence_kinds", [])),
+            ("pattern", "pattern", lambda value: value.__setitem__("name", "Public V0")),
         ]
-        for keyword, mutate in cases:
-            with self.subTest(keyword=keyword):
+        for name, expected_keyword, mutate in cases:
+            with self.subTest(keyword=name):
                 profile = deepcopy(self.profile)
                 mutate(profile)
-                self.assertIn(keyword, error_keywords(validate_instance(profile, self.profile_schema)))
+                self.assertIn(
+                    expected_keyword,
+                    error_keywords(validate_instance(profile, self.profile_schema)),
+                )
 
     def test_additional_properties_false_and_combinators_are_implemented(self):
         closed_schema = {
@@ -243,6 +254,158 @@ class SchemaValidationTests(unittest.TestCase):
         )
         self.assertIn(
             "enum", error_keywords(validate_instance(True, {"enum": [1]}))
+        )
+
+    def test_unsupported_schema_keywords_fail_closed_at_every_schema_depth(self):
+        cases = [
+            (
+                "nested minLength",
+                {
+                    "type": "object",
+                    "properties": {"name": {"type": "string", "minLength": 5}},
+                },
+                {"name": "ab"},
+                "$.properties.name",
+            ),
+            ("reference", {"$ref": "https://loop.local/schema/other.json"}, {}, "$"),
+            ("allOf", {"allOf": [{"type": "string"}]}, "value", "$"),
+            ("unknown extension", {"x-future-policy": True}, {}, "$"),
+        ]
+        for name, schema, instance, expected_path in cases:
+            with self.subTest(case=name):
+                result = validate_instance(instance, schema)
+                self.assertFalse(result.is_valid)
+                self.assertEqual(
+                    [(issue.path, issue.keyword) for issue in result.errors],
+                    [(expected_path, "unsupported-schema-keyword")],
+                )
+
+    def test_unanchored_patterns_are_rejected_by_the_v0_schema_subset(self):
+        result = validate_instance("ready", {"type": "string", "pattern": "ready"})
+        self.assertFalse(result.is_valid)
+        self.assertEqual(
+            [(issue.path, issue.keyword) for issue in result.errors],
+            [("$", "unsupported-schema-pattern")],
+        )
+
+    def test_invalid_schema_metadata_and_extensions_fail_closed(self):
+        cases = [
+            (
+                "invalid additionalProperties",
+                {"type": "object", "additionalProperties": "warn"},
+                "schema",
+            ),
+            (
+                "disabled canonical payload",
+                {"type": "object", "x-canonical-payload": False},
+                "schema",
+            ),
+            (
+                "unknown field policy",
+                {"type": "object", "x-unknown-field-policy": "ignore"},
+                "schema",
+            ),
+            (
+                "unregistered extension",
+                {"type": "object", "x-future-policy": True},
+                "unsupported-schema-keyword",
+            ),
+        ]
+        for name, schema, expected_keyword in cases:
+            with self.subTest(case=name):
+                result = validate_instance({}, schema)
+                self.assertFalse(result.is_valid)
+                self.assertIn(expected_keyword, error_keywords(result))
+
+    def test_malformed_supported_keyword_values_fail_closed_without_crashing(self):
+        cases = [
+            ("type", {"type": None}, "value", "schema"),
+            ("type member", {"type": ["string", "future"]}, "value", "schema"),
+            ("properties", {"type": "object", "properties": None}, {}, "schema"),
+            ("required", {"type": "object", "required": None}, {}, "schema"),
+            (
+                "required scalar",
+                {"type": "object", "required": "name"},
+                {"name": "ok"},
+                "schema",
+            ),
+            (
+                "additionalProperties",
+                {"type": "object", "additionalProperties": None},
+                {"future": "value"},
+                "schema",
+            ),
+            ("items", {"type": "array", "items": None}, ["value"], "schema"),
+            ("minItems", {"type": "array", "minItems": "1"}, [], "schema"),
+            ("negative minItems", {"type": "array", "minItems": -1}, [], "schema"),
+            (
+                "pattern",
+                {"type": "string", "pattern": None},
+                "value",
+                "unsupported-schema-pattern",
+            ),
+            ("enum", {"enum": None}, "value", "schema"),
+            ("enum scalar", {"enum": "value"}, "v", "schema"),
+            ("oneOf", {"oneOf": None}, "value", "schema"),
+            ("anyOf", {"anyOf": []}, "value", "schema"),
+            (
+                "nested canonical payload",
+                {
+                    "type": "object",
+                    "properties": {"value": {"x-canonical-payload": True}},
+                },
+                {"value": 1.5},
+                "schema",
+            ),
+        ]
+        for name, schema, instance, expected_keyword in cases:
+            with self.subTest(keyword=name):
+                result = validate_instance(instance, schema)
+                self.assertFalse(result.is_valid)
+                self.assertIn(expected_keyword, error_keywords(result))
+
+    def test_profile_evidence_kind_lists_match_the_bundle_contract(self):
+        bundle_kinds = self.bundle_schema["properties"]["evidence"]["items"]["properties"]["kind"]["enum"]
+        profile_properties = self.profile_schema["properties"]
+        self.assertEqual(
+            profile_properties["required_evidence_kinds"]["items"]["enum"],
+            bundle_kinds,
+        )
+        self.assertEqual(profile_properties["omit_kinds"]["items"]["enum"], bundle_kinds)
+
+        for field in ("required_evidence_kinds", "omit_kinds"):
+            with self.subTest(field=field):
+                profile = deepcopy(self.profile)
+                profile[field] = ["not-a-real-kind"]
+                self.assertIn(
+                    "enum", error_keywords(validate_instance(profile, self.profile_schema))
+                )
+
+    def test_anchored_patterns_reject_trailing_newlines(self):
+        cases = [
+            ("proof_id", lambda value: value.__setitem__("proof_id", value["proof_id"] + "\n")),
+            (
+                "transport timestamp",
+                lambda value: value["transport"].__setitem__(
+                    "exported_at", value["transport"]["exported_at"] + "\n"
+                ),
+            ),
+        ]
+        for name, mutate in cases:
+            with self.subTest(case=name):
+                bundle = deepcopy(self.bundle)
+                mutate(bundle)
+                self.assertIn(
+                    "pattern", error_keywords(validate_instance(bundle, self.bundle_schema))
+                )
+
+    def test_invalid_array_item_reports_one_leaf_diagnostic(self):
+        bundle = deepcopy(self.bundle)
+        bundle["evidence"] = ["not-an-evidence-object"]
+        result = validate_instance(bundle, self.bundle_schema)
+        self.assertEqual(
+            [(issue.path, issue.keyword) for issue in result.errors],
+            [("$.evidence[0]", "type")],
         )
 
 

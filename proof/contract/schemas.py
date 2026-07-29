@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from typing import Any, Dict
 
+from .schema_validator import schema_issues
+
 
 _SCHEMA_FILENAMES = {
     "proof-bundle-v0": "proof-bundle-v0.schema.json",
@@ -20,4 +22,11 @@ def load_schema(name: str) -> Dict[str, Any]:
         supported = ", ".join(sorted(_SCHEMA_FILENAMES))
         raise ValueError(f"Unsupported Proof schema {name!r}; expected one of: {supported}") from error
 
-    return json.loads((_SCHEMA_DIRECTORY / filename).read_text(encoding="utf-8"))
+    schema = json.loads((_SCHEMA_DIRECTORY / filename).read_text(encoding="utf-8"))
+    issues = schema_issues(schema)
+    if issues:
+        details = "; ".join(
+            f"{issue.path}: {issue.message}" for issue in issues
+        )
+        raise ValueError(f"Invalid bundled Proof schema {name!r}: {details}")
+    return schema

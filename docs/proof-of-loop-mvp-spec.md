@@ -158,6 +158,31 @@ Top-level objects in `proof.json` (`proof-bundle-v0.schema.json`):
 
 The Bundle records the profile document's own `schema_hash`, making "which rule set produced this export" itself verifiable.
 
+The v0 schemas use two registered Proof annotations in addition to the supported
+JSON Schema subset:
+
+- `x-canonical-payload: true` on a root Proof schema requires the handwritten
+  Validator to reject a floating-point value at any depth, including inside an
+  otherwise unknown extension property, before canonical identity is computed;
+- `x-unknown-field-policy: "warn"` is inherited by nested object schemas:
+  unknown object properties allowed by `additionalProperties: true` are retained
+  and reported as warnings. `additionalProperties: false` still rejects a
+  property outright.
+
+These annotations are executable requirements for the Proof Validator; a generic
+JSON Schema reader can ignore them. The handwritten Validator rejects an
+unregistered assertion keyword, Proof extension, or malformed supported keyword
+rather than silently dropping a future constraint. The forward-compatibility policy applies to **property names**,
+not values constrained by an `enum`: an unknown enum value is invalid for a
+version-pinned v0 contract. An exporter classifies an unrecognized source artifact
+as the declared evidence kind `unknown` instead.
+
+The handwritten v0 `pattern` subset is likewise deliberately narrow: every
+committed pattern is an anchored complete-value expression, and the Validator
+matches the whole value. This rejects a trailing newline in a hash or timestamp
+and avoids claiming broad ECMA-262 compatibility that the stdlib-only subset does
+not implement.
+
 ### C. Evidence Item identity and file-level integrity
 
 - Evidence ID = the first 16 hex characters of `sha256(canonical_json({path, sha256}))`, extended to full length on collision. The path distinguishes position within the Run; the hash detects whether that file was tampered with (D4).
@@ -168,12 +193,17 @@ The Bundle records the profile document's own `schema_hash`, making "which rule 
 
 ### D. Canonicalization and the two IDs
 
-Canonical JSON rules (a JCS subset, with Compiler and Validator sharing one implementation):
+Canonical JSON rules (a Proof-specific JCS subset, with Compiler and Validator sharing one implementation):
 
 - UTF-8 output, non-ASCII not escaped;
 - object keys sorted ascending by Unicode code point;
 - no superfluous whitespace (separators `,` and `:`);
 - **floating-point numbers are forbidden in the canonical payload** (enforced at the schema level), sidestepping float formatting ambiguity; times are ISO-8601 UTC at second precision with `Z`.
+
+The code-point ordering rule above is normative for v0. It deliberately differs
+from strict RFC 8785 UTF-16 code-unit ordering when an astral-plane key and a
+high-BMP key appear together; changing it would change identities and therefore
+requires a new contract version.
 
 `proof_id = "sha256:" + hex(sha256(canonical_json(payload)))`, where payload is `proof.json` minus `proof_id` and minus the entire `transport` object.
 
@@ -184,6 +214,11 @@ Canonical JSON rules (a JCS subset, with Compiler and Validator sharing one impl
 The field list deliberately contains only the Run's inherent facts and **nothing profile-related**, so the public and local versions share a `run_id`; keeping it small also means Adapter detail changes will not make the same Run's `run_id` drift. Missing fields serialize as `null` (so legacy Runs stably receive a degraded but deterministic `run_id`).
 
 Both algorithms come with **fixed test vectors**: the input JSON and expected hash are stored together, so any change in serialization behavior fails immediately.
+
+An empty `specification.acceptance_criteria` array is schema-valid for a legacy or
+unparseable Goal Tracker. The Compiler records `unparseable-artifact` for that
+condition, yielding `incomplete` rather than the tamper-oriented
+`schema-violation` result; it must never synthesize a cosmetic criterion.
 
 ### E. Export preconditions and Run discovery
 
@@ -361,6 +396,12 @@ tests/fixtures/proof/<golden-run>/   ->  proof-export.py  ->  <bundle dir>  ->  
 
 Rationale: this is the highest available seam; it covers Adapter, Compiler, Profile Engine, Canonicalizer, and Writer at once, and is naturally resistant to internal refactoring. The hand-written schema validator is the only exception candidate (a pure function, with cheap positive/negative cases), but its correctness is equally coverable at the CLI layer using deliberately broken Bundles — so unless implementation reveals the coverage cost is too high, no new seam is opened.
 
+Milestone 1 is the explicit temporary exception: before the CLI exists, its fixed
+canonicalization, identity, and schema vectors test the public `proof.contract`
+surface directly. Milestone 2 retains the CLI subprocess boundary as the sole
+product-behavior seam; it must not add a second Adapter, Compiler, or Validator
+test interface.
+
 The Explorer's UI rendering is outside this seam: the MVP relies on manual walkthrough plus screenshots over the three golden Runs (Milestone 3), while automation asserts only that the static assets are all present and that `proof-data.js`, with its `window.PROOF = ` prefix stripped, is semantically equal to `proof.json`.
 
 ### Modules under test and cases
@@ -461,4 +502,3 @@ Agent lines of code, round count, model call volume, and badge count are not the
 
 - Conservative derivation will leave the MVP's `unverifiable` share on the high side. This is ADR-0002's deliberate trade-off: one "looks all green but is actually a parsing hallucination" does more damage to product trust than a batch of honest `unverifiable`s. The right way to lower it is the structured sidecars in P1, not looser parsing.
 - A hand-written schema validator means we maintain a small piece of validation logic ourselves. Its boundary is defined by our own schemas, and every rule has positive and negative cases — more controllable than pulling in a Rust extension dependency or vendoring a dated implementation.
-

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://loop.local/schema/verification-profile-v0.schema.json",
   "title": "Verification Profile v0",
-  "description": "A versioned disclosure and evidence rule set for a Proof Bundle. Unknown fields at every object level are retained and reported as warnings by readers; they are never discarded.",
+  "description": "A versioned disclosure and evidence rule set for a Proof Bundle. Unknown object properties are retained and reported as warnings by readers; unknown enum values remain invalid for this version-pinned contract.",
   "x-unknown-field-policy": "warn",
   "x-canonical-payload": true,
   "type": "object",
@@ -39,7 +39,25 @@
       "minItems": 1,
       "items": {
         "description": "One required normalized evidence classification.",
-        "type": "string"
+        "type": "string",
+        "enum": [
+          "plan",
+          "goal_tracker",
+          "state",
+          "round_contract",
+          "round_summary",
+          "round_review_result",
+          "prompt",
+          "review_prompt",
+          "transcript",
+          "log",
+          "bitlesson",
+          "finalize_summary",
+          "methodology_analysis_report",
+          "methodology_analysis_done",
+          "commit",
+          "unknown"
+        ]
       }
     },
     "omit_paths": {
@@ -55,7 +73,25 @@
       "type": "array",
       "items": {
         "description": "One normalized evidence classification to omit.",
-        "type": "string"
+        "type": "string",
+        "enum": [
+          "plan",
+          "goal_tracker",
+          "state",
+          "round_contract",
+          "round_summary",
+          "round_review_result",
+          "prompt",
+          "review_prompt",
+          "transcript",
+          "log",
+          "bitlesson",
+          "finalize_summary",
+          "methodology_analysis_report",
+          "methodology_analysis_done",
+          "commit",
+          "unknown"
+        ]
       }
     },
     "field_redactions": {
