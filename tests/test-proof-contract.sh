@@ -11,4 +11,7 @@ if ! python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 9) el
     exit 1
 fi
 
-python3 "$PROJECT_ROOT/tests/proof_contract/test_contract.py"
+python3 -m unittest discover \
+  -s "$PROJECT_ROOT/tests/proof_contract" \
+  -p 'test_*.py' \
+  -v
