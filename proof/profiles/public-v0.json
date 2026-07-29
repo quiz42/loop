@@ -1,0 +1,48 @@
+{
+  "name": "public-v0",
+  "version": "0",
+  "description": "The default public disclosure profile: it preserves the minimum evidence needed to inspect a completed Loop Run while omitting prompts, logs, transcripts, BitLesson content, and methodology analysis output.",
+  "required_evidence_kinds": [
+    "plan",
+    "goal_tracker",
+    "state",
+    "round_summary",
+    "round_review_result"
+  ],
+  "omit_paths": [
+    "round-*-prompt.md",
+    "round-*-review-prompt.md",
+    "*.jsonl",
+    "*.log",
+    ".loop/bitlesson.md",
+    "methodology-analysis-report.md"
+  ],
+  "omit_kinds": [
+    "prompt",
+    "review_prompt",
+    "transcript",
+    "log",
+    "bitlesson",
+    "methodology_analysis_report"
+  ],
+  "field_redactions": [
+    {
+      "field": "commit.author_email",
+      "reason": "Public profile privacy policy."
+    }
+  ],
+  "secret_scan": {
+    "fail_on": [
+      "pem-header",
+      "cloud-credential",
+      "token-assignment",
+      "high-entropy"
+    ],
+    "omit_on": [
+      "absolute-path"
+    ]
+  },
+  "max_bundle_bytes": 10485760,
+  "max_item_bytes": 1048576,
+  "require_reviewed_equals_head": true
+}
