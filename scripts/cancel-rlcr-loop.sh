@@ -163,6 +163,7 @@ rm -f "$PROJECT_ROOT/.loop/.pending-session-id"
 rm -f "$LOOP_DIR/.methodology-exit-reason"
 
 # Rename state file to cancel-state.md
+record_head_commit_and_ended_at "$ACTIVE_STATE_FILE" "$PROJECT_ROOT"
 mv "$ACTIVE_STATE_FILE" "$LOOP_DIR/cancel-state.md"
 
 # ========================================

@@ -46,15 +46,11 @@ source "$SCRIPT_DIR/lib/loop-common.sh"
 PROJECT_ROOT="$(resolve_project_root)" || exit 0
 LOOP_BASE_DIR="$PROJECT_ROOT/.loop/rlcr"
 
-# Source portable timeout wrapper for git operations
+# run_with_timeout and GIT_TIMEOUT are provided by loop-common.sh
 PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-source "$PLUGIN_ROOT/scripts/portable-timeout.sh"
 
 # Source methodology analysis library
 source "$SCRIPT_DIR/lib/methodology-analysis.sh"
-
-# Default timeout for git operations (30 seconds)
-GIT_TIMEOUT=30
 
 # Template directory is set by loop-common.sh via template-loader.sh
 
@@ -181,13 +177,13 @@ DRIFT_STATUS="${STATE_DRIFT_STATUS:-$DRIFT_STATUS_NORMAL}"
 # Use same validation patterns as setup-rlcr-loop.sh
 if [[ ! "$CODEX_EXEC_MODEL" =~ ^[a-zA-Z0-9._-]+$ ]]; then
     echo "Error: Invalid codex_model in state file: $CODEX_EXEC_MODEL" >&2
-    end_loop "$LOOP_DIR" "$STATE_FILE" "$EXIT_UNEXPECTED"
+    end_loop "$LOOP_DIR" "$STATE_FILE" "$EXIT_UNEXPECTED" "$PROJECT_ROOT"
     exit 0
 fi
 if [[ ! "$CODEX_EXEC_EFFORT" =~ ^(xhigh|high|medium|low)$ ]]; then
     echo "Error: Invalid codex effort in state file: $CODEX_EXEC_EFFORT" >&2
     echo "  Must be one of: xhigh, high, medium, low" >&2
-    end_loop "$LOOP_DIR" "$STATE_FILE" "$EXIT_UNEXPECTED"
+    end_loop "$LOOP_DIR" "$STATE_FILE" "$EXIT_UNEXPECTED" "$PROJECT_ROOT"
     exit 0
 fi
 
@@ -196,20 +192,20 @@ fi
 if [[ -z "$RAW_CURRENT_ROUND" ]]; then
     echo "Error: State file missing required field: current_round" >&2
     echo "  State file may be truncated or corrupted" >&2
-    end_loop "$LOOP_DIR" "$STATE_FILE" "$EXIT_UNEXPECTED"
+    end_loop "$LOOP_DIR" "$STATE_FILE" "$EXIT_UNEXPECTED" "$PROJECT_ROOT"
     exit 0
 fi
 if [[ -z "$RAW_MAX_ITERATIONS" ]]; then
     echo "Error: State file missing required field: max_iterations" >&2
     echo "  State file may be truncated or corrupted" >&2
-    end_loop "$LOOP_DIR" "$STATE_FILE" "$EXIT_UNEXPECTED"
+    end_loop "$LOOP_DIR" "$STATE_FILE" "$EXIT_UNEXPECTED" "$PROJECT_ROOT"
     exit 0
 fi
 
 # Validate numeric fields
 if [[ ! "$CURRENT_ROUND" =~ ^[0-9]+$ ]]; then
     echo "Warning: State file corrupted (current_round not numeric), stopping loop" >&2
-    end_loop "$LOOP_DIR" "$STATE_FILE" "$EXIT_UNEXPECTED"
+    end_loop "$LOOP_DIR" "$STATE_FILE" "$EXIT_UNEXPECTED" "$PROJECT_ROOT"
     exit 0
 fi
 
@@ -976,7 +972,7 @@ if [[ "$IS_FINALIZE_PHASE" != "true" ]] && [[ "$REVIEW_STARTED" != "true" ]] && 
     if enter_methodology_analysis_phase "maxiter" "Reached max iterations ($MAX_ITERATIONS) without completion"; then
         exit 0
     fi
-    end_loop "$LOOP_DIR" "$STATE_FILE" "$EXIT_MAXITER"
+    end_loop "$LOOP_DIR" "$STATE_FILE" "$EXIT_MAXITER" "$PROJECT_ROOT"
     exit 0
 fi
 
@@ -993,6 +989,7 @@ if [[ "$IS_FINALIZE_PHASE" == "true" ]]; then
         exit 0
     fi
     # Methodology analysis skipped or already done - proceed with normal exit
+    record_head_commit_and_ended_at "$STATE_FILE" "$PROJECT_ROOT"
     mv "$STATE_FILE" "$LOOP_DIR/complete-state.md"
     echo "State preserved as: $LOOP_DIR/complete-state.md" >&2
     exit 0
@@ -1240,6 +1237,21 @@ run_codex_code_review() {
         review_base_type="commit"
     fi
 
+    # D17 Run Recorder: capture what is being reviewed and when, so the Proof
+    # layer can obtain reviewed_commit/reviewed_at/reviewed_base as facts
+    # instead of deriving them from file mtimes. Captured now (before the
+    # review command runs) so it reflects the commit actually sent to
+    # codex review. Deliberately NOT written to state.md here -- these are
+    # exposed via the CODEX_REVIEWED_* globals (same pattern as
+    # CODEX_REVIEW_EXIT_CODE/CODEX_REVIEW_LOG_FILE below) so the caller can
+    # write them only once the review is confirmed to have produced a real
+    # result. Writing them unconditionally here would leave a false
+    # "reviewed_commit" behind after a failed, timed-out, or empty-output
+    # review that never actually covered that commit.
+    CODEX_REVIEWED_COMMIT=$(run_with_timeout "$GIT_TIMEOUT" git -C "$PROJECT_ROOT" rev-parse HEAD 2>/dev/null || true)
+    CODEX_REVIEWED_AT="$timestamp"
+    CODEX_REVIEWED_BASE="$review_base"
+
     CODEX_REVIEW_CMD_FILE="$CACHE_DIR/round-${round}-codex-review.cmd"
     CODEX_REVIEW_LOG_FILE="$CACHE_DIR/round-${round}-codex-review.log"
     local prompt_file="$LOOP_DIR/round-${round}-review-prompt.md"
@@ -1326,7 +1338,20 @@ run_and_handle_code_review() {
     if [[ "$detect_exit" -eq 2 ]]; then
         # Stdout missing/empty is a hard error - block and require retry
         block_review_failure "$round" "Codex review produced no stdout output" "N/A"
-    elif [[ "$detect_exit" -eq 0 ]] && [[ -n "$merged_content" ]]; then
+    fi
+
+    # D17 Run Recorder: only now is the review confirmed to have actually run
+    # and produced a real result (either issues found, or a clean pass) --
+    # write the facts captured in run_codex_code_review. A run that hit
+    # block_review_failure above never reaches this line.
+    if [[ -n "${CODEX_REVIEWED_COMMIT:-}" ]]; then
+        upsert_state_fields "$STATE_FILE" \
+            "${FIELD_REVIEWED_COMMIT}=${CODEX_REVIEWED_COMMIT}" \
+            "${FIELD_REVIEWED_AT}=${CODEX_REVIEWED_AT}" \
+            "${FIELD_REVIEWED_BASE}=${CODEX_REVIEWED_BASE}"
+    fi
+
+    if [[ "$detect_exit" -eq 0 ]] && [[ -n "$merged_content" ]]; then
         # Issues found - continue review loop
         continue_review_loop_with_issues "$round" "$merged_content"
     else
@@ -1463,7 +1488,7 @@ This loop should not continue automatically. Revisit the original plan, recover 
         "LAST_VERDICT=$last_verdict" \
         "PLAN_FILE=$PLAN_FILE")
 
-    end_loop "$LOOP_DIR" "$STATE_FILE" "$EXIT_STOP"
+    end_loop "$LOOP_DIR" "$STATE_FILE" "$EXIT_STOP" "$PROJECT_ROOT"
 
     jq -n \
         --arg reason "$reason" \
@@ -1895,7 +1920,7 @@ if [[ "$LAST_LINE_TRIMMED" == "$MARKER_COMPLETE" ]]; then
             if enter_methodology_analysis_phase "maxiter" "Codex confirmed COMPLETE but at max iterations ($MAX_ITERATIONS)"; then
                 exit 0
             fi
-            end_loop "$LOOP_DIR" "$STATE_FILE" "$EXIT_MAXITER"
+            end_loop "$LOOP_DIR" "$STATE_FILE" "$EXIT_MAXITER" "$PROJECT_ROOT"
             exit 0
         fi
 
@@ -1999,7 +2024,7 @@ if [[ "$LAST_LINE_TRIMMED" == "$MARKER_STOP" ]]; then
     if enter_methodology_analysis_phase "stop" "Circuit breaker triggered - stagnation detected at round $CURRENT_ROUND"; then
         exit 0
     fi
-    end_loop "$LOOP_DIR" "$STATE_FILE" "$EXIT_STOP"
+    end_loop "$LOOP_DIR" "$STATE_FILE" "$EXIT_STOP" "$PROJECT_ROOT"
     exit 0
 fi
 

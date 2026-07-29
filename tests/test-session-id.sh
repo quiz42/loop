@@ -382,6 +382,17 @@ else
     fail "cancel script renames state to cancel-state.md with session_id" "cancel-state.md exists" "not found"
 fi
 
+# D17: cancel-state.md carries head_commit/ended_at, written before the rename
+CANCEL_STATE_FILE="$TEST_DIR/project/.loop/rlcr/2026-01-01_00-00-00/cancel-state.md"
+EXPECTED_CANCEL_HEAD=$(git -C "$TEST_DIR/project" rev-parse HEAD)
+if [[ -f "$CANCEL_STATE_FILE" ]] \
+    && grep -q "^head_commit: $EXPECTED_CANCEL_HEAD$" "$CANCEL_STATE_FILE" \
+    && grep -q "^ended_at:" "$CANCEL_STATE_FILE"; then
+    pass "cancel script records head_commit/ended_at (D17)"
+else
+    fail "cancel script records head_commit/ended_at (D17)" "head_commit=$EXPECTED_CANCEL_HEAD, ended_at present" "$(grep -E '^(head_commit|ended_at):' "$CANCEL_STATE_FILE" 2>/dev/null || echo 'fields not found')"
+fi
+
 # ========================================
 # Test: cancel script finds older active loop when newer is inactive
 # ========================================

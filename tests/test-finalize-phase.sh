@@ -606,6 +606,18 @@ else
     fail "COMPLETE Finalize entry" "block with finalize-state.md" "exit $EXIT_CODE, files: $(ls $LOOP_DIR/*state*.md 2>/dev/null || echo 'none'), output: $RESULT"
 fi
 
+# D17-6: codex review recorded reviewed_commit/reviewed_at/reviewed_base before the finalize rename
+echo "T-D17-6: codex review run records reviewed_commit/reviewed_at/reviewed_base"
+EXPECTED_REVIEWED_COMMIT=$(git -C "$TEST_DIR" rev-parse HEAD)
+if [[ -f "$LOOP_DIR/finalize-state.md" ]] \
+    && grep -q "^reviewed_commit: $EXPECTED_REVIEWED_COMMIT$" "$LOOP_DIR/finalize-state.md" \
+    && grep -q "^reviewed_at:" "$LOOP_DIR/finalize-state.md" \
+    && grep -q "^reviewed_base: main$" "$LOOP_DIR/finalize-state.md"; then
+    pass "codex review records reviewed_commit/reviewed_at/reviewed_base"
+else
+    fail "D17 reviewed_commit recording" "reviewed_commit=$EXPECTED_REVIEWED_COMMIT, reviewed_at, reviewed_base=main" "$(grep '^reviewed_' "$LOOP_DIR/finalize-state.md" 2>/dev/null || echo 'fields not found')"
+fi
+
 # T-NEG-1: Max iterations skips Finalize
 echo "T-NEG-1: Max iterations skips Finalize Phase"
 rm -rf "$TEST_DIR/.loop"
@@ -725,6 +737,18 @@ if echo "$RESULT" | grep -q '"decision".*block'; then
     fi
 else
     fail "Empty review blocks" "block decision" "exit $EXIT_CODE, decision not block, output: $(echo "$RESULT" | head -5)"
+fi
+
+# T-D17-7: A blocked/empty-output review must NOT leave a false reviewed_commit
+# behind. Regression test: reviewed_commit/reviewed_at/reviewed_base used to be
+# written unconditionally at the start of run_codex_code_review(), before the
+# review command's outcome was known -- so a review that failed, timed out, or
+# produced empty output would still record a commit no review actually covered.
+echo "T-D17-7: blocked review (empty output) does not record reviewed_commit"
+if [[ -f "$LOOP_DIR/state.md" ]] && ! grep -q "^reviewed_commit:" "$LOOP_DIR/state.md"; then
+    pass "blocked review does not record reviewed_commit"
+else
+    fail "D17 false reviewed_commit" "no reviewed_commit field in state.md" "$(grep '^reviewed_' "$LOOP_DIR/state.md" 2>/dev/null || echo 'state.md missing')"
 fi
 
 # T-NEG-9b: Verify the log file exists and is empty (combined stdout+stderr)

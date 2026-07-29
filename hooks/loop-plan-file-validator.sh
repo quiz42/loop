@@ -17,12 +17,8 @@ source "$SCRIPT_DIR/lib/loop-common.sh"
 
 PROJECT_ROOT="$(resolve_project_root)" || exit 0
 
-# Source portable timeout wrapper for git operations
+# run_with_timeout and GIT_TIMEOUT (default 30s) are provided by loop-common.sh
 PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-source "$PLUGIN_ROOT/scripts/portable-timeout.sh"
-
-# Default timeout for git operations (30 seconds)
-GIT_TIMEOUT=30
 
 # Read hook input (required for UserPromptSubmit hooks)
 INPUT=$(cat)
