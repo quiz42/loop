@@ -1,0 +1,19 @@
+{
+  "description": "Fixed canonical JSON byte vectors for proof-bundle-v0.",
+  "vectors": [
+    {
+      "name": "unicode-and-compact-structure",
+      "input": {
+        "z": "Å",
+        "nested": {
+          "é": true,
+          "a": null
+        },
+        "array": [3, 2, 1],
+        "a": "café"
+      },
+      "canonical_json": "{\"a\":\"café\",\"array\":[3,2,1],\"nested\":{\"a\":null,\"é\":true},\"z\":\"Å\"}",
+      "sha256": "d89d75a23d4486106f4ccf8e7c544c65fb27ac843b677ec73b62137712111a62"
+    }
+  ]
+}

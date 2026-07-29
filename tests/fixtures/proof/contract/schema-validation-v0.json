@@ -1,0 +1,108 @@
+{
+  "description": "Positive document vectors for the two v0 Proof schemas.",
+  "proof_bundle": {
+    "schema_version": "proof-bundle-v0",
+    "proof_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "run_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "profile": {
+      "name": "public-v0",
+      "version": "0",
+      "schema_hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "source": {
+      "repo_name": "loop",
+      "base_commit": "abcdef0",
+      "head_commit": null,
+      "reviewed_commit": null,
+      "loop_version": "0.1.0",
+      "exporter_version": "0.1.0"
+    },
+    "specification": {
+      "goal": "Preserve delivery evidence.",
+      "acceptance_criteria": [
+        {
+          "id": "ac-1",
+          "text": "The export is inspectable.",
+          "text_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    "run": {
+      "session_timestamp": "2026-07-29T10:11:12Z",
+      "terminal_state": "complete",
+      "rounds": [
+        {
+          "index": 0
+        }
+      ],
+      "events": []
+    },
+    "evidence": [
+      {
+        "id": "0123456789abcdef",
+        "path": "plan.md",
+        "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "bytes": 12,
+        "kind": "plan",
+        "status": "included",
+        "omitted_reason": null
+      }
+    ],
+    "findings": [
+      {
+        "id": "finding-1",
+        "severity": "P1",
+        "status": "unverifiable",
+        "found_round": 0,
+        "evidence_refs": ["0123456789abcdef"],
+        "ac_refs": ["ac-1"]
+      }
+    ],
+    "verdict": {
+      "decision": "unverifiable",
+      "per_ac": [
+        {
+          "ac_id": "ac-1",
+          "status": "unverifiable",
+          "reason": "No structured completion evidence is available.",
+          "supporting": ["0123456789abcdef"],
+          "contradicting": []
+        }
+      ],
+      "required_set": ["ac-1"],
+      "deferred": []
+    },
+    "integrity": {
+      "compile_warnings": []
+    },
+    "disclosure": {
+      "omitted": [],
+      "field_redactions": []
+    },
+    "transport": {
+      "exported_at": "2026-07-29T10:11:13Z",
+      "exporter_host_class": "development"
+    }
+  },
+  "verification_profile": {
+    "name": "public-v0",
+    "version": "0",
+    "description": "A public disclosure profile.",
+    "required_evidence_kinds": ["plan", "goal_tracker", "state"],
+    "omit_paths": ["round-*-prompt.md"],
+    "omit_kinds": ["prompt"],
+    "field_redactions": [
+      {
+        "field": "commit.author_email",
+        "reason": "Public profile privacy policy."
+      }
+    ],
+    "secret_scan": {
+      "fail_on": ["pem-header", "cloud-credential", "token-assignment", "high-entropy"],
+      "omit_on": ["absolute-path"]
+    },
+    "max_bundle_bytes": 10485760,
+    "max_item_bytes": 1048576,
+    "require_reviewed_equals_head": true
+  }
+}

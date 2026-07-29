@@ -99,6 +99,8 @@ TEST_SUITES=(
     "test-model-router.sh"
     # Skill monitor tests
     "test-skill-monitor.sh"
+    # Proof contract vectors
+    "test-proof-contract.sh"
     # Robustness tests
     "robustness/test-state-file-robustness.sh"
     "robustness/test-session-robustness.sh"

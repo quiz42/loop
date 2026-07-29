@@ -1,0 +1,557 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://loop.local/schema/proof-bundle-v0.schema.json",
+  "title": "Proof Bundle v0",
+  "description": "The portable canonical manifest for one Proof of Loop export. Unknown fields at every object level are retained and reported as warnings by readers; they are never discarded.",
+  "x-unknown-field-policy": "warn",
+  "x-canonical-payload": true,
+  "type": "object",
+  "required": [
+    "schema_version",
+    "proof_id",
+    "run_id",
+    "profile",
+    "source",
+    "specification",
+    "run",
+    "evidence",
+    "findings",
+    "verdict",
+    "integrity",
+    "disclosure",
+    "transport"
+  ],
+  "properties": {
+    "schema_version": {
+      "description": "The versioned identifier of this Proof Bundle contract.",
+      "const": "proof-bundle-v0"
+    },
+    "proof_id": {
+      "description": "The SHA-256 identity of the canonical Bundle payload, excluding transport metadata.",
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "run_id": {
+      "description": "The profile-independent SHA-256 identity of the source Loop Run.",
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "profile": {
+      "description": "The versioned verification profile that governed this export.",
+      "type": "object",
+      "required": ["name", "version", "schema_hash"],
+      "properties": {
+        "name": {
+          "description": "The stable profile name selected for this export.",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*-v[0-9]+$"
+        },
+        "version": {
+          "description": "The profile document version.",
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        "schema_hash": {
+          "description": "The SHA-256 hash of the exact profile document used for this export.",
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": true
+    },
+    "source": {
+      "description": "Repository and exporter facts recorded for the source delivery.",
+      "type": "object",
+      "required": [
+        "repo_name",
+        "base_commit",
+        "head_commit",
+        "reviewed_commit",
+        "loop_version",
+        "exporter_version"
+      ],
+      "properties": {
+        "repo_name": {
+          "description": "The source repository name without local filesystem paths.",
+          "type": "string"
+        },
+        "base_commit": {
+          "description": "The commit from which the Loop Run began, or null for a legacy gap.",
+          "anyOf": [
+            {
+              "description": "A Git commit object identifier.",
+              "type": "string",
+              "pattern": "^[0-9a-f]{7,64}$"
+            },
+            {
+              "description": "A deliberately recorded unknown legacy value.",
+              "type": "null"
+            }
+          ]
+        },
+        "head_commit": {
+          "description": "The true final commit of the Run, or null when a legacy Run did not record it.",
+          "anyOf": [
+            {
+              "description": "A Git commit object identifier.",
+              "type": "string",
+              "pattern": "^[0-9a-f]{7,64}$"
+            },
+            {
+              "description": "A deliberately recorded unknown legacy value.",
+              "type": "null"
+            }
+          ]
+        },
+        "reviewed_commit": {
+          "description": "The commit covered by the final review, or null when it was not recorded.",
+          "anyOf": [
+            {
+              "description": "A Git commit object identifier.",
+              "type": "string",
+              "pattern": "^[0-9a-f]{7,64}$"
+            },
+            {
+              "description": "A deliberately recorded unknown legacy value.",
+              "type": "null"
+            }
+          ]
+        },
+        "loop_version": {
+          "description": "The Loop version that produced the source artifacts.",
+          "type": "string"
+        },
+        "exporter_version": {
+          "description": "The exporter version that compiled this Bundle.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "specification": {
+      "description": "The original delivery goal and its immutable acceptance criteria.",
+      "type": "object",
+      "required": ["goal", "acceptance_criteria"],
+      "properties": {
+        "goal": {
+          "description": "The stated goal of the delivery.",
+          "type": "string"
+        },
+        "acceptance_criteria": {
+          "description": "The stable acceptance criteria in their recorded order.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "description": "One immutable acceptance criterion.",
+            "type": "object",
+            "required": ["id", "text", "text_sha256"],
+            "properties": {
+              "id": {
+                "description": "The stable acceptance criterion identifier.",
+                "type": "string",
+                "pattern": "^ac-[a-z0-9][a-z0-9._-]*$"
+              },
+              "text": {
+                "description": "The recorded acceptance criterion text.",
+                "type": "string"
+              },
+              "text_sha256": {
+                "description": "The raw SHA-256 hash of the recorded criterion text.",
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "run": {
+      "description": "The source Loop Run's terminal facts, rounds, and events.",
+      "type": "object",
+      "required": ["session_timestamp", "terminal_state", "rounds", "events"],
+      "properties": {
+        "session_timestamp": {
+          "description": "The UTC start timestamp recorded for the Run, or null for a legacy gap.",
+          "anyOf": [
+            {
+              "description": "A UTC ISO-8601 timestamp at whole-second precision.",
+              "type": "string",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+            },
+            {
+              "description": "A deliberately recorded unknown legacy value.",
+              "type": "null"
+            }
+          ]
+        },
+        "terminal_state": {
+          "description": "The terminal lifecycle state that made the Run eligible for export.",
+          "type": "string",
+          "enum": ["complete", "stop", "cancel", "maxiter", "unexpected"]
+        },
+        "rounds": {
+          "description": "The Run rounds in chronological order.",
+          "type": "array",
+          "items": {
+            "description": "One recorded Loop Run round.",
+            "type": "object",
+            "required": ["index"],
+            "properties": {
+              "index": {
+                "description": "The zero-based ordinal used by the Run identity projection.",
+                "type": "integer"
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "events": {
+          "description": "Recorded lifecycle events for the Run.",
+          "type": "array",
+          "items": {
+            "description": "One recorded Run event.",
+            "type": "object",
+            "required": ["kind"],
+            "properties": {
+              "kind": {
+                "description": "The event kind recorded by the Run Adapter.",
+                "type": "string"
+              },
+              "at": {
+                "description": "The UTC event timestamp, or null when the source artifact lacks one.",
+                "anyOf": [
+                  {
+                    "description": "A UTC ISO-8601 timestamp at whole-second precision.",
+                    "type": "string",
+                    "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+                  },
+                  {
+                    "description": "A deliberately recorded unknown source value.",
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "evidence": {
+      "description": "Evidence Items collected or explicitly withheld by the export profile.",
+      "type": "array",
+      "items": {
+        "description": "One evidence item and its content-addressed declaration.",
+        "type": "object",
+        "required": ["id", "path", "sha256", "bytes", "kind", "status", "omitted_reason"],
+        "properties": {
+          "id": {
+            "description": "The stable evidence identifier derived from source path and content hash.",
+            "type": "string",
+            "pattern": "^[0-9a-f]{16,64}$"
+          },
+          "path": {
+            "description": "The source path relative to the Loop Run directory.",
+            "type": "string"
+          },
+          "sha256": {
+            "description": "The raw SHA-256 hash of the original evidence bytes.",
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "bytes": {
+            "description": "The original evidence size in bytes.",
+            "type": "integer"
+          },
+          "kind": {
+            "description": "The normalized evidence classification used by profiles and the Explorer.",
+            "type": "string",
+            "enum": [
+              "plan",
+              "goal_tracker",
+              "state",
+              "round_contract",
+              "round_summary",
+              "round_review_result",
+              "prompt",
+              "review_prompt",
+              "transcript",
+              "log",
+              "bitlesson",
+              "finalize_summary",
+              "methodology_analysis_report",
+              "methodology_analysis_done",
+              "commit",
+              "unknown"
+            ]
+          },
+          "status": {
+            "description": "Whether the source evidence is included, omitted, or truncated in this Bundle.",
+            "type": "string",
+            "enum": ["included", "omitted", "truncated"]
+          },
+          "omitted_reason": {
+            "description": "The reason an item is omitted, or null when it remains available.",
+            "oneOf": [
+              {
+                "description": "No omission reason because the item remains available.",
+                "type": "null"
+              },
+              {
+                "description": "A named profile or size reason for withholding the item.",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "findings": {
+      "description": "Structured review findings and their evidence relationships.",
+      "type": "array",
+      "items": {
+        "description": "One review finding with a conservative lifecycle state.",
+        "type": "object",
+        "required": ["id", "severity", "status", "found_round", "evidence_refs", "ac_refs"],
+        "properties": {
+          "id": {
+            "description": "The stable finding identifier.",
+            "type": "string"
+          },
+          "severity": {
+            "description": "The review severity assigned to the finding.",
+            "type": "string",
+            "pattern": "^P[0-9]$"
+          },
+          "status": {
+            "description": "The evidence-backed lifecycle state of the finding.",
+            "type": "string",
+            "enum": ["open", "resolved", "waived", "unverifiable"]
+          },
+          "found_round": {
+            "description": "The zero-based round ordinal in which the finding was recorded.",
+            "type": "integer"
+          },
+          "evidence_refs": {
+            "description": "Evidence identifiers supporting or contextualizing this finding.",
+            "type": "array",
+            "items": {
+              "description": "One referenced evidence identifier.",
+              "type": "string"
+            }
+          },
+          "ac_refs": {
+            "description": "Acceptance criterion identifiers affected by this finding.",
+            "type": "array",
+            "items": {
+              "description": "One referenced acceptance criterion identifier.",
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "verdict": {
+      "description": "The profile-relative delivery verdict and per-criterion status matrix.",
+      "type": "object",
+      "required": ["decision", "per_ac", "required_set", "deferred"],
+      "properties": {
+        "decision": {
+          "description": "The overall profile-relative delivery conclusion.",
+          "type": "string",
+          "enum": ["accept", "changes_required", "unverifiable", "reject"]
+        },
+        "per_ac": {
+          "description": "The verdict recorded for every acceptance criterion.",
+          "type": "array",
+          "items": {
+            "description": "One acceptance criterion verdict.",
+            "type": "object",
+            "required": ["ac_id", "status", "reason", "supporting", "contradicting"],
+            "properties": {
+              "ac_id": {
+                "description": "The referenced acceptance criterion identifier.",
+                "type": "string"
+              },
+              "status": {
+                "description": "The conservative status derived for this criterion.",
+                "type": "string",
+                "enum": ["met", "partial", "unmet", "unverifiable", "deferred"]
+              },
+              "reason": {
+                "description": "A human-readable explanation of the derived status.",
+                "type": "string"
+              },
+              "supporting": {
+                "description": "Evidence identifiers supporting the criterion status.",
+                "type": "array",
+                "items": {
+                  "description": "One supporting evidence identifier.",
+                  "type": "string"
+                }
+              },
+              "contradicting": {
+                "description": "Evidence identifiers contradicting the criterion status.",
+                "type": "array",
+                "items": {
+                  "description": "One contradicting evidence identifier.",
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "required_set": {
+          "description": "Criterion identifiers that remain required for an accept conclusion.",
+          "type": "array",
+          "items": {
+            "description": "One required acceptance criterion identifier.",
+            "type": "string"
+          }
+        },
+        "deferred": {
+          "description": "Criteria removed from the required set through recorded replanning.",
+          "type": "array",
+          "items": {
+            "description": "One deferred criterion and its recorded replan evidence.",
+            "type": "object",
+            "required": ["ac_id", "replan_ref"],
+            "properties": {
+              "ac_id": {
+                "description": "The deferred acceptance criterion identifier.",
+                "type": "string"
+              },
+              "replan_ref": {
+                "description": "The evidence reference authorizing the deferral.",
+                "type": "string"
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "integrity": {
+      "description": "Compilation-time integrity warnings recorded without changing delivery verdict semantics.",
+      "type": "object",
+      "required": ["compile_warnings"],
+      "properties": {
+        "compile_warnings": {
+          "description": "Warnings discovered while compiling the Bundle.",
+          "type": "array",
+          "items": {
+            "description": "One actionable compilation warning.",
+            "type": "object",
+            "required": ["reason", "target", "detail"],
+            "properties": {
+              "reason": {
+                "description": "The normalized integrity reason code.",
+                "type": "string",
+                "enum": [
+                  "schema-violation",
+                  "hash-mismatch",
+                  "proof-id-mismatch",
+                  "dangling-reference",
+                  "duplicate-evidence-id",
+                  "missing-file",
+                  "profile-required-evidence-missing",
+                  "legacy-version-gap",
+                  "unparseable-artifact",
+                  "truncated-evidence",
+                  "head-commit-unknown",
+                  "reviewed-commit-unknown",
+                  "reviewed-commit-behind-head",
+                  "redacted-by-profile",
+                  "size-budget-exceeded"
+                ]
+              },
+              "target": {
+                "description": "The Bundle field or source artifact affected by the warning.",
+                "type": "string"
+              },
+              "detail": {
+                "description": "A specific human-readable explanation of the warning.",
+                "type": "string"
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "disclosure": {
+      "description": "The profile-driven declaration of omitted evidence and redacted fields.",
+      "type": "object",
+      "required": ["omitted", "field_redactions"],
+      "properties": {
+        "omitted": {
+          "description": "Evidence paths withheld from this profile-specific Bundle.",
+          "type": "array",
+          "items": {
+            "description": "One omitted evidence declaration.",
+            "type": "object",
+            "required": ["path", "reason"],
+            "properties": {
+              "path": {
+                "description": "The source-relative evidence path that was omitted.",
+                "type": "string"
+              },
+              "reason": {
+                "description": "The profile or privacy reason for omitting this evidence.",
+                "type": "string"
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "field_redactions": {
+          "description": "Derived record fields removed or masked by the selected profile.",
+          "type": "array",
+          "items": {
+            "description": "One field-level redaction declaration.",
+            "type": "object",
+            "required": ["field", "reason"],
+            "properties": {
+              "field": {
+                "description": "The logical field path affected by the redaction.",
+                "type": "string"
+              },
+              "reason": {
+                "description": "The profile rule that required the redaction.",
+                "type": "string"
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "transport": {
+      "description": "Non-identity export transport metadata excluded from proof_id computation.",
+      "type": "object",
+      "required": ["exported_at", "exporter_host_class"],
+      "properties": {
+        "exported_at": {
+          "description": "The UTC time at which this Bundle was written.",
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+        },
+        "exporter_host_class": {
+          "description": "A non-identifying class of the host that wrote this Bundle.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

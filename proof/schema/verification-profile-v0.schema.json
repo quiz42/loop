@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://loop.local/schema/verification-profile-v0.schema.json",
+  "title": "Verification Profile v0",
+  "description": "A versioned disclosure and evidence rule set for a Proof Bundle. Unknown fields at every object level are retained and reported as warnings by readers; they are never discarded.",
+  "x-unknown-field-policy": "warn",
+  "x-canonical-payload": true,
+  "type": "object",
+  "required": [
+    "name",
+    "version",
+    "description",
+    "required_evidence_kinds",
+    "omit_paths",
+    "omit_kinds",
+    "field_redactions",
+    "secret_scan",
+    "max_bundle_bytes",
+    "max_item_bytes",
+    "require_reviewed_equals_head"
+  ],
+  "properties": {
+    "name": {
+      "description": "The stable, versioned profile name.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*-v[0-9]+$"
+    },
+    "version": {
+      "description": "The fixed version of this v0 profile contract.",
+      "const": "0"
+    },
+    "description": {
+      "description": "A human-readable statement of the disclosure policy.",
+      "type": "string"
+    },
+    "required_evidence_kinds": {
+      "description": "Evidence classifications required for a complete export under this profile.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "description": "One required normalized evidence classification.",
+        "type": "string"
+      }
+    },
+    "omit_paths": {
+      "description": "Source-relative glob patterns for evidence that this profile omits.",
+      "type": "array",
+      "items": {
+        "description": "One source-relative omission glob.",
+        "type": "string"
+      }
+    },
+    "omit_kinds": {
+      "description": "Normalized evidence classifications that this profile omits.",
+      "type": "array",
+      "items": {
+        "description": "One normalized evidence classification to omit.",
+        "type": "string"
+      }
+    },
+    "field_redactions": {
+      "description": "Derived record fields that this profile redacts without rewriting file evidence.",
+      "type": "array",
+      "items": {
+        "description": "One field-level redaction rule.",
+        "type": "object",
+        "required": ["field", "reason"],
+        "properties": {
+          "field": {
+            "description": "The logical field path selected for redaction.",
+            "type": "string"
+          },
+          "reason": {
+            "description": "The privacy or disclosure rule that requires redaction.",
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "secret_scan": {
+      "description": "The scan categories that fail export or cause an item to be omitted.",
+      "type": "object",
+      "required": ["fail_on", "omit_on"],
+      "properties": {
+        "fail_on": {
+          "description": "Secret classes that cause public export to fail without revealing the value.",
+          "type": "array",
+          "items": {
+            "description": "One secret class that fails export.",
+            "type": "string",
+            "enum": ["pem-header", "cloud-credential", "token-assignment", "high-entropy"]
+          }
+        },
+        "omit_on": {
+          "description": "Privacy classes that omit an affected item while preserving a disclosure record.",
+          "type": "array",
+          "items": {
+            "description": "One privacy class that omits an affected item.",
+            "type": "string",
+            "enum": ["absolute-path"]
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "max_bundle_bytes": {
+      "description": "The maximum preferred total output size in bytes.",
+      "type": "integer"
+    },
+    "max_item_bytes": {
+      "description": "The maximum preferred size of one included evidence item in bytes.",
+      "type": "integer"
+    },
+    "require_reviewed_equals_head": {
+      "description": "Whether the Loop-Verified badge requires the reviewed and head commits to match.",
+      "type": "boolean"
+    }
+  },
+  "additionalProperties": true
+}

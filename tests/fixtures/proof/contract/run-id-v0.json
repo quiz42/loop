@@ -1,0 +1,23 @@
+{
+  "description": "Fixed run_id vectors for the Proof v0 inherent-facts projection.",
+  "vectors": [
+    {
+      "name": "complete-run",
+      "facts": {
+        "base_commit": "base",
+        "head_commit": "head",
+        "session_timestamp": "2026-07-29T10:11:12Z",
+        "terminal_state": "complete",
+        "round_indices": [0, 1, 2]
+      },
+      "canonical_payload": "{\"algo\":\"run-id-v0\",\"base_commit\":\"base\",\"head_commit\":\"head\",\"round_indices\":[0,1,2],\"session_timestamp\":\"2026-07-29T10:11:12Z\",\"terminal_state\":\"complete\"}",
+      "run_id": "sha256:1498eb331df0586ed58deddf4acb4d09eaf8d7d06203b365d2a988a1dc946c7d"
+    },
+    {
+      "name": "missing-run-facts-serialize-as-null",
+      "facts": {},
+      "canonical_payload": "{\"algo\":\"run-id-v0\",\"base_commit\":null,\"head_commit\":null,\"round_indices\":null,\"session_timestamp\":null,\"terminal_state\":null}",
+      "run_id": "sha256:d6427f0597adc0884cb8a638423c6b2efa5abb69b478b8602fdeca8bd8ef0d71"
+    }
+  ]
+}

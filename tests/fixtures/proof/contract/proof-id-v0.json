@@ -1,0 +1,30 @@
+{
+  "description": "Fixed proof_id vector showing that transport metadata is excluded.",
+  "vectors": [
+    {
+      "name": "transport-is-excluded",
+      "bundle": {
+        "schema_version": "proof-bundle-v0",
+        "proof_id": "sha256:ignored",
+        "run_id": "sha256:run",
+        "profile": {
+          "version": "0",
+          "name": "public-v0",
+          "schema_hash": "sha256:profile"
+        },
+        "source": {
+          "head_commit": null,
+          "base_commit": "base"
+        },
+        "evidence": [],
+        "note": "café",
+        "transport": {
+          "exported_at": "2026-07-29T10:11:12Z",
+          "exporter_host_class": "mac"
+        }
+      },
+      "canonical_payload": "{\"evidence\":[],\"note\":\"café\",\"profile\":{\"name\":\"public-v0\",\"schema_hash\":\"sha256:profile\",\"version\":\"0\"},\"run_id\":\"sha256:run\",\"schema_version\":\"proof-bundle-v0\",\"source\":{\"base_commit\":\"base\",\"head_commit\":null}}",
+      "proof_id": "sha256:23674005c63713e0a146a862f8c6d6e7b52edc4eb750232de07396bb94ec9049"
+    }
+  ]
+}
