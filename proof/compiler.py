@@ -1,8 +1,9 @@
-"""Proof of Loop implementation package."""
+"""Public compiler surface for assembling and writing Proof Bundles."""
 
-from .adapter import ActiveRunError, RunAdapter, RunRecord, RunUnreadableError
-from .compiler import (
+from .core import (
     BundleCompiler,
+    BundleWriteError,
+    EvidenceCollection,
     EvidenceCompiler,
     ExportResult,
     SecretScanError,
@@ -10,25 +11,21 @@ from .compiler import (
     default_output_dir,
     export_run,
     find_latest_terminal_run,
+    load_profile,
     write_bundle,
 )
-from .validator import BundleValidator, ValidationReport, validate_bundle
 
 __all__ = [
-    "ActiveRunError",
     "BundleCompiler",
-    "BundleValidator",
+    "BundleWriteError",
+    "EvidenceCollection",
     "EvidenceCompiler",
     "ExportResult",
-    "RunAdapter",
-    "RunRecord",
-    "RunUnreadableError",
     "SecretScanError",
-    "ValidationReport",
     "compile_bundle",
     "default_output_dir",
     "export_run",
     "find_latest_terminal_run",
-    "validate_bundle",
+    "load_profile",
     "write_bundle",
 ]

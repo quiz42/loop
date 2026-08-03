@@ -191,6 +191,12 @@ Ensure you have `codex` CLI installed:
 codex --version
 ```
 
+`loop proof export` and `loop proof verify` also require Python 3.9 or newer:
+
+```bash
+python3 --version
+```
+
 The skills will use `gpt-5.5` with `high` effort level by default.
 
 ## Uninstall

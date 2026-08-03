@@ -1187,6 +1187,50 @@ _loop_monitor_codex() {
     fi
 }
 
+# Proof CLI helpers.  These deliberately resolve the Python entrypoints from
+# this sourced file's location, not from the caller's current working
+# directory: `source /path/to/loop.sh; cd /another/project; loop proof ...`
+# must continue to work.
+_loop_proof_require_python39() {
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "Error: loop proof requires Python 3.9 or newer. Install Python 3.9+ and ensure python3 is on PATH." >&2
+        return 1
+    fi
+
+    if ! python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)' >/dev/null 2>&1; then
+        echo "Error: loop proof requires Python 3.9 or newer. Install Python 3.9+ and ensure python3 is on PATH." >&2
+        return 1
+    fi
+}
+
+_loop_proof_usage() {
+    echo "Usage: loop proof <export|verify> [args]" >&2
+    echo "" >&2
+    echo "Subcommands:" >&2
+    echo "  export [--latest | --run <dir>] [--profile <name>] [--out <dir>]" >&2
+    echo "  verify <bundle-dir | proof.json> [--json]" >&2
+}
+
+_loop_proof() {
+    local proof_command="${1:-}"
+    shift 2>/dev/null || true
+
+    case "$proof_command" in
+        export)
+            _loop_proof_require_python39 || return $?
+            python3 "$LOOP_SCRIPT_DIR/proof-export.py" "$@"
+            ;;
+        verify)
+            _loop_proof_require_python39 || return $?
+            python3 "$LOOP_SCRIPT_DIR/proof-verify.py" "$@"
+            ;;
+        *)
+            _loop_proof_usage
+            return 1
+            ;;
+    esac
+}
+
 # Main loop function
 loop() {
     local cmd="$1"
@@ -1227,6 +1271,9 @@ loop() {
                     ;;
             esac
             ;;
+        proof)
+            _loop_proof "$@"
+            ;;
         *)
             echo "Usage: loop <command> [args]"
             echo ""
@@ -1235,6 +1282,8 @@ loop() {
             echo "  monitor skill   Monitor all skill invocations (codex + gemini)"
             echo "  monitor codex   Monitor ask-codex skill invocations only"
             echo "  monitor gemini  Monitor ask-gemini skill invocations only"
+            echo "  proof export    Export a terminal Loop Run as a Proof Bundle"
+            echo "  proof verify    Verify a Proof Bundle offline"
             return 1
             ;;
     esac

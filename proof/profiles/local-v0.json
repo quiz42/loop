@@ -1,0 +1,23 @@
+{
+  "name": "local-v0",
+  "version": "0",
+  "description": "The local disclosure profile retains every readable source Run artifact for an on-machine retrospective.",
+  "required_evidence_kinds": [
+    "plan",
+    "goal_tracker",
+    "state",
+    "round_contract",
+    "round_summary",
+    "round_review_result"
+  ],
+  "omit_paths": [],
+  "omit_kinds": [],
+  "field_redactions": [],
+  "secret_scan": {
+    "fail_on": [],
+    "omit_on": []
+  },
+  "max_bundle_bytes": 10485760,
+  "max_item_bytes": 1048576,
+  "require_reviewed_equals_head": true
+}

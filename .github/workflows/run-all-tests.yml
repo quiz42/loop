@@ -43,3 +43,8 @@ jobs:
 
       - name: Run Proof contract tests
         run: ./tests/test-proof-contract.sh
+
+      - name: Run Proof CLI tests
+        run: |
+          ./tests/test-proof-export.sh
+          ./tests/test-proof-verify.sh
