@@ -36,6 +36,12 @@ def load_schema_documents():
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def load_profile(name):
+    """Load one committed, versioned Proof verification profile."""
+    path = PROJECT_ROOT / "proof" / "profiles" / f"{name}.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def error_keywords(result):
     """Return the keywords reported by the public validation result."""
     return {issue.keyword for issue in result.errors}
@@ -123,6 +129,26 @@ class ProofIdVectorTests(unittest.TestCase):
         expected = compute_proof_id(bundle)
         bundle.pop("transport")
         self.assertEqual(compute_proof_id(bundle), expected)
+
+
+class PublicProfileTests(unittest.TestCase):
+    """The committed public profile freezes its minimum evidence contract."""
+
+    def test_public_v0_is_schema_valid_and_requires_the_frozen_evidence_set(self):
+        profile = load_profile("public-v0")
+        result = validate_instance(profile, load_schema("verification-profile-v0"))
+
+        self.assertTrue(result.is_valid, result.errors)
+        self.assertEqual(
+            profile["required_evidence_kinds"],
+            [
+                "plan",
+                "goal_tracker",
+                "state",
+                "round_summary",
+                "round_review_result",
+            ],
+        )
 
 
 class SchemaValidationTests(unittest.TestCase):

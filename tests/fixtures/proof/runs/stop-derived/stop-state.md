@@ -1,0 +1,31 @@
+---
+current_round: 1
+max_iterations: 3
+codex_model: gpt-5.5
+codex_effort: high
+codex_timeout: 5400
+push_every_round: false
+full_review_round: 5
+plan_file: plan.md
+plan_tracked: true
+start_branch: fixture-cancel
+base_branch: main
+base_commit: 89a537f0321434fca873eef8eb53168ff214d897
+review_started: true
+ask_codex_question: true
+session_id: 4a3edc72-4a37-440f-8cd1-e8b02b57c8de
+agent_teams: false
+privacy_mode: true
+bitlesson_required: false
+bitlesson_file: .loop/bitlesson.md
+bitlesson_allow_empty_none: true
+mainline_stall_count: 3
+last_mainline_verdict: stalled
+drift_status: replan_required
+started_at: 2026-07-29T20:58:07Z
+reviewed_commit: bbe88e25ba92925ce8f13b1424a2986b1d1929c5
+reviewed_at: 2026-07-29T21:00:02Z
+reviewed_base: 89a537f0321434fca873eef8eb53168ff214d897
+head_commit: bbe88e25ba92925ce8f13b1424a2986b1d1929c5
+ended_at: 2026-07-29T21:01:40Z
+---
