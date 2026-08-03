@@ -104,7 +104,8 @@
         "properties": {
           "field": {
             "description": "The logical field path selected for redaction.",
-            "type": "string"
+            "type": "string",
+            "enum": ["commit.author_email"]
           },
           "reason": {
             "description": "The privacy or disclosure rule that requires redaction.",
