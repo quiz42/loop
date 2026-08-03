@@ -7,6 +7,7 @@ and validator tests copy them and create any tampered Bundles programmatically.
 | Fixture | Origin | Terminal State |
 | --- | --- | --- |
 | `clean-complete` | Real Claude+Codex RLCR Run | `complete` |
+| `noncontiguous-ac-complete` | Synthetic complete Run with explicit AC1, AC2, AC4, and AC5 labels | `complete` |
 | `complete-after-rework` | Real Claude+Codex RLCR Run with Codex findings resolved in a follow-up round | `complete` |
 | `cancel-after-review` | Real Claude+Codex RLCR Run deliberately cancelled after Codex review | `cancel` |
 | `maxiter-derived` | Mechanical derivative of `cancel-after-review` | `maxiter` |
@@ -17,6 +18,9 @@ and validator tests copy them and create any tampered Bundles programmatically.
 The three real Runs are kept whole, including prompt and review-prompt files.
 Their raw source paths are intentional input to later `public-v0` omission
 tests; this corpus itself is not a public-profile export.
+
+`noncontiguous-ac-complete` is a minimal synthetic Run used to ensure explicit
+acceptance-criterion labels, rather than list positions, remain stable IDs.
 
 `legacy-pre-d17/complete-state.md` starts with a header explaining the
 simulated pre-D17 recorder gap. Do not remove that comment or restore its
