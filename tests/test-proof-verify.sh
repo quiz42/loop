@@ -102,6 +102,45 @@ else
     fail "clean Bundle warnings" "an empty warning list" "$clean_report"
 fi
 
+CANCEL_RUN_DIR="$TEST_DIR/cancel-run"
+cp -R "$PROJECT_ROOT/tests/fixtures/proof/runs/cancel-after-review" "$CANCEL_RUN_DIR"
+loop proof export --run "$CANCEL_RUN_DIR" --out "$TEST_DIR/cancel" >/dev/null 2>&1
+cancel_setup_status=$?
+assert_exit "cancel Run exports for verification" 0 "$cancel_setup_status"
+cancel_report=$(loop proof verify "$TEST_DIR/cancel" --json)
+cancel_verify_status=$?
+assert_exit "cancel Bundle verifies with intact integrity" 0 "$cancel_verify_status"
+assert_report "cancel Bundle reports valid JSON" "$cancel_report" valid
+if python3 - "$cancel_report" <<'PY'
+import json
+import sys
+
+report = json.loads(sys.argv[1])
+assert not any(warning.get("target") == ".cancel-requested" for warning in report["warnings"])
+PY
+then
+    pass "cancel verification has no cancellation-marker warning"
+else
+    fail "cancel verification warnings" "no warning targeting .cancel-requested" "unexpected cancellation-marker warning"
+fi
+
+TRUNCATED_RUN_DIR="$TEST_DIR/truncated-run"
+cp -R "$PROJECT_ROOT/tests/fixtures/proof/runs/clean-complete" "$TRUNCATED_RUN_DIR"
+python3 - "$TRUNCATED_RUN_DIR/goal-tracker.md" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+path.write_bytes(path.read_bytes() + b"x" * 1048577)
+PY
+loop proof export --run "$TRUNCATED_RUN_DIR" --out "$TEST_DIR/truncated" >/dev/null 2>&1
+truncated_setup_status=$?
+assert_exit "truncated required-evidence Run exports for verification" 0 "$truncated_setup_status"
+truncated_report=$(loop proof verify "$TEST_DIR/truncated" --json)
+truncated_verify_status=$?
+assert_exit "truncated required evidence is incomplete" 2 "$truncated_verify_status"
+assert_report "truncated required evidence names the missing profile kind" "$truncated_report" incomplete profile-required-evidence-missing
+
 cp -R "$TEST_DIR/clean" "$TEST_DIR/tampered-evidence"
 printf 'tampered evidence byte\n' >> "$TEST_DIR/tampered-evidence/evidence/plan.md"
 evidence_report=$(loop proof verify "$TEST_DIR/tampered-evidence" --json)

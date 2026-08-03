@@ -12,6 +12,7 @@ import datetime as _datetime
 import fnmatch
 import hashlib
 import json
+import math
 import os
 import platform
 import re
@@ -147,22 +148,40 @@ def _first_heading_section(text: str, heading: str) -> Optional[str]:
     return "\n".join(lines[start:end]).strip()
 
 
-def _criterion_text(raw: str) -> str:
-    """Normalize only list/AC labels; preserve the recorded criterion wording."""
-    value = raw.strip()
-    value = re.sub(r"^AC[-_ ]?[0-9A-Za-z]+\s*:\s*", "", value, flags=re.IGNORECASE)
-    return value.strip()
+_EXPLICIT_AC_LABEL = re.compile(r"^AC-?([0-9]+)\s*:\s*(.*)$", re.IGNORECASE)
+_AC_REFERENCE = re.compile(
+    r"\bAC-?([0-9]+)(?=(?:\s|[,;|)]|$|:\s|:$))", re.IGNORECASE
+)
+_AC_REFERENCE_ATTEMPT = re.compile(
+    r"(?<![A-Za-z0-9_])AC(?:[-_ ]?[^\s,;|)]*|[-_])",
+    re.IGNORECASE,
+)
 
 
-def _parse_criteria(goal_tracker: Optional[str]) -> Tuple[List[Dict[str, str]], bool]:
-    """Parse the immutable acceptance-criteria list and report parse success."""
+def _ac_id(number: str) -> str:
+    """Normalize an AC number into the stable identifier used in a Bundle."""
+    return f"ac-{number.lstrip('0') or '0'}"
+
+
+def _looks_like_malformed_ac_label(raw: str) -> bool:
+    """Recognize an attempted AC label that is not in the v0 label form."""
+    return bool(
+        re.match(r"^AC(?:[0-9_-].*| [^:]*|)?\s*:", raw, flags=re.IGNORECASE)
+        or re.match(r"^AC(?:[0-9]|[-_][0-9])(?:\s|$)", raw, flags=re.IGNORECASE)
+    )
+
+
+def _parse_criteria(goal_tracker: Optional[str]) -> Tuple[List[Dict[str, str]], List[str]]:
+    """Parse criteria, retaining only unambiguous stable criterion identities."""
     if not goal_tracker:
-        return [], False
+        return [], ["Acceptance Criteria section was missing or unreadable."]
     section = _first_heading_section(goal_tracker, "Acceptance Criteria")
     if section is None:
-        return [], False
+        return [], ["Acceptance Criteria section was missing."]
 
-    criteria: List[Dict[str, str]] = []
+    parsed: List[Tuple[str, str]] = []
+    problems: List[str] = []
+    list_position = 0
     for line in section.splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("<!--") or stripped.endswith("-->"):
@@ -170,17 +189,72 @@ def _parse_criteria(goal_tracker: Optional[str]) -> Tuple[List[Dict[str, str]], 
         match = re.match(r"^(?:[-*]|[0-9]+[.)])\s+(.*)$", stripped)
         if not match:
             continue
-        text = _criterion_text(match.group(1))
-        if not text:
+        list_position += 1
+        raw = match.group(1).strip()
+        explicit = _EXPLICIT_AC_LABEL.match(raw)
+        if explicit:
+            identifier = _ac_id(explicit.group(1))
+            text = explicit.group(2).strip()
+        elif _looks_like_malformed_ac_label(raw):
+            problems.append(
+                f"Acceptance Criteria entry {list_position} has a malformed AC label."
+            )
             continue
-        identifier = f"ac-{len(criteria) + 1}"
-        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
-        criteria.append({"id": identifier, "text": text, "text_sha256": digest})
-    return criteria, bool(criteria)
+        else:
+            identifier = f"ac-{list_position}"
+            text = raw
+        if not text:
+            problems.append(
+                f"Acceptance Criteria entry {list_position} has no criterion text."
+            )
+            continue
+        parsed.append((identifier, text))
+
+    identifiers = [identifier for identifier, _ in parsed]
+    duplicate_ids = sorted(
+        identifier for identifier in set(identifiers) if identifiers.count(identifier) > 1
+    )
+    if duplicate_ids:
+        problems.append(
+            "Acceptance Criteria contains duplicate labels or generated IDs: "
+            + ", ".join(duplicate_ids)
+            + "."
+        )
+    ambiguous_ids = set(duplicate_ids)
+    criteria = [
+        {
+            "id": identifier,
+            "text": text,
+            "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        }
+        for identifier, text in parsed
+        if identifier not in ambiguous_ids
+    ]
+    if not parsed and not problems:
+        problems.append("Acceptance Criteria section contained no list items.")
+    return criteria, problems
 
 
-def _ac_numbers(raw: str) -> List[int]:
-    return [int(value) for value in re.findall(r"AC[-_ ]?([0-9]+)", raw, flags=re.IGNORECASE)]
+def _ac_ids(raw: str) -> List[str]:
+    """Return stable criterion IDs explicitly named in free-form table text."""
+    identifiers: List[str] = []
+    for match in _AC_REFERENCE.finditer(raw):
+        identifier = _ac_id(match.group(1))
+        if identifier not in identifiers:
+            identifiers.append(identifier)
+    return identifiers
+
+
+def _ac_references(raw: str) -> Tuple[List[str], List[str]]:
+    """Return valid AC IDs and any malformed AC-like references in the text."""
+    identifiers = _ac_ids(raw)
+    malformed: List[str] = []
+    for match in _AC_REFERENCE_ATTEMPT.finditer(raw):
+        token = match.group(0)
+        if not re.fullmatch(r"AC-?[0-9]+(?::)?", token, flags=re.IGNORECASE):
+            if token not in malformed:
+                malformed.append(token)
+    return identifiers, malformed
 
 
 def _parse_table_rows(section: Optional[str]) -> List[List[str]]:
@@ -197,39 +271,66 @@ def _parse_table_rows(section: Optional[str]) -> List[List[str]]:
     return rows
 
 
-def _parse_completed_and_deferred(goal_tracker: Optional[str]) -> Tuple[set, Dict[int, str], List[Dict[str, str]]]:
-    """Return completed AC numbers, evidence text, and explicitly deferred rows."""
+def _parse_completed_and_deferred(
+    goal_tracker: Optional[str], known_ac_ids: Sequence[str]
+) -> Tuple[set, List[Dict[str, str]], List[str]]:
+    """Resolve completed/deferred table references against known stable AC IDs."""
     if not goal_tracker:
-        return set(), {}, []
+        return set(), [], []
+    known = set(known_ac_ids)
+    problems: List[str] = []
     completed_rows = _parse_table_rows(
         _first_heading_section(goal_tracker, "Completed and Verified")
     )
     completed: set = set()
-    evidence: Dict[int, str] = {}
     for row in completed_rows:
         if not row or row[0].lower() in ("ac", "acceptance criteria"):
             continue
-        numbers = _ac_numbers(row[0])
-        if not numbers:
+        identifiers, malformed = _ac_references(row[0])
+        if malformed:
+            problems.append(
+                "Completed and Verified contains malformed AC references: "
+                + ", ".join(malformed)
+                + "."
+            )
+        if not identifiers:
             continue
-        completed.update(numbers)
-        if len(row) >= 5:
-            for number in numbers:
-                evidence[number] = row[-1]
+        unknown = sorted(identifier for identifier in identifiers if identifier not in known)
+        if unknown:
+            problems.append(
+                "Completed and Verified references unknown Acceptance Criteria: "
+                + ", ".join(unknown)
+                + "."
+            )
+        completed.update(identifier for identifier in identifiers if identifier in known)
 
     deferred_rows = _parse_table_rows(_first_heading_section(goal_tracker, "Explicitly Deferred"))
     deferred: List[Dict[str, str]] = []
     for row in deferred_rows:
         if not row or row[0].lower() in ("task", "ac"):
             continue
-        numbers = _ac_numbers(" ".join(row[:2]))
-        if not numbers:
+        identifiers, malformed = _ac_references(" ".join(row[:2]))
+        if malformed:
+            problems.append(
+                "Explicitly Deferred contains malformed AC references: "
+                + ", ".join(malformed)
+                + "."
+            )
+        if not identifiers:
             continue
+        unknown = sorted(identifier for identifier in identifiers if identifier not in known)
+        if unknown:
+            problems.append(
+                "Explicitly Deferred references unknown Acceptance Criteria: "
+                + ", ".join(unknown)
+                + "."
+            )
         # The row's source evidence is the goal tracker itself.  Keep a stable
         # human-readable anchor rather than trying to parse free-form prose.
-        for number in numbers:
-            deferred.append({"number": str(number), "detail": " | ".join(row)})
-    return completed, evidence, deferred
+        for identifier in identifiers:
+            if identifier in known:
+                deferred.append({"ac_id": identifier, "detail": " | ".join(row)})
+    return completed, deferred, problems
 
 
 def _kind_for_path(relative_path: str) -> str:
@@ -265,7 +366,7 @@ def _kind_for_path(relative_path: str) -> str:
     return "unknown"
 
 
-_RECOGNIZED_METADATA_PATHS = frozenset({".review-phase-started"})
+_RECOGNIZED_METADATA_PATHS = frozenset({".cancel-requested", ".review-phase-started"})
 
 
 def _iter_files(run_dir: Path) -> Iterable[Tuple[str, Path]]:
@@ -301,8 +402,8 @@ class RunRecord:
     goal_tracker_text: Optional[str]
     goal: str
     acceptance_criteria: List[Dict[str, str]]
-    completed_ac_numbers: set = field(default_factory=set)
-    completed_evidence: Dict[int, str] = field(default_factory=dict)
+    ac_mapping_valid: bool = True
+    completed_ac_ids: set = field(default_factory=set)
     deferred: List[Dict[str, str]] = field(default_factory=list)
     warnings: List[Dict[str, str]] = field(default_factory=list)
     rounds: List[Dict[str, Any]] = field(default_factory=list)
@@ -372,13 +473,13 @@ class RunAdapter:
             warnings.append(
                 {"reason": "missing-file", "target": "goal-tracker.md", "detail": "goal-tracker.md is missing or unreadable."}
             )
-        criteria, parsed = _parse_criteria(tracker_text)
-        if not parsed:
+        criteria, criteria_problems = _parse_criteria(tracker_text)
+        if criteria_problems:
             warnings.append(
                 {
                     "reason": "unparseable-artifact",
                     "target": "goal-tracker.md",
-                    "detail": "Acceptance Criteria section was missing or unparseable; no cosmetic criteria were synthesized.",
+                    "detail": " ".join(criteria_problems),
                 }
             )
         goal = ""
@@ -388,7 +489,17 @@ class RunAdapter:
             if not goal:
                 first_heading = re.search(r"^#\s+(.+?)\s*$", plan_text, flags=re.MULTILINE)
                 goal = first_heading.group(1).strip() if first_heading else ""
-        completed, completed_evidence, deferred = _parse_completed_and_deferred(tracker_text)
+        completed, deferred, table_problems = _parse_completed_and_deferred(
+            tracker_text, [criterion["id"] for criterion in criteria]
+        )
+        if table_problems:
+            warnings.append(
+                {
+                    "reason": "unparseable-artifact",
+                    "target": "goal-tracker.md",
+                    "detail": " ".join(table_problems),
+                }
+            )
         if not self._has_any_state_fact(state, ("head_commit", "reviewed_commit", "ended_at")):
             warnings.append(
                 {
@@ -407,8 +518,8 @@ class RunAdapter:
             goal_tracker_text=tracker_text,
             goal=goal,
             acceptance_criteria=criteria,
-            completed_ac_numbers=completed,
-            completed_evidence=completed_evidence,
+            ac_mapping_valid=not criteria_problems and not table_problems,
+            completed_ac_ids=completed,
             deferred=deferred,
             warnings=warnings,
             rounds=rounds,
@@ -520,6 +631,38 @@ _SECRET_PATTERNS: Tuple[Tuple[str, re.Pattern[str]], ...] = (
     ("cloud-credential", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b|\bgh[pousr]_[A-Za-z0-9_]{20,}\b")),
     ("token-assignment", re.compile(r"\b(?:token|api[_-]?key|secret|password)\s*[:=]\s*['\"]?[A-Za-z0-9_\-]{8,}", re.IGNORECASE)),
 )
+_URL_SAFE_CANDIDATE = re.compile(
+    r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_-])"
+)
+_STANDARD_BASE64_CANDIDATE = re.compile(
+    r"(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{32,}(?:={1,2})?(?![A-Za-z0-9+/=])"
+)
+
+
+def _shannon_entropy(value: str) -> float:
+    """Return the Shannon entropy of a candidate without exposing its value."""
+    if not value:
+        return 0.0
+    counts: Dict[str, int] = {}
+    for character in value:
+        counts[character] = counts.get(character, 0) + 1
+    length = len(value)
+    return -sum(
+        (count / length) * math.log2(count / length)
+        for count in sorted(counts.values())
+    )
+
+
+def _has_high_entropy_candidate(text: str) -> bool:
+    """Detect a credential-like Base64 or URL-safe token conservatively."""
+    for pattern in (_URL_SAFE_CANDIDATE, _STANDARD_BASE64_CANDIDATE):
+        for match in pattern.finditer(text):
+            candidate = match.group(0).rstrip("=")
+            candidates = [candidate] + candidate.split("/")
+            for value in candidates:
+                if len(value) >= 32 and _shannon_entropy(value) >= 4.5:
+                    return True
+    return False
 
 
 def _secret_match(data: bytes, enabled: Sequence[str]) -> Optional[str]:
@@ -529,6 +672,8 @@ def _secret_match(data: bytes, enabled: Sequence[str]) -> Optional[str]:
     for kind, pattern in _SECRET_PATTERNS:
         if kind in enabled and pattern.search(text):
             return kind
+    if "high-entropy" in enabled and _has_high_entropy_candidate(text):
+        return "high-entropy"
     return None
 
 
@@ -635,7 +780,11 @@ class EvidenceCompiler:
                 item["id"] = _evidence_full_id(item["path"], item["sha256"])
 
         for required_kind in self.profile.get("required_evidence_kinds", []):
-            matching = [item for item in items if item["kind"] == required_kind and item["status"] != "omitted"]
+            matching = [
+                item
+                for item in items
+                if item["kind"] == required_kind and item["status"] == "included"
+            ]
             if not matching:
                 warnings.append(
                     {
@@ -645,6 +794,166 @@ class EvidenceCompiler:
                     }
                 )
         return EvidenceCollection(items, contents, disclosure, warnings)
+
+
+_FINDING_MARKER = re.compile(
+    r"^.{0,9}?(?P<marker>\[P(?P<severity>[0-9])\])\s+(?P<summary>.+?)\s*$",
+    re.MULTILINE,
+)
+_FINDING_MARKER_ATTEMPT = re.compile(
+    r"^.{0,9}?(?P<marker>\[P[^\]]*\])", re.MULTILINE
+)
+
+
+def _finding_key(severity: str, summary: str) -> str:
+    """Return a stable internal key without exposing review prose in the Bundle."""
+    normalized = re.sub(r"\s+", " ", summary.strip().lower())
+    return f"{severity}:{normalized}"
+
+
+def _append_unique(values: List[str], value: str) -> None:
+    if value not in values:
+        values.append(value)
+
+
+def _derive_findings(
+    run: RunRecord, evidence_by_path: Mapping[str, Mapping[str, Any]]
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, str]], bool]:
+    """Derive conservative finding lifecycle facts from retained review results."""
+    findings: List[Dict[str, Any]] = []
+    warnings: List[Dict[str, str]] = []
+    parseable = True
+    active: Dict[str, Dict[str, Any]] = {}
+    known_ac_ids = {criterion["id"] for criterion in run.acceptance_criteria}
+
+    review_paths = [
+        (
+            round_data["index"],
+            f"round-{round_data['index']}-review-result.md",
+            run.run_dir / f"round-{round_data['index']}-review-result.md",
+        )
+        for round_data in run.rounds
+    ]
+
+    for round_index, relative, path in sorted(review_paths):
+        item = evidence_by_path.get(relative)
+        if not item or item.get("status") != "included":
+            if item is None and not active:
+                # A Run can record early contract/summary artifacts before it
+                # produces its first review result. Without an active finding,
+                # that absence is not a failed re-review to resolve.
+                continue
+            # A profile cannot use source content it did not retain to make a
+            # finding judgment. One included review result of the required kind
+            # is not enough to establish that a later unavailable review did not
+            # contain an unresolved finding.
+            parseable = False
+            status = item.get("status", "missing") if item else "missing"
+            warnings.append(
+                {
+                    "reason": "unparseable-artifact",
+                    "target": relative,
+                    "detail": "Review result was "
+                    + status
+                    + "; finding lifecycle is unverifiable.",
+                }
+            )
+            for finding in active.values():
+                finding["status"] = "unverifiable"
+                if item and item.get("id"):
+                    _append_unique(finding["evidence_refs"], item["id"])
+            active = {}
+            continue
+        text = _read_text(path)
+        if text is None or not text.strip():
+            parseable = False
+            warnings.append(
+                {
+                    "reason": "unparseable-artifact",
+                    "target": relative,
+                    "detail": "Review result was unreadable or empty; finding lifecycle is unverifiable.",
+                }
+            )
+            for finding in active.values():
+                finding["status"] = "unverifiable"
+                _append_unique(finding["evidence_refs"], item["id"])
+            active = {}
+            continue
+
+        marker_matches = list(_FINDING_MARKER.finditer(text))
+        valid_marker_spans = {
+            (match.start("marker"), match.end("marker")) for match in marker_matches
+        }
+        malformed_markers = []
+        for marker in _FINDING_MARKER_ATTEMPT.finditer(text):
+            token = marker.group("marker")
+            span = (marker.start("marker"), marker.end("marker"))
+            if span not in valid_marker_spans and token not in malformed_markers:
+                malformed_markers.append(token)
+        if malformed_markers:
+            parseable = False
+            warnings.append(
+                {
+                    "reason": "unparseable-artifact",
+                    "target": relative,
+                    "detail": "Review result contains malformed finding markers: "
+                    + ", ".join(malformed_markers)
+                    + ".",
+                }
+            )
+
+        current: Dict[str, Tuple[str, List[str]]] = {}
+        for marker in marker_matches:
+            severity = f"P{marker.group('severity')}"
+            summary = marker.group("summary")
+            key = _finding_key(severity, summary)
+            ac_refs = [identifier for identifier in _ac_ids(marker.group(0)) if identifier in known_ac_ids]
+            if key not in current:
+                current[key] = (severity, ac_refs)
+            else:
+                for identifier in ac_refs:
+                    _append_unique(current[key][1], identifier)
+
+        if malformed_markers:
+            for finding in active.values():
+                finding["status"] = "unverifiable"
+                _append_unique(finding["evidence_refs"], item["id"])
+            active = {}
+        else:
+            for key, finding in active.items():
+                if key not in current:
+                    finding["status"] = "resolved"
+                    _append_unique(finding["evidence_refs"], item["id"])
+            next_active: Dict[str, Dict[str, Any]] = {}
+            for key, (severity, ac_refs) in current.items():
+                finding = active.get(key)
+                if finding is None:
+                    identifier = "finding-" + hashlib.sha256(
+                        canonical_json_bytes(
+                            {
+                                "round": round_index,
+                                "severity": severity,
+                                "key": key,
+                            }
+                        )
+                    ).hexdigest()[:16]
+                    finding = {
+                        "id": identifier,
+                        "severity": severity,
+                        "status": "open",
+                        "found_round": round_index,
+                        "evidence_refs": [item["id"]],
+                        "ac_refs": ac_refs,
+                    }
+                    findings.append(finding)
+                else:
+                    _append_unique(finding["evidence_refs"], item["id"])
+                    for ac_id in ac_refs:
+                        _append_unique(finding["ac_refs"], ac_id)
+                next_active[key] = finding
+            active = next_active
+
+    return findings, warnings, parseable
 
 
 def _repo_name(repo_root: Optional[Union[str, os.PathLike[str]]], fallback: Path) -> str:
@@ -700,45 +1009,112 @@ class BundleCompiler:
 
         def evidence_refs_for_path(path: str) -> List[str]:
             item = evidence_by_path.get(path)
-            return [item["id"]] if item else []
+            return [item["id"]] if item and item["status"] == "included" else []
 
         tracker_ref = evidence_refs_for_path("goal-tracker.md")
-        review_refs = [item["id"] for item in evidence.items if item["kind"] == "round_review_result"]
-        summary_refs = [item["id"] for item in evidence.items if item["kind"] == "round_summary"]
+        review_refs = [
+            item["id"]
+            for item in evidence.items
+            if item["kind"] == "round_review_result" and item["status"] == "included"
+        ]
+        summary_refs = [
+            item["id"]
+            for item in evidence.items
+            if item["kind"] == "round_summary" and item["status"] == "included"
+        ]
+        findings, finding_warnings, findings_parseable = _derive_findings(
+            run, evidence_by_path
+        )
+        warnings.extend(finding_warnings)
+        open_finding_refs: Dict[str, List[str]] = {}
+        unverifiable_finding_refs: Dict[str, List[str]] = {}
+        for finding in findings:
+            status = finding["status"]
+            if status not in ("open", "unverifiable"):
+                continue
+            target = (
+                open_finding_refs if status == "open" else unverifiable_finding_refs
+            )
+            for ac_id in finding["ac_refs"]:
+                target.setdefault(ac_id, [])
+                for identifier in finding["evidence_refs"]:
+                    _append_unique(target[ac_id], identifier)
         per_ac: List[Dict[str, Any]] = []
         deferred_output: List[Dict[str, str]] = []
-        deferred_numbers = {int(item["number"]) for item in run.deferred}
+        deferred_ac_ids = {item["ac_id"] for item in run.deferred}
         for criterion in run.acceptance_criteria:
-            number = int(criterion["id"].split("-")[-1])
-            supporting = tracker_ref + review_refs + summary_refs if number in run.completed_ac_numbers else []
-            status = "met" if number in run.completed_ac_numbers else (
-                "unmet" if run.terminal_state != "complete" else "unverifiable"
-            )
-            reason = "Recorded in the Completed and Verified table." if status == "met" else (
-                "Run ended before this criterion was recorded as completed." if status == "unmet" else "No structured completion record was found."
-            )
-            if number in deferred_numbers:
-                status = "deferred"
-                reason = "Criterion was explicitly deferred in the Goal Tracker."
-                deferred_output.append({"ac_id": criterion["id"], "replan_ref": tracker_ref[0] if tracker_ref else "goal-tracker.md"})
+            ac_id = criterion["id"]
+            completed = ac_id in run.completed_ac_ids
+            supporting = tracker_ref + review_refs + summary_refs if completed and tracker_ref else []
+            if completed and tracker_ref:
+                status = "met"
+                reason = "Recorded in the Completed and Verified table."
+            elif completed:
+                status = "unverifiable"
+                reason = "Completion evidence is unavailable in this verification profile."
+            elif run.terminal_state != "complete":
+                status = "unmet"
+                reason = "Run ended before this criterion was recorded as completed."
+            else:
+                status = "unverifiable"
+                reason = "No structured completion record was found."
+            contradicting: List[str] = []
+            if ac_id in deferred_ac_ids:
+                if tracker_ref:
+                    status = "deferred"
+                    reason = "Criterion was explicitly deferred in the Goal Tracker."
+                    deferred_output.append({"ac_id": ac_id, "replan_ref": tracker_ref[0]})
+                else:
+                    status = "unverifiable"
+                    reason = "Deferral evidence is unavailable in this verification profile."
+            elif ac_id in unverifiable_finding_refs:
+                status = "unverifiable"
+                reason = "A finding associated with this criterion could not be verified."
+                contradicting = unverifiable_finding_refs[ac_id]
+            elif ac_id in open_finding_refs:
+                status = "partial" if status == "met" else "unmet"
+                reason = "An unresolved finding is associated with this criterion."
+                contradicting = open_finding_refs[ac_id]
             per_ac.append(
                 {
-                    "ac_id": criterion["id"],
+                    "ac_id": ac_id,
                     "status": status,
                     "reason": reason,
                     "supporting": supporting,
-                    "contradicting": [],
+                    "contradicting": contradicting,
                 }
             )
 
         required_set = [criterion["id"] for criterion in run.acceptance_criteria if criterion["id"] not in {item["ac_id"] for item in deferred_output}]
         required_statuses = [item["status"] for item in per_ac if item["ac_id"] in required_set]
-        if not required_statuses:
+        required_profile_evidence_present = all(
+            any(
+                item["kind"] == required_kind
+                and item["status"] == "included"
+                for item in evidence.items
+            )
+            for required_kind in profile.get("required_evidence_kinds", [])
+        )
+        has_open_finding = any(finding["status"] == "open" for finding in findings)
+        has_unverifiable_finding = any(
+            finding["status"] == "unverifiable" for finding in findings
+        )
+        if run.terminal_state != "complete":
+            decision = "changes_required"
+        elif not run.ac_mapping_valid or not findings_parseable:
             decision = "unverifiable"
+        elif not required_profile_evidence_present or not required_statuses:
+            decision = "unverifiable"
+        elif any(status == "unverifiable" for status in required_statuses):
+            decision = "unverifiable"
+        elif any(status in ("partial", "unmet") for status in required_statuses):
+            decision = "changes_required"
+        elif has_unverifiable_finding:
+            decision = "unverifiable"
+        elif has_open_finding:
+            decision = "changes_required"
         elif all(status == "met" for status in required_statuses):
             decision = "accept"
-        elif any(status == "unmet" for status in required_statuses):
-            decision = "changes_required"
         else:
             decision = "unverifiable"
 
@@ -768,7 +1144,7 @@ class BundleCompiler:
                 "events": run.events,
             },
             "evidence": evidence.items,
-            "findings": [],
+            "findings": findings,
             "verdict": {
                 "decision": decision,
                 "per_ac": per_ac,
@@ -1026,7 +1402,12 @@ class BundleValidator:
             report.status = "invalid"
             report.reasons.append({"reason": "schema-violation", "target": "profile.version", "detail": "Profile version does not match the pinned profile document."})
         for required_kind in profile.get("required_evidence_kinds", []):
-            matching = [item for item in items if item.get("kind") == required_kind and item.get("status") in ("included", "truncated")]
+            matching = [
+                item
+                for item in items
+                if item.get("kind") == required_kind
+                and item.get("status") == "included"
+            ]
             if not matching:
                 if report.status == "valid":
                     report.status = "incomplete"
