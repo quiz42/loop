@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end export coverage for the local-v0 Proof tracer bullet.
+# End-to-end export coverage for Proof export profiles and privacy behavior.
 
 set -uo pipefail
 
@@ -106,15 +106,15 @@ import json
 import sys
 
 bundle = json.load(open(sys.argv[1], encoding="utf-8"))
-assert bundle["profile"]["name"] == "local-v0"
+assert bundle["profile"]["name"] == "public-v0"
 assert bundle["run"]["terminal_state"] == "complete"
 assert bundle["run"]["rounds"] == [{"index": 0}]
 assert bundle["proof_id"].startswith("sha256:")
 PY
 then
-    pass "manifest records local profile and completed Run facts"
+    pass "manifest defaults to the public profile and records completed Run facts"
 else
-    fail "manifest Run facts" "local-v0 with only completed round 0" "unexpected manifest"
+    fail "manifest Run facts" "public-v0 with only completed round 0" "unexpected manifest"
 fi
 
 after_snapshot=$(run_snapshot "$RUN_DIR")
@@ -154,6 +154,212 @@ if [[ -f "$default_dir/proof.json" ]]; then
     pass "default output uses the first 12 proof-id hex characters"
 else
     fail "default output path" "$default_dir/proof.json" "not found"
+fi
+
+PROFILE_BASE_COMMIT=$(git -C "$TEST_PROJECT" rev-parse HEAD)
+printf 'public profile metadata fixture\n' >> "$TEST_PROJECT/README.md"
+git -C "$TEST_PROJECT" add README.md
+profile_subject=$'public profile café control \037 metadata'
+git -C "$TEST_PROJECT" -c commit.gpgsign=false commit -q -m "$profile_subject"
+git -C "$TEST_PROJECT" config i18n.logOutputEncoding ISO-8859-1
+PROFILE_HEAD_COMMIT=$(git -C "$TEST_PROJECT" rev-parse HEAD)
+
+PUBLIC_PROFILE_DIR="$TEST_DIR/public-profile-run"
+cp -R "$PROJECT_ROOT/tests/fixtures/proof/runs/clean-complete" "$PUBLIC_PROFILE_DIR"
+mkdir -p "$PUBLIC_PROFILE_DIR/.loop"
+printf 'BITLESSON_PRIVATE_BODY must never leave the source Run.\n' > "$PUBLIC_PROFILE_DIR/.loop/bitlesson.md"
+printf '{"transcript":"PRIVATE_TRANSCRIPT_BODY"}\n' > "$PUBLIC_PROFILE_DIR/agent-transcript.jsonl"
+printf 'PRIVATE_LOG_BODY\n' > "$PUBLIC_PROFILE_DIR/agent-session.log"
+printf 'PRIVATE_METHODOLOGY_BODY\n' > "$PUBLIC_PROFILE_DIR/methodology-analysis-report.md"
+printf 'Home path: /Users/public-profile/private\n' > "$PUBLIC_PROFILE_DIR/privacy-note.md"
+printf '\nPrivate plan path: /Users/public-profile/plan\n' >> "$PUBLIC_PROFILE_DIR/plan.md"
+python3 - "$PUBLIC_PROFILE_DIR/complete-state.md" "$PROFILE_BASE_COMMIT" "$PROFILE_HEAD_COMMIT" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+base, head = sys.argv[2:]
+text = path.read_text(encoding="utf-8")
+text = re.sub(r"^base_commit: .*$", f"base_commit: {base}", text, flags=re.MULTILINE)
+text = re.sub(r"^head_commit: .*$", f"head_commit: {head}", text, flags=re.MULTILINE)
+text = re.sub(r"^reviewed_commit: .*$", f"reviewed_commit: {head}", text, flags=re.MULTILINE)
+path.write_text(text, encoding="utf-8")
+PY
+
+loop proof export --run "$PUBLIC_PROFILE_DIR" --out "$TEST_DIR/public-profile-bundle" >/dev/null 2>&1
+public_profile_status=$?
+assert_exit "public-v0 is the default export profile" 0 "$public_profile_status"
+loop proof export --run "$PUBLIC_PROFILE_DIR" --profile local-v0 --out "$TEST_DIR/local-profile-bundle" >/dev/null 2>&1
+local_profile_status=$?
+assert_exit "local-v0 remains available as an explicit full-detail profile" 0 "$local_profile_status"
+loop proof export --run "$PUBLIC_PROFILE_DIR" --profile local-v0 --out "$TEST_DIR/reused-profile-bundle" >/dev/null 2>&1
+reused_local_status=$?
+assert_exit "local-v0 can export to a reusable destination" 0 "$reused_local_status"
+loop proof export --run "$PUBLIC_PROFILE_DIR" --profile public-v0 --out "$TEST_DIR/reused-profile-bundle" >/dev/null 2>&1
+reused_public_status=$?
+assert_exit "public-v0 can replace an existing local Bundle" 0 "$reused_public_status"
+if python3 - "$TEST_DIR/reused-profile-bundle" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+bundle_dir = Path(sys.argv[1])
+bundle = json.loads((bundle_dir / "proof.json").read_text(encoding="utf-8"))
+assert bundle["profile"]["name"] == "public-v0"
+for item in bundle["evidence"]:
+    if item["status"] == "omitted":
+        assert not (bundle_dir / "evidence" / item["path"]).exists()
+PY
+then
+    pass "reused public Bundle removes stale local-only evidence"
+else
+    fail "reused public Bundle privacy" "no raw file for every omitted evidence item" "stale local evidence remained"
+fi
+UNRELATED_OUTPUT="$TEST_DIR/unrelated-output"
+mkdir -p "$UNRELATED_OUTPUT/evidence"
+printf 'keep this unrelated file\n' > "$UNRELATED_OUTPUT/evidence/sentinel.txt"
+printf '{"schema_version":"proof-bundle-v0"}\n' > "$UNRELATED_OUTPUT/proof.json"
+unrelated_output=$(loop proof export --run "$PUBLIC_PROFILE_DIR" --profile public-v0 --out "$UNRELATED_OUTPUT" 2>&1)
+unrelated_status=$?
+assert_exit "public export refuses a non-Bundle output directory" 1 "$unrelated_status"
+if [[ -f "$UNRELATED_OUTPUT/evidence/sentinel.txt" && "$unrelated_output" == *"empty or an existing Proof Bundle"* ]]; then
+    pass "refused output leaves unrelated files untouched"
+else
+    fail "non-Bundle output safety" "untouched sentinel and actionable error" "output directory was modified or error was unclear"
+fi
+if python3 - "$PUBLIC_PROFILE_DIR" "$TEST_DIR/public-profile-bundle" "$TEST_DIR/local-profile-bundle" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+run_dir, public_dir, local_dir = map(Path, sys.argv[1:])
+public = json.loads((public_dir / "proof.json").read_text(encoding="utf-8"))
+local = json.loads((local_dir / "proof.json").read_text(encoding="utf-8"))
+expected = {
+    "round-0-prompt.md": "profile-redaction",
+    "round-0-review-prompt.md": "profile-redaction",
+    "round-1-review-prompt.md": "profile-redaction",
+    ".loop/bitlesson.md": "profile-redaction",
+    "agent-transcript.jsonl": "profile-redaction",
+    "agent-session.log": "profile-redaction",
+    "methodology-analysis-report.md": "profile-redaction",
+    "privacy-note.md": "absolute-path",
+    "plan.md": "absolute-path",
+}
+items = {item["path"]: item for item in public["evidence"]}
+for relative, reason in expected.items():
+    item = items[relative]
+    source = (run_dir / relative).read_bytes()
+    assert item["status"] == "omitted"
+    assert item["omitted_reason"] == reason
+    assert item["sha256"] == hashlib.sha256(source).hexdigest()
+    assert item["bytes"] == len(source)
+    assert not (public_dir / "evidence" / relative).exists()
+
+omitted = {(item["path"], item["reason"]) for item in public["disclosure"]["omitted"]}
+assert omitted == {
+    (item["path"], item["omitted_reason"])
+    for item in public["evidence"]
+    if item["status"] == "omitted"
+}
+assert any(
+    warning["reason"] == "redacted-by-profile"
+    and warning["target"] == "privacy-note.md"
+    for warning in public["integrity"]["compile_warnings"]
+)
+assert public["disclosure"]["field_redactions"] == [
+    {"field": "commit.author_email", "reason": "Public profile privacy policy."}
+]
+assert local["disclosure"]["field_redactions"] == []
+assert public["run_id"] == local["run_id"]
+assert public["proof_id"] != local["proof_id"]
+assert public["specification"]["goal"] == ""
+
+public_record, local_record = public["commits"][-1], local["commits"][-1]
+assert public_record["sha"] == local_record["sha"]
+assert public_record["subject"] == local_record["subject"]
+assert public_record["subject"] == "public profile café control \x1f metadata"
+assert public_record["authored_at"] == local_record["authored_at"]
+assert public_record["author_name"] == local_record["author_name"]
+assert "author_email" not in public_record
+assert local_record["author_email"] == "proof-test@example.invalid"
+
+for output in (path for path in public_dir.rglob("*") if path.is_file()):
+    text = output.read_bytes().decode("utf-8", errors="replace")
+    assert "BITLESSON_PRIVATE_BODY" not in text
+    assert "PRIVATE_TRANSCRIPT_BODY" not in text
+    assert "PRIVATE_LOG_BODY" not in text
+    assert "PRIVATE_METHODOLOGY_BODY" not in text
+    assert "/Users/public-profile/private" not in text
+    assert "/Users/public-profile/plan" not in text
+assert (local_dir / "evidence" / ".loop" / "bitlesson.md").exists()
+assert (local_dir / "evidence" / "privacy-note.md").read_text(encoding="utf-8").strip().endswith("/Users/public-profile/private")
+PY
+then
+    pass "public exports omit whole files, redact commit email, and disclose every withholding"
+else
+    fail "public profile privacy boundary" "omitted raw evidence, field redaction, and no leaked body/path" "unexpected public or local bundle"
+fi
+
+INJECTION_TARGET="$TEST_DIR/injected-git-log"
+GIT_OPTION_INJECTION_DIR="$TEST_DIR/git-option-injection-run"
+cp -R "$PROJECT_ROOT/tests/fixtures/proof/runs/clean-complete" "$GIT_OPTION_INJECTION_DIR"
+python3 - "$GIT_OPTION_INJECTION_DIR/complete-state.md" "$INJECTION_TARGET" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+target = sys.argv[2]
+text = path.read_text(encoding="utf-8")
+text = re.sub(
+    r"^base_commit: .*$",
+    f"base_commit: --output={target}",
+    text,
+    flags=re.MULTILINE,
+)
+text = re.sub(r"^head_commit: .*$", "head_commit: HEAD", text, flags=re.MULTILINE)
+path.write_text(text, encoding="utf-8")
+PY
+git_option_output=$(loop proof export --run "$GIT_OPTION_INJECTION_DIR" --profile local-v0 --out "$TEST_DIR/git-option-injection-bundle" 2>&1)
+git_option_status=$?
+assert_exit "invalid Git revision fields fail before Git can interpret options" 1 "$git_option_status"
+if [[ ! -e "$INJECTION_TARGET" && ! -e "${INJECTION_TARGET}..HEAD" ]]; then
+    pass "invalid Git revision fields cannot write through git log options"
+else
+    fail "Git revision option injection" "no output file created from a state value" "$git_option_output"
+fi
+
+COMMIT_SECRET_BASE=$(git -C "$TEST_PROJECT" rev-parse HEAD)
+commit_secret='api_key=commit_subject_secret_123456789'
+printf 'commit secret fixture\n' >> "$TEST_PROJECT/README.md"
+git -C "$TEST_PROJECT" add README.md
+git -C "$TEST_PROJECT" -c commit.gpgsign=false commit -q -m "$commit_secret"
+COMMIT_SECRET_HEAD=$(git -C "$TEST_PROJECT" rev-parse HEAD)
+COMMIT_SECRET_DIR="$TEST_DIR/commit-secret-run"
+cp -R "$PROJECT_ROOT/tests/fixtures/proof/runs/clean-complete" "$COMMIT_SECRET_DIR"
+python3 - "$COMMIT_SECRET_DIR/complete-state.md" "$COMMIT_SECRET_BASE" "$COMMIT_SECRET_HEAD" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+base, head = sys.argv[2:]
+text = path.read_text(encoding="utf-8")
+text = re.sub(r"^base_commit: .*$", f"base_commit: {base}", text, flags=re.MULTILINE)
+text = re.sub(r"^head_commit: .*$", f"head_commit: {head}", text, flags=re.MULTILINE)
+text = re.sub(r"^reviewed_commit: .*$", f"reviewed_commit: {head}", text, flags=re.MULTILINE)
+path.write_text(text, encoding="utf-8")
+PY
+commit_secret_output=$(loop proof export --run "$COMMIT_SECRET_DIR" --profile public-v0 --out "$TEST_DIR/commit-secret-bundle" 2>&1)
+commit_secret_status=$?
+assert_exit "public-v0 rejects secrets in derived commit metadata" 3 "$commit_secret_status"
+if [[ "$commit_secret_output" == *"commit:${COMMIT_SECRET_HEAD}"* && "$commit_secret_output" == *"token-assignment"* && "$commit_secret_output" != *"$commit_secret"* ]]; then
+    pass "commit secret diagnostic does not echo the subject value"
+else
+    fail "commit secret diagnostic redaction" "commit target and class without secret value" "$commit_secret_output"
 fi
 
 NONCONTIGUOUS_DIR="$TEST_DIR/noncontiguous-ac-run"
@@ -511,17 +717,22 @@ bundle = json.load(open(sys.argv[1], encoding="utf-8"))
 tracker = next(item for item in bundle["evidence"] if item["path"] == "goal-tracker.md")
 assert tracker["status"] == "omitted"
 assert bundle["verdict"]["decision"] == "unverifiable"
-per_ac = {row["ac_id"]: row for row in bundle["verdict"]["per_ac"]}
-assert set(per_ac) == {"ac-1", "ac-2", "ac-3", "ac-4", "ac-5"}
-assert all(
-    not row["supporting"] and row["status"] == "unverifiable"
-    for row in per_ac.values()
+assert bundle["specification"]["acceptance_criteria"] == []
+assert bundle["verdict"]["per_ac"] == []
+assert any(
+    warning["reason"] == "redacted-by-profile"
+    and warning["target"] == "goal-tracker.md"
+    for warning in bundle["integrity"]["compile_warnings"]
 )
+assert {(item["path"], item["reason"]) for item in bundle["disclosure"]["omitted"]} >= {
+    ("goal-tracker.md", "absolute-path")
+}
+assert "/Users/proof-test/private" not in json.dumps(bundle)
 PY
 then
-    pass "redacted completion evidence cannot produce met acceptance criteria"
+    pass "redacted completion evidence cannot leak or produce acceptance criteria"
 else
-    fail "profile-relative completion evidence" "omitted tracker makes all ACs unverifiable" "unexpected redacted tracker bundle"
+    fail "profile-relative completion evidence" "omitted tracker removes its derived acceptance criteria" "unexpected redacted tracker bundle"
 fi
 
 TRUNCATED_TRACKER_DIR="$TEST_DIR/truncated-tracker-run"
@@ -615,6 +826,31 @@ if [[ "$public_entropy_output" == *"entropy-fixture.txt"* && "$public_entropy_ou
 else
     fail "high-entropy diagnostic redaction" "file and match type named without secret value" "diagnostic redaction contract failed"
 fi
+
+for secret_case in pem-header cloud-credential token-assignment; do
+    SECRET_DIR="$TEST_DIR/public-${secret_case}-run"
+    cp -R "$PROJECT_ROOT/tests/fixtures/proof/runs/clean-complete" "$SECRET_DIR"
+    case "$secret_case" in
+        pem-header)
+            secret_value='-----BEGIN PRIVATE KEY-----'
+            ;;
+        cloud-credential)
+            secret_value='AKIAABCDEFGHIJKLMNOP'
+            ;;
+        token-assignment)
+            secret_value='OPENAI_API_KEY=totally_fake_public_test_key_1234'
+            ;;
+    esac
+    printf '%s\n' "$secret_value" > "$SECRET_DIR/${secret_case}.txt"
+    secret_output=$(loop proof export --run "$SECRET_DIR" --profile public-v0 --out "$TEST_DIR/${secret_case}-bundle" 2>&1)
+    secret_status=$?
+    assert_exit "public-v0 rejects ${secret_case} evidence" 3 "$secret_status"
+    if [[ "$secret_output" == *"${secret_case}.txt"* && "$secret_output" == *"$secret_case"* && "$secret_output" != *"$secret_value"* ]]; then
+        pass "${secret_case} diagnostic identifies only file and class"
+    else
+        fail "${secret_case} diagnostic redaction" "file and match type without secret value" "diagnostic redaction contract failed"
+    fi
+done
 
 ACTIVE_DIR="$RUNS_DIR/2026-07-30_00-00-00"
 mkdir -p "$ACTIVE_DIR"

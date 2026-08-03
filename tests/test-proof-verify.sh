@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end verifier coverage for the local-v0 Proof tracer bullet.
+# End-to-end verifier coverage for Proof Bundles and profile policy enforcement.
 
 set -uo pipefail
 
@@ -77,7 +77,7 @@ git -C "$TEST_PROJECT" -c commit.gpgsign=false commit -q -m 'fixture project'
 
 source "$PROJECT_ROOT/scripts/loop.sh"
 cd "$TEST_PROJECT" || exit 1
-loop proof export --run "$RUN_DIR" --out "$TEST_DIR/clean" >/dev/null 2>&1
+loop proof export --run "$RUN_DIR" --profile local-v0 --out "$TEST_DIR/clean" >/dev/null 2>&1
 setup_status=$?
 if [[ "$setup_status" -ne 0 ]]; then
     echo "Unable to create the clean verification fixture." >&2
@@ -104,7 +104,7 @@ fi
 
 CANCEL_RUN_DIR="$TEST_DIR/cancel-run"
 cp -R "$PROJECT_ROOT/tests/fixtures/proof/runs/cancel-after-review" "$CANCEL_RUN_DIR"
-loop proof export --run "$CANCEL_RUN_DIR" --out "$TEST_DIR/cancel" >/dev/null 2>&1
+loop proof export --run "$CANCEL_RUN_DIR" --profile local-v0 --out "$TEST_DIR/cancel" >/dev/null 2>&1
 cancel_setup_status=$?
 assert_exit "cancel Run exports for verification" 0 "$cancel_setup_status"
 cancel_report=$(loop proof verify "$TEST_DIR/cancel" --json)
@@ -133,7 +133,7 @@ from pathlib import Path
 path = Path(sys.argv[1])
 path.write_bytes(path.read_bytes() + b"x" * 1048577)
 PY
-loop proof export --run "$TRUNCATED_RUN_DIR" --out "$TEST_DIR/truncated" >/dev/null 2>&1
+loop proof export --run "$TRUNCATED_RUN_DIR" --profile local-v0 --out "$TEST_DIR/truncated" >/dev/null 2>&1
 truncated_setup_status=$?
 assert_exit "truncated required-evidence Run exports for verification" 0 "$truncated_setup_status"
 truncated_report=$(loop proof verify "$TEST_DIR/truncated" --json)
@@ -180,6 +180,135 @@ missing_report=$(loop proof verify "$TEST_DIR/missing-evidence" --json)
 missing_status=$?
 assert_exit "missing included Evidence is invalid" 3 "$missing_status"
 assert_report "missing Evidence names missing-file" "$missing_report" invalid missing-file
+
+loop proof export --run "$RUN_DIR" --profile public-v0 --out "$TEST_DIR/public" >/dev/null 2>&1
+public_setup_status=$?
+assert_exit "public Bundle exports for policy verification" 0 "$public_setup_status"
+cp -R "$TEST_DIR/public" "$TEST_DIR/public-omitted-evidence-leak"
+mkdir -p "$TEST_DIR/public-omitted-evidence-leak/evidence"
+cp "$RUN_DIR/round-0-prompt.md" "$TEST_DIR/public-omitted-evidence-leak/evidence/round-0-prompt.md"
+omitted_evidence_report=$(loop proof verify "$TEST_DIR/public-omitted-evidence-leak" --json)
+omitted_evidence_status=$?
+assert_exit "an omitted public Evidence file must not be present" 3 "$omitted_evidence_status"
+assert_report "omitted public Evidence leak is actionable" "$omitted_evidence_report" invalid profile-violation
+
+cp -R "$TEST_DIR/clean" "$TEST_DIR/arbitrary-omission-tamper"
+python3 - "$TEST_DIR/arbitrary-omission-tamper" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+bundle_dir = Path(sys.argv[1])
+proof_path = bundle_dir / "proof.json"
+bundle = json.loads(proof_path.read_text(encoding="utf-8"))
+item = next(item for item in bundle["evidence"] if item["path"] == "round-0-contract.md")
+item["status"] = "omitted"
+item["omitted_reason"] = "profile-redaction"
+(bundle_dir / "evidence" / item["path"]).unlink()
+bundle["disclosure"]["omitted"].append(
+    {"path": item["path"], "reason": item["omitted_reason"]}
+)
+payload = dict(bundle)
+payload.pop("proof_id", None)
+payload.pop("transport", None)
+bundle["proof_id"] = "sha256:" + hashlib.sha256(
+    json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+).hexdigest()
+proof_path.write_text(json.dumps(bundle, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+PY
+arbitrary_omission_report=$(loop proof verify "$TEST_DIR/arbitrary-omission-tamper" --json)
+arbitrary_omission_status=$?
+assert_exit "a profile cannot arbitrarily omit local Evidence" 3 "$arbitrary_omission_status"
+assert_report "arbitrary omission is a profile violation" "$arbitrary_omission_report" invalid profile-violation
+
+cp -R "$TEST_DIR/public" "$TEST_DIR/public-policy-tamper"
+python3 - "$RUN_DIR" "$TEST_DIR/public-policy-tamper" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+run_dir, bundle_dir = map(Path, sys.argv[1:])
+proof_path = bundle_dir / "proof.json"
+bundle = json.loads(proof_path.read_text(encoding="utf-8"))
+item = next(item for item in bundle["evidence"] if item["path"] == "round-0-prompt.md")
+item["status"] = "included"
+item["omitted_reason"] = None
+destination = bundle_dir / "evidence" / item["path"]
+destination.parent.mkdir(parents=True, exist_ok=True)
+destination.write_bytes((run_dir / item["path"]).read_bytes())
+payload = dict(bundle)
+payload.pop("proof_id", None)
+payload.pop("transport", None)
+bundle["proof_id"] = "sha256:" + hashlib.sha256(
+    json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+).hexdigest()
+proof_path.write_text(json.dumps(bundle, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+PY
+public_policy_report=$(loop proof verify "$TEST_DIR/public-policy-tamper" --json)
+public_policy_status=$?
+assert_exit "a recomputed public Bundle cannot retain a prompt" 3 "$public_policy_status"
+assert_report "public profile policy violation is actionable" "$public_policy_report" invalid profile-violation
+
+cp -R "$TEST_DIR/public" "$TEST_DIR/public-path-tamper"
+python3 - "$TEST_DIR/public-path-tamper/proof.json" <<'PY'
+import hashlib
+import json
+import sys
+
+path = sys.argv[1]
+bundle = json.load(open(path, encoding="utf-8"))
+bundle["specification"]["goal"] = "Leaked path: /Users/public-profile/private"
+payload = dict(bundle)
+payload.pop("proof_id", None)
+payload.pop("transport", None)
+bundle["proof_id"] = "sha256:" + hashlib.sha256(
+    json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+).hexdigest()
+with open(path, "w", encoding="utf-8") as output:
+    json.dump(bundle, output, ensure_ascii=False, sort_keys=True)
+PY
+public_path_report=$(loop proof verify "$TEST_DIR/public-path-tamper" --json)
+public_path_status=$?
+assert_exit "a recomputed public Bundle cannot contain a home path" 3 "$public_path_status"
+assert_report "public path leak is a profile violation" "$public_path_report" invalid profile-violation
+
+commit_secret='api_key=commit_subject_secret_123456789'
+cp -R "$TEST_DIR/public" "$TEST_DIR/public-commit-secret-tamper"
+python3 - "$TEST_DIR/public-commit-secret-tamper/proof.json" "$commit_secret" <<'PY'
+import hashlib
+import json
+import sys
+
+path, secret = sys.argv[1:]
+bundle = json.load(open(path, encoding="utf-8"))
+bundle["commits"] = [
+    {
+        "sha": "a" * 40,
+        "subject": secret,
+        "authored_at": "2026-08-03T00:00:00Z",
+        "author_name": "Proof Test",
+    }
+]
+payload = dict(bundle)
+payload.pop("proof_id", None)
+payload.pop("transport", None)
+bundle["proof_id"] = "sha256:" + hashlib.sha256(
+    json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+).hexdigest()
+with open(path, "w", encoding="utf-8") as output:
+    json.dump(bundle, output, ensure_ascii=False, sort_keys=True)
+PY
+commit_secret_report=$(loop proof verify "$TEST_DIR/public-commit-secret-tamper" --json)
+commit_secret_status=$?
+assert_exit "public verification rejects secrets in commit metadata" 3 "$commit_secret_status"
+assert_report "commit metadata secret is a profile violation" "$commit_secret_report" invalid profile-violation
+if [[ "$commit_secret_report" != *"$commit_secret"* ]]; then
+    pass "commit metadata verification does not echo the secret value"
+else
+    fail "commit metadata verification redaction" "no secret value in verifier report" "$commit_secret_report"
+fi
 
 cp -R "$TEST_DIR/clean" "$TEST_DIR/display-only-tamper"
 printf '\n// noncanonical display-only change\n' >> "$TEST_DIR/display-only-tamper/proof-data.js"

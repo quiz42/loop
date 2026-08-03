@@ -16,6 +16,8 @@ import math
 import os
 import platform
 import re
+import shutil
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
@@ -577,7 +579,7 @@ def _default_profile(name: str) -> Dict[str, Any]:
     raise ProofError(f"unknown verification profile {name!r}")
 
 
-def load_profile(name: str = "local-v0") -> Dict[str, Any]:
+def load_profile(name: str = "public-v0") -> Dict[str, Any]:
     """Load a profile document and fail closed when it is malformed."""
     profile = _default_profile(name)
     result = validate_instance(profile, load_schema("verification-profile-v0"))
@@ -623,13 +625,41 @@ def _safe_relative_evidence_path(relative: Any) -> bool:
 
 def _has_absolute_path(data: bytes) -> bool:
     text = data.decode("utf-8", errors="replace")
-    return bool(re.search(r"/(?:Users|home)/[^\s/]+", text))
+    return bool(re.search(r"(?<![A-Za-z0-9._-])/(?:Users|home)/[^\s/]+", text))
+
+
+def _contains_absolute_home_path(value: Any) -> bool:
+    """Return whether a JSON-shaped value exposes an absolute home path."""
+    if isinstance(value, str):
+        return _has_absolute_path(value.encode("utf-8"))
+    if isinstance(value, list):
+        return any(_contains_absolute_home_path(item) for item in value)
+    if isinstance(value, dict):
+        return any(_contains_absolute_home_path(item) for item in value.values())
+    return False
+
+
+def _profile_omits_evidence(
+    relative_path: str, kind: str, profile: Mapping[str, Any]
+) -> bool:
+    """Return whether a profile unconditionally withholds one file evidence item."""
+    omit_kinds = set(profile.get("omit_kinds", []))
+    omit_paths = list(profile.get("omit_paths", []))
+    return kind in omit_kinds or any(
+        fnmatch.fnmatch(relative_path, pattern) for pattern in omit_paths
+    )
 
 
 _SECRET_PATTERNS: Tuple[Tuple[str, re.Pattern[str]], ...] = (
     ("pem-header", re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")),
     ("cloud-credential", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b|\bgh[pousr]_[A-Za-z0-9_]{20,}\b")),
-    ("token-assignment", re.compile(r"\b(?:token|api[_-]?key|secret|password)\s*[:=]\s*['\"]?[A-Za-z0-9_\-]{8,}", re.IGNORECASE)),
+    (
+        "token-assignment",
+        re.compile(
+            r"(?<![A-Za-z0-9])(?:[A-Za-z0-9]+_)*(?:token|api[_-]?key|secret|password)\s*[:=]\s*['\"]?[A-Za-z0-9_\-]{8,}",
+            re.IGNORECASE,
+        ),
+    ),
 )
 _URL_SAFE_CANDIDATE = re.compile(
     r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_-])"
@@ -698,8 +728,6 @@ class EvidenceCompiler:
         disclosure: List[Dict[str, str]] = []
         warnings: List[Dict[str, str]] = []
         used_ids: Dict[str, str] = {}
-        omit_paths = list(self.profile.get("omit_paths", []))
-        omit_kinds = set(self.profile.get("omit_kinds", []))
         secret_scan = self.profile.get("secret_scan", {}) or {}
         fail_on = list(secret_scan.get("fail_on", []))
         omit_on = set(secret_scan.get("omit_on", []))
@@ -740,7 +768,7 @@ class EvidenceCompiler:
             if match:
                 raise SecretScanError(relative, match)
             omit_reason: Optional[str] = None
-            if kind in omit_kinds or any(fnmatch.fnmatch(relative, pattern) for pattern in omit_paths):
+            if _profile_omits_evidence(relative, kind, self.profile):
                 omit_reason = "profile-redaction"
             elif "absolute-path" in omit_on and _has_absolute_path(data):
                 omit_reason = "absolute-path"
@@ -965,13 +993,139 @@ def _repo_name(repo_root: Optional[Union[str, os.PathLike[str]]], fallback: Path
     return fallback.parent.name
 
 
+def _utc_timestamp(raw: str) -> str:
+    """Normalize Git's author timestamp to the canonical UTC representation."""
+    try:
+        parsed = _datetime.datetime.fromisoformat(raw)
+        if parsed.tzinfo is None:
+            return raw
+        return (
+            parsed.astimezone(_datetime.timezone.utc)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+    except (TypeError, ValueError):
+        # Git's ``%aI`` is ISO-8601, but preserving an unexpected value lets
+        # schema validation report the malformed derived record explicitly.
+        return raw
+
+
+_GIT_COMMIT_ID = re.compile(r"^[0-9a-f]{7,64}$")
+
+
+def _git_commit_records(
+    repo_root: Optional[Union[str, os.PathLike[str]]],
+    base_commit: Optional[str],
+    head_commit: Optional[str],
+) -> List[Dict[str, str]]:
+    """Read the immutable commit range without making Git or filesystem changes.
+
+    A Run may be copied away from its original repository, or its recorded
+    commits may predate a shallow clone.  In those cases the derived record is
+    simply unavailable; file evidence and the profile-relative verdict remain
+    usable.  We deliberately do not guess a commit range from the current
+    checkout.
+    """
+    if (
+        not repo_root
+        or not isinstance(base_commit, str)
+        or not isinstance(head_commit, str)
+        or _GIT_COMMIT_ID.fullmatch(base_commit) is None
+        or _GIT_COMMIT_ID.fullmatch(head_commit) is None
+    ):
+        return []
+    repository = Path(repo_root).expanduser().resolve()
+    if not (repository / ".git").exists():
+        return []
+    format_spec = "%H%x00%s%x00%aI%x00%an%x00%ae"
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(repository),
+                "log",
+                "--reverse",
+                "-z",
+                "--encoding=UTF-8",
+                f"--format={format_spec}",
+                "--end-of-options",
+                f"{base_commit}..{head_commit}",
+            ],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except OSError:
+        return []
+    if result.returncode != 0:
+        return []
+
+    fields = result.stdout.split("\x00")
+    if fields and fields[-1] == "":
+        fields.pop()
+    if len(fields) % 5:
+        raise ProofError("cannot parse Git commit metadata safely")
+
+    records: List[Dict[str, str]] = []
+    for offset in range(0, len(fields), 5):
+        sha, subject, authored_at, author_name, author_email = fields[offset : offset + 5]
+        if _GIT_COMMIT_ID.fullmatch(sha) is None:
+            raise ProofError("cannot parse Git commit metadata safely")
+        records.append(
+            {
+                "sha": sha,
+                "subject": subject,
+                "authored_at": _utc_timestamp(authored_at),
+                "author_name": author_name,
+                "author_email": author_email,
+            }
+        )
+    return records
+
+
+def _scan_derived_commit_records(
+    records: Sequence[Mapping[str, Any]], profile: Mapping[str, Any]
+) -> None:
+    """Fail closed when public commit metadata contains a secret-class match."""
+    secret_scan = profile.get("secret_scan", {}) or {}
+    fail_on = list(secret_scan.get("fail_on", []))
+    for record in records:
+        match = _secret_match(canonical_json_bytes(dict(record)), fail_on)
+        if match:
+            target = "commit:" + str(record.get("sha", "unknown"))
+            raise SecretScanError(target, match)
+
+
+def _redact_derived_fields(
+    records: Sequence[Mapping[str, Any]], profile: Mapping[str, Any]
+) -> List[Dict[str, Any]]:
+    """Apply profile-declared field redactions to derived commit records."""
+    fields = {
+        entry.get("field")
+        for entry in profile.get("field_redactions", [])
+        if isinstance(entry, Mapping)
+    }
+    redacted: List[Dict[str, Any]] = []
+    for record in records:
+        projected = dict(record)
+        if "commit.author_email" in fields:
+            projected.pop("author_email", None)
+        redacted.append(projected)
+    return redacted
+
+
 class BundleCompiler:
     """Compile one terminal Run into a schema-valid Proof Bundle mapping."""
 
     def __init__(
         self,
         run_dir: Union[str, os.PathLike[str]],
-        profile: str = "local-v0",
+        profile: str = "public-v0",
         repo_root: Optional[Union[str, os.PathLike[str]]] = None,
         exporter_version: str = "proof-mvp-v0",
     ) -> None:
@@ -986,14 +1140,49 @@ class BundleCompiler:
         evidence = EvidenceCompiler(run, profile).collect()
         evidence_by_path = {item["path"]: item for item in evidence.items}
         warnings = list(run.warnings) + list(evidence.warnings)
+        state_relative_path = run.state_path.relative_to(run.run_dir).as_posix()
+        state_omitted = (
+            evidence_by_path.get(state_relative_path, {}).get("status") == "omitted"
+        )
+        tracker_included = (
+            evidence_by_path.get("goal-tracker.md", {}).get("status") == "included"
+        )
+        tracker_omitted = (
+            evidence_by_path.get("goal-tracker.md", {}).get("status") == "omitted"
+        )
+        # Goal and acceptance-criteria text are projections of file evidence.
+        # Once the source item is withheld, retaining those projections would
+        # allow an absolute home path to bypass the profile's disclosure rule.
+        projected_goal = (
+            run.goal
+            if evidence_by_path.get("plan.md", {}).get("status") != "omitted"
+            else ""
+        )
+        projected_criteria = run.acceptance_criteria if not tracker_omitted else []
+        projected_events = (
+            run.events
+            if not state_omitted
+            else [{**event, "at": None} for event in run.events]
+        )
         source = {
             "repo_name": _repo_name(self.repo_root, run.run_dir),
             "base_commit": run.base_commit,
             "head_commit": run.head_commit,
             "reviewed_commit": run.reviewed_commit,
-            "loop_version": str(run.state.get("loop_version") or "unknown"),
+            "loop_version": str(run.state.get("loop_version") or "unknown")
+            if not state_omitted
+            else "unknown",
             "exporter_version": self.exporter_version,
         }
+        commits = _redact_derived_fields(
+            _git_commit_records(
+                self.repo_root,
+                run.base_commit,
+                run.head_commit,
+            ),
+            profile,
+        )
+        _scan_derived_commit_records(commits, profile)
         if run.head_commit is None:
             warnings.append(
                 {"reason": "head-commit-unknown", "target": "source.head_commit", "detail": "Head commit was not recorded by the Run."}
@@ -1025,6 +1214,12 @@ class BundleCompiler:
         findings, finding_warnings, findings_parseable = _derive_findings(
             run, evidence_by_path
         )
+        if tracker_omitted:
+            # Without the Goal Tracker, finding-to-AC links are not
+            # profile-verifiable.  Keep the finding lifecycle facts, but do
+            # not emit dangling acceptance-criterion references.
+            for finding in findings:
+                finding["ac_refs"] = []
         warnings.extend(finding_warnings)
         open_finding_refs: Dict[str, List[str]] = {}
         unverifiable_finding_refs: Dict[str, List[str]] = {}
@@ -1042,7 +1237,7 @@ class BundleCompiler:
         per_ac: List[Dict[str, Any]] = []
         deferred_output: List[Dict[str, str]] = []
         deferred_ac_ids = {item["ac_id"] for item in run.deferred}
-        for criterion in run.acceptance_criteria:
+        for criterion in projected_criteria:
             ac_id = criterion["id"]
             completed = ac_id in run.completed_ac_ids
             supporting = tracker_ref + review_refs + summary_refs if completed and tracker_ref else []
@@ -1085,7 +1280,7 @@ class BundleCompiler:
                 }
             )
 
-        required_set = [criterion["id"] for criterion in run.acceptance_criteria if criterion["id"] not in {item["ac_id"] for item in deferred_output}]
+        required_set = [criterion["id"] for criterion in projected_criteria if criterion["id"] not in {item["ac_id"] for item in deferred_output}]
         required_statuses = [item["status"] for item in per_ac if item["ac_id"] in required_set]
         required_profile_evidence_present = all(
             any(
@@ -1136,14 +1331,15 @@ class BundleCompiler:
                 "schema_hash": _profile_hash(profile),
             },
             "source": source,
-            "specification": {"goal": run.goal, "acceptance_criteria": run.acceptance_criteria},
+            "specification": {"goal": projected_goal, "acceptance_criteria": projected_criteria},
             "run": {
-                "session_timestamp": run.session_timestamp,
+                "session_timestamp": run.session_timestamp if not state_omitted else None,
                 "terminal_state": run.terminal_state,
                 "rounds": run.rounds,
-                "events": run.events,
+                "events": projected_events,
             },
             "evidence": evidence.items,
+            "commits": commits,
             "findings": findings,
             "verdict": {
                 "decision": decision,
@@ -1155,12 +1351,30 @@ class BundleCompiler:
             "disclosure": {"omitted": evidence.disclosure, "field_redactions": list(profile.get("field_redactions", []))},
             "transport": {"exported_at": _utc_now(), "exporter_host_class": platform.system().lower() or "unknown"},
         }
+        if profile.get("name") == "public-v0" and _contains_absolute_home_path(bundle):
+            raise ProofError(
+                "public-v0 profile projection contains an absolute home path"
+            )
         bundle["proof_id"] = compute_proof_id(bundle)
         schema_result = validate_instance(bundle, load_schema("proof-bundle-v0"))
         if not schema_result.is_valid:
             detail = "; ".join(f"{issue.path}: {issue.message}" for issue in schema_result.errors)
             raise ProofError(f"compiler produced an invalid Proof Bundle: {detail}")
         return bundle, evidence
+
+
+def _is_existing_proof_bundle(path: Path) -> bool:
+    """Return whether a non-empty output directory is a managed Proof Bundle."""
+    try:
+        document = json.loads((path / "proof.json").read_text(encoding="utf-8"))
+        if not isinstance(document, dict):
+            return False
+        schema_result = validate_instance(document, load_schema("proof-bundle-v0"))
+        return schema_result.is_valid and document.get("proof_id") == compute_proof_id(
+            document
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError, TypeError):
+        return False
 
 
 def write_bundle(
@@ -1171,7 +1385,23 @@ def write_bundle(
     """Write canonical ``proof.json`` and included raw evidence safely."""
     target = Path(output_dir).expanduser().resolve()
     try:
+        if target.exists():
+            if not target.is_dir():
+                raise BundleWriteError(
+                    f"Proof Bundle output is not a directory: {target}"
+                )
+            if any(target.iterdir()):
+                if not _is_existing_proof_bundle(target):
+                    raise BundleWriteError(
+                        "Proof Bundle output must be empty or an existing Proof Bundle: "
+                        f"{target}"
+                    )
+                # This is an explicitly reusable Proof Bundle directory, so
+                # replace all of its generated files rather than leaving raw
+                # evidence from a fuller profile behind.
+                shutil.rmtree(target)
         target.mkdir(parents=True, exist_ok=True)
+        evidence_root = target / "evidence"
         proof_path = target / "proof.json"
         proof_path.write_text(
             json.dumps(bundle, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
@@ -1184,7 +1414,7 @@ def write_bundle(
             encoding="utf-8",
         )
         for relative, content in evidence.contents.items():
-            destination = target / "evidence" / relative
+            destination = evidence_root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(content)
     except OSError as error:
@@ -1295,7 +1525,23 @@ class BundleValidator:
             report.reasons.extend({"reason": "schema-violation", "target": issue.path, "detail": issue.message} for issue in schema_result.errors)
             return report
 
+        try:
+            profile = self.profile or load_profile(bundle.get("profile", {}).get("name", ""))
+        except ProofError as error:
+            report.status = "invalid"
+            report.reasons.append({"reason": "schema-violation", "target": "profile.name", "detail": str(error)})
+            return report
+
+        def profile_violation(target: str, detail: str) -> None:
+            report.status = "invalid"
+            report.reasons.append(
+                {"reason": "profile-violation", "target": target, "detail": detail}
+            )
+
         items = bundle.get("evidence", [])
+        secret_scan = profile.get("secret_scan", {}) or {}
+        fail_on = list(secret_scan.get("fail_on", []))
+        omit_on = set(secret_scan.get("omit_on", []))
         ids: Dict[str, Dict[str, Any]] = {}
         # Compute the expected D4 short IDs before walking references.  A full
         # hash is valid only when two distinct path/hash pairs actually share
@@ -1335,8 +1581,57 @@ class BundleValidator:
                 report.status = "invalid"
                 report.reasons.append({"reason": "schema-violation", "target": relative, "detail": "Evidence byte count must be a non-negative integer."})
                 continue
+            kind = item.get("kind", "unknown")
+            status = item["status"]
+            omitted_reason = item.get("omitted_reason")
+            if status == "included" and omitted_reason is not None:
+                profile_violation(
+                    relative,
+                    "Included evidence must not carry an omission reason.",
+                )
+            elif status == "omitted":
+                if (
+                    omitted_reason == "profile-redaction"
+                    and not _profile_omits_evidence(relative, kind, profile)
+                ):
+                    profile_violation(
+                        relative,
+                        "Evidence is declared profile-redacted without a matching profile rule.",
+                    )
+                elif (
+                    omitted_reason == "absolute-path"
+                    and "absolute-path" not in omit_on
+                ):
+                    profile_violation(
+                        relative,
+                        "Evidence is declared path-redacted without an active path omission rule.",
+                    )
+                elif omitted_reason not in {"profile-redaction", "absolute-path"}:
+                    profile_violation(
+                        relative,
+                        "Omitted evidence must use a profile-supported omission reason.",
+                    )
+            elif status == "truncated" and omitted_reason != "size-limit":
+                profile_violation(
+                    relative,
+                    "Truncated evidence must carry the size-limit omission reason.",
+                )
+            if (
+                status != "omitted"
+                and _profile_omits_evidence(relative, kind, profile)
+            ):
+                profile_violation(
+                    relative,
+                    "Evidence retained by a profile omission rule.",
+                )
             source = self.bundle_dir / "evidence" / relative
-            if item["status"] == "included":
+            if status == "omitted":
+                if source.exists() or source.is_symlink():
+                    profile_violation(
+                        relative,
+                        "Evidence declared omitted must not be present in the Bundle.",
+                    )
+            elif status == "included":
                 if not source.exists() or not source.is_file():
                     report.status = "invalid"
                     report.reasons.append({"reason": "missing-file", "target": relative, "detail": "Declared included evidence file is absent."})
@@ -1351,7 +1646,19 @@ class BundleValidator:
                 if actual_digest != digest or len(data) != item["bytes"]:
                     report.status = "invalid"
                     report.reasons.append({"reason": "hash-mismatch", "target": relative, "detail": "Evidence bytes or declared size differ."})
-            elif item["status"] == "truncated":
+                if "absolute-path" in omit_on and _has_absolute_path(data):
+                    profile_violation(
+                        relative,
+                        "Included evidence contains an absolute home path that public-v0 requires to be omitted.",
+                    )
+                else:
+                    match = _secret_match(data, fail_on)
+                    if match:
+                        profile_violation(
+                            relative,
+                            f"Included evidence matches the profile secret class {match!r}.",
+                        )
+            elif status == "truncated":
                 report.warnings.append({"target": relative, "detail": "Evidence is truncated by its export profile."})
 
         def require_evidence(identifier: str, target: str) -> None:
@@ -1388,12 +1695,6 @@ class BundleValidator:
             report.status = "invalid"
             report.reasons.append({"reason": "proof-id-mismatch", "target": "proof.json", "detail": "proof_id does not match the canonical Bundle payload."})
 
-        try:
-            profile = self.profile or load_profile(bundle.get("profile", {}).get("name", ""))
-        except ProofError as error:
-            report.status = "invalid"
-            report.reasons.append({"reason": "schema-violation", "target": "profile.name", "detail": str(error)})
-            return report
         expected_profile_hash = _profile_hash(profile)
         if bundle.get("profile", {}).get("schema_hash") != expected_profile_hash:
             report.status = "invalid"
@@ -1401,6 +1702,63 @@ class BundleValidator:
         if bundle.get("profile", {}).get("version") != profile.get("version"):
             report.status = "invalid"
             report.reasons.append({"reason": "schema-violation", "target": "profile.version", "detail": "Profile version does not match the pinned profile document."})
+
+        expected_omissions = {
+            (item["path"], item["omitted_reason"])
+            for item in items
+            if item.get("status") == "omitted"
+        }
+        declared_omissions = bundle.get("disclosure", {}).get("omitted", [])
+        actual_omissions = {
+            (item.get("path"), item.get("reason"))
+            for item in declared_omissions
+        }
+        if (
+            len(declared_omissions) != len(actual_omissions)
+            or actual_omissions != expected_omissions
+        ):
+            profile_violation(
+                "disclosure.omitted",
+                "Disclosure omissions must list each and only each omitted evidence item.",
+            )
+        expected_redactions = list(profile.get("field_redactions", []))
+        if bundle.get("disclosure", {}).get("field_redactions", []) != expected_redactions:
+            profile_violation(
+                "disclosure.field_redactions",
+                "Disclosure field redactions do not match the pinned verification profile.",
+            )
+        declared_redactions = {
+            item.get("field") for item in expected_redactions if isinstance(item, Mapping)
+        }
+        if "commit.author_email" in declared_redactions:
+            for index, record in enumerate(bundle.get("commits", [])):
+                if "author_email" in record:
+                    profile_violation(
+                        f"commits[{index}].author_email",
+                        "Commit author email is prohibited by the selected profile.",
+                    )
+        else:
+            for index, record in enumerate(bundle.get("commits", [])):
+                if "author_email" not in record:
+                    profile_violation(
+                        f"commits[{index}].author_email",
+                        "Commit author email is required when the selected profile does not redact it.",
+                    )
+        for index, record in enumerate(bundle.get("commits", [])):
+            match = _secret_match(canonical_json_bytes(dict(record)), fail_on)
+            if match:
+                profile_violation(
+                    f"commits[{index}]",
+                    f"Commit metadata matches the profile secret class {match!r}.",
+                )
+        if (
+            "absolute-path" in set((profile.get("secret_scan", {}) or {}).get("omit_on", []))
+            and _contains_absolute_home_path(bundle)
+        ):
+            profile_violation(
+                "proof.json",
+                "Bundle contains an absolute home path prohibited by the selected profile.",
+            )
         for required_kind in profile.get("required_evidence_kinds", []):
             matching = [
                 item
@@ -1423,7 +1781,7 @@ class BundleValidator:
 def compile_bundle(
     run_dir: Union[str, os.PathLike[str]],
     output_dir: Union[str, os.PathLike[str]],
-    profile: str = "local-v0",
+    profile: str = "public-v0",
     repo_root: Optional[Union[str, os.PathLike[str]]] = None,
 ) -> Path:
     """Convenience function used by scripts and embedders."""
@@ -1434,7 +1792,7 @@ def compile_bundle(
 def export_run(
     run_dir: Union[str, os.PathLike[str]],
     output_dir: Optional[Union[str, os.PathLike[str]]] = None,
-    profile: str = "local-v0",
+    profile: str = "public-v0",
     repo_root: Optional[Union[str, os.PathLike[str]]] = None,
 ) -> ExportResult:
     """Compile and write a Run, using the identity-addressed default if needed."""

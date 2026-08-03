@@ -136,6 +136,8 @@ Top-level objects in `proof.json` (`proof-bundle-v0.schema.json`):
   "profile":   { "name": "public-v0", "version": "0", "schema_hash": "sha256:..." },
   "source":    { "repo_name": "...", "base_commit": "...", "head_commit": "...|null",
                  "reviewed_commit": "...|null", "loop_version": "0.1.0", "exporter_version": "..." },
+  "commits":   [ { "sha": "...", "subject": "...", "authored_at": "...",
+                   "author_name": "...", "author_email": "..." } ],
   "specification": { "goal": "...", "acceptance_criteria": [ { "id": "ac-1", "text": "...", "text_sha256": "..." } ] },
   "run": { "session_timestamp": "...", "terminal_state": "complete|stop|cancel|maxiter|unexpected",
            "rounds": [ ... ], "events": [ ... ] },
@@ -188,7 +190,7 @@ not implement.
 - Evidence ID = the first 16 hex characters of `sha256(canonical_json({path, sha256}))`, extended to full length on collision. The path distinguishes position within the Run; the hash detects whether that file was tampered with (D4).
 - Hashes are computed over **raw bytes**, with no newline or encoding normalization.
 - **File evidence is all-or-nothing**: a profile never rewrites file content. To withhold an item, mark it `status: "omitted"`, keep its `path` and `sha256` (the source file's hash), and do not write the content into the Bundle. This keeps AC-3's tamper detection meaningful and avoids "a laundered file whose hash matches nothing".
-- **Derived records (commit metadata) do allow field-level redaction**: a commit record is not a file and its authenticity is checked against Git rather than a file hash, so `public-v0` may keep sha/subject/time while omitting the author email, declaring it in `disclosure.field_redactions`.
+- **Derived records (commit metadata) do allow field-level redaction**: the optional top-level `commits[]` records are not files and are checked against Git at export time rather than a file hash. `local-v0` retains `sha`, subject, author time/name, and author email; `public-v0` retains the non-email fields, omits `author_email`, and declares that omission in `disclosure.field_redactions`. In v0, `commit.author_email` is the sole supported field-redaction rule. A copied Run whose recorded range is unavailable in the current checkout emits an empty `commits[]` array rather than guessing a different range.
 - Items exceeding `max_item_bytes` are written as `status: "truncated"`: a summary plus the original `sha256` and original byte count. The Validator only checks the declaration's self-consistency and records `truncated-evidence`.
 
 ### D. Canonicalization and the two IDs
@@ -345,6 +347,7 @@ loop proof open   <bundle-dir>
 
 - The entry point performs a **Python 3.9+ prerequisite check** (ADR-0003), giving an actionable installation hint when it is missing; the repository already has `hooks/check-todos-from-transcript.py` depending on `python3`, so this is not a new burden.
 - Default output goes to `.loop/proofs/<first 12 chars of proof-id>/`; `.loop/` is already blocked from entering Git by Loop's write validators, so no extra gitignore work is needed.
+- A non-empty `--out` directory must already contain a schema-valid, identity-matching Proof Bundle. Re-exporting replaces that managed Bundle as a whole so a later public export cannot retain raw evidence from an earlier local one; arbitrary nonempty directories are rejected untouched.
 - `proof open`: the MVP opens over `file://` (macOS `open`, Linux `xdg-open`), and provides an optional `--server` wrapper (`python3 -m http.server` bound to `127.0.0.1` on an ephemeral port) as an experience improvement — this settles the fourth sub-choice in the decision appendix.
 
 ### M. Run Recorder: one Loop-side addition (D17, confirmed)

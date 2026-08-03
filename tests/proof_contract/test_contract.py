@@ -228,6 +228,13 @@ class SchemaValidationTests(unittest.TestCase):
             ("items", "type", lambda value: value.__setitem__("omit_paths", [False])),
             ("minItems", "minItems", lambda value: value.__setitem__("required_evidence_kinds", [])),
             ("pattern", "pattern", lambda value: value.__setitem__("name", "Public V0")),
+            (
+                "field redaction enum",
+                "enum",
+                lambda value: value["field_redactions"][0].__setitem__(
+                    "field", "commit.subject"
+                ),
+            ),
         ]
         for name, expected_keyword, mutate in cases:
             with self.subTest(keyword=name):
