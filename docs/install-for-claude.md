@@ -5,6 +5,7 @@
 - [codex](https://github.com/openai/codex) -- OpenAI Codex CLI (for review). Verify with `codex --version`.
 - `jq` -- JSON processor. Verify with `jq --version`.
 - `git` -- Git version control. Verify with `git --version`.
+- Python 3.9 or newer -- required by the `loop proof export` and `loop proof verify` commands. Verify with `python3 --version`.
 
 ## Option 1: Local Install (Recommended)
 

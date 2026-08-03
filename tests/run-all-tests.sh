@@ -101,6 +101,8 @@ TEST_SUITES=(
     "test-skill-monitor.sh"
     # Proof contract vectors
     "test-proof-contract.sh"
+    "test-proof-export.sh"
+    "test-proof-verify.sh"
     # Robustness tests
     "robustness/test-state-file-robustness.sh"
     "robustness/test-session-robustness.sh"
