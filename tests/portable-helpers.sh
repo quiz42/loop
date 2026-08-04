@@ -237,12 +237,18 @@ portable_frontmatter_value() {
 #     wholesale rather than block by block. That also makes it future-proof: new
 #     emoji blocks are assigned inside it.
 #
-#     `\p{Emoji}` additionally contains 26 BMP ranges that are emoji only in
-#     combination with U+FE0F or U+20E3: `#`, `*`, the ASCII digits 0-9, U+00A9
-#     COPYRIGHT SIGN, U+00AE REGISTERED SIGN, U+2122 TRADE MARK SIGN, the arrows
-#     at U+2194-2199, and various geometric shapes. Flagging those would fail on
-#     every English document, so the BMP coverage stays at the U+2600-U+27BF misc
-#     symbols and dingbats the original guard used.
+#     In the BMP the line is drawn at `Emoji_Presentation`, which is the property
+#     for "renders as an emoji by default": every such code point is flagged
+#     (U+231A WATCH, U+23F0 ALARM CLOCK, U+2B50 WHITE MEDIUM STAR and the rest).
+#
+#     `\p{Emoji}` is deliberately *not* the line, because it also contains `#`,
+#     `*`, the ASCII digits 0-9, U+00A9 COPYRIGHT SIGN, U+00AE REGISTERED SIGN,
+#     U+2122 TRADE MARK SIGN, the arrows at U+2194-2199 and U+25AA BLACK SMALL
+#     SQUARE. Those render as text unless a selector follows, and banning them
+#     would fail on every English document. Instead the *selectors* are flagged:
+#     U+FE0F (VS16) and U+20E3 (combining enclosing keycap). That rejects the
+#     rendered emoji -- `(c)`+VS16 and `1`+VS16+keycap both match -- while a bare
+#     copyright sign or digit stays clean.
 #
 #   * Deliberately narrower in one respect: PCRE2 10.43+ resolves `\p{Han}` to
 #     Script_Extensions, which pulls in ten characters whose own script is
@@ -264,6 +270,14 @@ portable_contains_cjk_or_emoji() {
     # tests/test-runner-portability.sh carries a fixture per entry.
     local branches=(
         '\0342[\0230-\0236][\0200-\0277]'             # U+2600-U+27BF   misc symbols, dingbats
+        '\0342\0214[\0232-\0233]'                     # U+231A-U+231B   watch, hourglass
+        '\0342\0217[\0251-\0263]'                     # U+23E9-U+23F3   media controls, clocks
+        '\0342\0227[\0275-\0276]'                     # U+25FD-U+25FE   medium small squares
+        '\0342\0254[\0233-\0234]'                     # U+2B1B-U+2B1C   large squares
+        '\0342\0255\0220'                             # U+2B50          white medium star
+        '\0342\0255\0225'                             # U+2B55          heavy large circle
+        '\0342\0203\0243'                             # U+20E3          combining enclosing keycap
+        '\0357\0270\0217'                             # U+FE0F          VS16, emoji presentation selector
         '\0342[\0272-\0277][\0200-\0277]'             # U+2E80-U+2FFF   CJK radicals, Kangxi, IDC
         '[\0343-\0351][\0200-\0277][\0200-\0277]'     # U+3000-U+9FFF   CJK punct, kana, bopomofo, Ext A, Unified
         '\0341[\0204-\0207][\0200-\0277]'             # U+1100-U+11FF   Hangul Jamo
@@ -306,45 +320,116 @@ portable_contains_cjk_or_emoji() {
 # gtimeout -> timeout -> python3 -> nothing -- either reaches for Python or gives
 # up. ADR-0003 keeps the Bash layer off Python, so tests use this instead.
 #
-# The wait loop runs in the caller rather than in a background watchdog on
-# purpose. A `( sleep N; kill ... ) &` watchdog inherits the caller's stdout, so
-# when the caller is a command substitution the subshell holds the pipe open and
-# `$(...)` blocks for the full timeout even after the command has finished. That
-# turned a 4-second suite into 112 seconds.
+# The limit is enforced, not merely requested. Two things are easy to get wrong:
+#
+#   * Sending TERM and then waiting is unbounded, because TERM can be trapped or
+#     ignored. After a short grace period the command is sent KILL, which cannot
+#     be. Worst case is therefore the limit plus LOOP_PORTABLE_KILL_GRACE_MS.
+#
+#   * The command's output goes to temp files rather than straight to the caller,
+#     and is replayed once the command is done. A surviving descendant -- the
+#     `sleep` left behind by `sleep 30 & wait`, say -- would otherwise inherit the
+#     caller's stdout and hold a command substitution open long after the command
+#     itself was killed, so `$(portable_run_with_timeout ...)` would block for as
+#     long as that descendant lived. The trade-off is that output is not streamed
+#     live; every caller here captures it anyway.
+#
+# The wait loop runs in the caller rather than in a background watchdog for the
+# same reason: a `( sleep N; kill ... ) &` watchdog also inherits the caller's
+# stdout, which once turned a 4-second suite into 112 seconds.
 #
 # Exit status: the command's own status, or 124 when the timeout fired, matching
 # GNU timeout so callers can tell the two apart.
 #
 # Usage: portable_run_with_timeout 30 bash script.sh arg
+LOOP_PORTABLE_KILL_GRACE_MS=500
+
 portable_run_with_timeout() {
     local seconds="${1:-0}"
     shift
 
-    "$@" &
-    local command_pid=$!
+    local out_file err_file state_file
+    out_file=$(mktemp) || return 1
+    err_file=$(mktemp) || { rm -f "$out_file"; return 1; }
+    state_file=$(mktemp) || { rm -f "$out_file" "$err_file"; return 1; }
 
-    # Poll in tenths of a second. Bash reaps background children as they exit, so
-    # kill -0 stops succeeding promptly rather than lingering on a zombie.
-    local deciseconds=$((seconds * 10))
-    local waited=0
-    local timed_out=0
-    while kill -0 "$command_pid" 2>/dev/null; do
-        if [ "$waited" -ge "$deciseconds" ]; then
-            timed_out=1
-            kill -TERM "$command_pid" 2>/dev/null
-            break
+    # Run the whole thing in a subshell whose own stderr is discarded. Bash reports
+    # a signal-killed job as "Terminated: 15" on the stderr of the shell that owns
+    # it, which would otherwise land in the caller's output on every timeout. The
+    # command's own stderr is captured to err_file, so nothing real is lost.
+    (
+        exec 2>/dev/null
+
+        "$@" >"$out_file" 2>"$err_file" &
+        command_pid=$!
+
+        # Poll in tenths of a second. Bash reaps background children as they exit,
+        # so kill -0 stops succeeding promptly rather than lingering on a zombie.
+        deadline=$((seconds * 10))
+        waited=0
+        timed_out=0
+        while kill -0 "$command_pid" 2>/dev/null; do
+            if [ "$waited" -ge "$deadline" ]; then
+                timed_out=1
+                break
+            fi
+            sleep 0.1
+            waited=$((waited + 1))
+        done
+
+        if [ "$timed_out" -eq 1 ]; then
+            _portable_terminate_tree "$command_pid"
         fi
+
+        status=0
+        wait "$command_pid" || status=$?
+        if [ "$timed_out" -eq 1 ]; then
+            status=124
+        fi
+        printf '%s\n' "$status" > "$state_file"
+    )
+
+    local status
+    status=$(cat "$state_file" 2>/dev/null)
+    case "$status" in
+        '' | *[!0-9]*) status=1 ;;
+    esac
+
+    cat "$out_file"
+    cat "$err_file" >&2
+    rm -f "$out_file" "$err_file" "$state_file"
+
+    return "$status"
+}
+
+# TERM a process and its direct children, then KILL whatever is still alive after
+# the grace period. Used by portable_run_with_timeout to bound expiry.
+_portable_terminate_tree() {
+    local target="$1"
+    local children=""
+
+    # Collect children before the parent dies and reparents them.
+    if command -v pgrep >/dev/null 2>&1; then
+        children=$(pgrep -P "$target" 2>/dev/null || true)
+    fi
+
+    local pid
+    kill -TERM "$target" 2>/dev/null
+    for pid in $children; do
+        kill -TERM "$pid" 2>/dev/null
+    done
+
+    local grace=$((LOOP_PORTABLE_KILL_GRACE_MS / 100))
+    local waited=0
+    while kill -0 "$target" 2>/dev/null && [ "$waited" -lt "$grace" ]; do
         sleep 0.1
         waited=$((waited + 1))
     done
 
-    local status=0
-    wait "$command_pid" 2>/dev/null || status=$?
-    if [ "$timed_out" -eq 1 ]; then
-        status=124
-    fi
-
-    return "$status"
+    kill -KILL "$target" 2>/dev/null
+    for pid in $children; do
+        kill -KILL "$pid" 2>/dev/null
+    done
 }
 
 # ========================================

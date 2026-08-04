@@ -273,6 +273,12 @@ write_codepoint_fixture emoji-mahjong   '\360\237\200\204'      # U+1F004 mahjon
 write_codepoint_fixture emoji-flag      '\360\237\207\246'      # U+1F1E6 regional indicator
 write_codepoint_fixture emoji-ext-a     '\360\237\253\240'      # U+1FAE0 melting face, Ext-A
 write_codepoint_fixture emoji-legacy    '\360\237\257\260'      # U+1FBF0 symbols for legacy computing
+write_codepoint_fixture emoji-watch     '\342\214\232'          # U+231A  BMP Emoji_Presentation
+write_codepoint_fixture emoji-clock     '\342\217\260'          # U+23F0  BMP Emoji_Presentation
+write_codepoint_fixture emoji-star      '\342\255\220'          # U+2B50  BMP Emoji_Presentation
+# Sequences: the base characters stay legal on their own, the selectors do not.
+write_codepoint_fixture emoji-vs16      '\302\251\357\270\217'     # U+00A9 U+FE0F rendered copyright emoji
+write_codepoint_fixture emoji-keycap    '1\357\270\217\342\203\243'   # U+0031 U+FE0F U+20E3 keycap digit one
 write_codepoint_fixture han-extb        '\360\240\200\200'      # U+20000 Ext B
 write_codepoint_fixture han-compat-supp '\360\257\240\200'      # U+2F800 compatibility supplement
 write_codepoint_fixture han-extg        '\360\260\200\200'      # U+30000 Ext G
@@ -283,7 +289,8 @@ bopomofo cjk-stroke enclosed-cjk han-exta han hangul-jamo hangul-jamo-a hangul-s
 hangul-syl-b hangul-syl-c tone-letter han-compat vertical-form cjk-compat-form \
 sesame-dot fullwidth halfwidth-stop fullwidth-cent ideo-hook ideo-tone kana-extb \
 kana-supp kana-exta counting-rod enclosed-supp circled-ideo emoji emoji-mahjong \
-emoji-flag emoji-ext-a emoji-legacy han-extb han-compat-supp han-extg han-exth"
+emoji-flag emoji-ext-a emoji-legacy emoji-watch emoji-clock emoji-star \
+emoji-vs16 emoji-keycap han-extb han-compat-supp han-extg han-exth"
 
 # Must stay clean. The first three are the deliberate divergence from PCRE2
 # \p{Han}, which resolves to Script_Extensions and so includes characters whose
@@ -312,11 +319,13 @@ write_codepoint_fixture copyright       '\302\251'              # U+00A9  copyri
 write_codepoint_fixture registered      '\302\256'              # U+00AE  registered sign
 write_codepoint_fixture trademark       '\342\204\242'          # U+2122  trade mark sign
 write_codepoint_fixture emoji-arrow     '\342\206\224'          # U+2194  left right arrow
+write_codepoint_fixture small-square    '\342\226\252'          # U+25AA  Emoji but not Emoji_Presentation
+write_codepoint_fixture keycap-base     '1'                     # bare digit, no selector
 write_codepoint_fixture ascii           'plain text with 0123456789 # and *'
 
 CLEAN_FIXTURES="middle-dot caron overline latin1 emdash cyrillic latin-ext-d \
 combining-half arabic-pf tangut-mark nushu-mark khitan-filler plane4 copyright \
-registered trademark emoji-arrow ascii"
+registered trademark emoji-arrow small-square keycap-base ascii"
 
 for name in $CJK_FIXTURES; do
     if portable_contains_cjk_or_emoji "$TEST_DIR/scan-$name.txt"; then
@@ -384,6 +393,56 @@ if [[ "$TIMEOUT_ELAPSED" -lt 15000 ]]; then
     pass "portable_run_with_timeout kills the command (${TIMEOUT_ELAPSED}ms, not 30s)"
 else
     fail "portable_run_with_timeout kills the command" "< 15000 ms" "${TIMEOUT_ELAPSED}ms"
+fi
+
+# A plain sleep exits on TERM, so it cannot show whether the limit is enforced or
+# merely requested. This command ignores TERM, so only KILL ends it. Before the
+# grace-then-KILL change it ran to completion and an infinite one never returned.
+TIMEOUT_START=$(portable_epoch_ms)
+TIMEOUT_STATUS=0
+portable_run_with_timeout 1 bash -c 'trap "" TERM; exec sleep 30' || TIMEOUT_STATUS=$?
+TIMEOUT_ELAPSED=$(( $(portable_epoch_ms) - TIMEOUT_START ))
+if [[ "$TIMEOUT_STATUS" -eq 124 ]] && [[ "$TIMEOUT_ELAPSED" -lt 15000 ]]; then
+    pass "portable_run_with_timeout forces a TERM-ignoring command (${TIMEOUT_ELAPSED}ms)"
+else
+    fail "portable_run_with_timeout forces a TERM-ignoring command" \
+        "124 in under 15000 ms" "$TIMEOUT_STATUS in ${TIMEOUT_ELAPSED}ms"
+fi
+
+# A descendant that outlives its parent used to inherit the caller's stdout and
+# hold the command substitution open until it exited on its own, so the timeout
+# was bounded only by the descendant's lifetime. Capturing through $( ) is the
+# point of this case.
+TIMEOUT_START=$(portable_epoch_ms)
+TIMEOUT_STATUS=0
+TIMEOUT_OUTPUT=$(portable_run_with_timeout 1 bash -c 'sleep 30 & wait') || TIMEOUT_STATUS=$?
+TIMEOUT_ELAPSED=$(( $(portable_epoch_ms) - TIMEOUT_START ))
+if [[ "$TIMEOUT_STATUS" -eq 124 ]] && [[ "$TIMEOUT_ELAPSED" -lt 15000 ]]; then
+    pass "portable_run_with_timeout is not held open by a surviving descendant (${TIMEOUT_ELAPSED}ms)"
+else
+    fail "portable_run_with_timeout descendant handling" \
+        "124 in under 15000 ms" "$TIMEOUT_STATUS in ${TIMEOUT_ELAPSED}ms"
+fi
+
+# Streams must stay separate: one call site captures stderr while discarding
+# stdout, so merging them internally would silently change what it asserts.
+TIMEOUT_OUT=$(portable_run_with_timeout 5 bash -c 'echo to-stdout; echo to-stderr >&2' 2>/dev/null)
+TIMEOUT_ERR=$(portable_run_with_timeout 5 bash -c 'echo to-stdout; echo to-stderr >&2' 2>&1 >/dev/null)
+if [[ "$TIMEOUT_OUT" == "to-stdout" && "$TIMEOUT_ERR" == "to-stderr" ]]; then
+    pass "portable_run_with_timeout keeps stdout and stderr separate"
+else
+    fail "portable_run_with_timeout stream separation" \
+        "stdout=to-stdout stderr=to-stderr" "stdout=$TIMEOUT_OUT stderr=$TIMEOUT_ERR"
+fi
+
+# Bash announces a signal-killed job on the owning shell's stderr. That notice
+# must not reach the caller, or every timeout would inject noise into a captured
+# stream.
+TIMEOUT_NOISE=$(portable_run_with_timeout 1 sleep 30 2>&1 >/dev/null)
+if [[ -z "$TIMEOUT_NOISE" ]]; then
+    pass "portable_run_with_timeout emits no job-control notice on timeout"
+else
+    fail "portable_run_with_timeout job notice" "(nothing on stderr)" "$TIMEOUT_NOISE"
 fi
 
 # ========================================
