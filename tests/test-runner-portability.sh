@@ -223,39 +223,88 @@ fi
 echo ""
 echo "Section 4: CJK and emoji detection"
 
-# Fixtures are written with printf octal escapes so this file itself stays pure
-# ASCII, and so the check does not depend on Python being present to build them.
+# Fixtures are written with printf octal escapes so this file stays pure ASCII
+# and so building them needs no Python (ADR-0003).
 write_codepoint_fixture() {
     printf 'prefix %b suffix\n' "$2" > "$TEST_DIR/scan-$1.txt"
 }
 
-# Should be flagged. One fixture per Han block that \p{Han} matches, so a byte
-# range that silently stops short of a later extension is caught: Ext G at
-# U+30000 encodes as F0 B0 80 80, and a plane 2-3 range ending at \257 reported
-# it clean.
-write_codepoint_fixture han        '\344\270\255'         # U+4E2D  Unified
-write_codepoint_fixture han-exta   '\343\221\220'         # U+3450  Ext A
-write_codepoint_fixture han-radical '\342\272\200'        # U+2E80  radicals supp.
-write_codepoint_fixture han-kangxi '\342\274\200'         # U+2F00  Kangxi radicals
-write_codepoint_fixture han-compat '\357\244\200'         # U+F900  compatibility
-write_codepoint_fixture han-extb   '\360\240\200\200'    # U+20000 Ext B
-write_codepoint_fixture han-compat-supp '\360\257\240\200' # U+2F800 compat supp.
-write_codepoint_fixture han-extg   '\360\260\200\200'    # U+30000 Ext G
-write_codepoint_fixture han-exth   '\360\262\216\257'    # U+323AF Ext H, last Han
-write_codepoint_fixture emoji      '\360\237\230\200'    # U+1F600 grinning face
-write_codepoint_fixture symbol     '\342\230\200'         # U+2600  misc symbol
-write_codepoint_fixture dingbat    '\342\234\224'         # U+2714  dingbat
+# One fixture per byte range in portable_contains_cjk_or_emoji, so a range that
+# silently stops short is caught. Ext G at U+30000 and the plane 1 Han ranges
+# were each reported clean by earlier hand-picked ranges.
+write_codepoint_fixture symbol          '\342\230\200'          # U+2600  misc symbols
+write_codepoint_fixture dingbat         '\342\234\224'          # U+2714  dingbats
+write_codepoint_fixture han-radical     '\342\272\200'          # U+2E80  CJK radicals supplement
+write_codepoint_fixture han-kangxi      '\342\274\200'          # U+2F00  Kangxi radicals
+write_codepoint_fixture cjk-punct       '\343\200\201'          # U+3001  ideographic comma
+write_codepoint_fixture hiragana        '\343\201\202'          # U+3042  hiragana
+write_codepoint_fixture katakana        '\343\202\242'          # U+30A2  katakana
+write_codepoint_fixture bopomofo        '\343\204\205'          # U+3105  bopomofo
+write_codepoint_fixture cjk-stroke      '\343\207\200'          # U+31C0  CJK strokes
+write_codepoint_fixture enclosed-cjk    '\343\210\240'          # U+3220  enclosed CJK
+write_codepoint_fixture han-exta        '\343\221\220'          # U+3450  Ext A
+write_codepoint_fixture han             '\344\270\255'          # U+4E2D  Unified
+write_codepoint_fixture hangul-jamo     '\341\204\200'          # U+1100  Hangul Jamo
+write_codepoint_fixture hangul-jamo-a   '\352\245\240'          # U+A960  Hangul Jamo Ext-A
+write_codepoint_fixture hangul-syl      '\352\260\200'          # U+AC00  Hangul syllables
+write_codepoint_fixture hangul-syl-b    '\353\200\200'          # U+B000  Hangul syllables
+write_codepoint_fixture hangul-syl-c    '\355\200\200'          # U+D000  Hangul syllables
+write_codepoint_fixture tone-letter     '\352\234\200'          # U+A700  modifier tone letters
+write_codepoint_fixture han-compat      '\357\244\200'          # U+F900  compatibility ideographs
+write_codepoint_fixture vertical-form   '\357\270\220'          # U+FE10  vertical forms
+write_codepoint_fixture cjk-compat-form '\357\270\260'          # U+FE30  CJK compatibility forms
+write_codepoint_fixture sesame-dot      '\357\271\205'          # U+FE45  small form variants
+write_codepoint_fixture fullwidth       '\357\274\201'          # U+FF01  fullwidth forms
+write_codepoint_fixture halfwidth-stop  '\357\275\241'          # U+FF61  halfwidth ideographic full stop
+write_codepoint_fixture fullwidth-cent  '\357\277\240'          # U+FFE0  fullwidth cent sign
+write_codepoint_fixture ideo-hook       '\360\226\277\242'      # U+16FE2 old Chinese hook mark
+write_codepoint_fixture ideo-tone       '\360\226\277\260'      # U+16FF0 ideographic tone mark
+write_codepoint_fixture kana-extb       '\360\232\277\260'      # U+1AFF0 kana Ext-B
+write_codepoint_fixture kana-supp       '\360\233\200\200'      # U+1B000 kana supplement
+write_codepoint_fixture kana-exta       '\360\233\205\220'      # U+1B150 kana Ext-A
+write_codepoint_fixture counting-rod    '\360\235\215\240'      # U+1D360 counting rod numerals
+write_codepoint_fixture enclosed-supp   '\360\237\210\200'      # U+1F200 enclosed ideographic supplement
+write_codepoint_fixture circled-ideo    '\360\237\211\220'      # U+1F250 circled ideograph
+write_codepoint_fixture emoji           '\360\237\230\200'      # U+1F600 emoji
+write_codepoint_fixture han-extb        '\360\240\200\200'      # U+20000 Ext B
+write_codepoint_fixture han-compat-supp '\360\257\240\200'      # U+2F800 compatibility supplement
+write_codepoint_fixture han-extg        '\360\260\200\200'      # U+30000 Ext G
+write_codepoint_fixture han-exth        '\360\262\216\257'      # U+323AF Ext H, last assigned Han
 
-# Should not be flagged: non-ASCII but neither CJK nor emoji, so the scan must
-# not degenerate into "any byte above 0x7F".
-write_codepoint_fixture latin1   '\303\251'               # U+00E9 e with acute
-write_codepoint_fixture emdash   '\342\200\224'          # U+2014 em dash
-write_codepoint_fixture cyrillic '\320\226'               # U+0416 Zhe
-write_codepoint_fixture plane4   '\361\200\200\200'      # U+40000 beyond Han
-write_codepoint_fixture ascii    'plain text'
+CJK_FIXTURES="symbol dingbat han-radical han-kangxi cjk-punct hiragana katakana \
+bopomofo cjk-stroke enclosed-cjk han-exta han hangul-jamo hangul-jamo-a hangul-syl \
+hangul-syl-b hangul-syl-c tone-letter han-compat vertical-form cjk-compat-form \
+sesame-dot fullwidth halfwidth-stop fullwidth-cent ideo-hook ideo-tone kana-extb \
+kana-supp kana-exta counting-rod enclosed-supp circled-ideo emoji han-extb \
+han-compat-supp han-extg han-exth"
 
-for name in han han-exta han-radical han-kangxi han-compat han-extb \
-            han-compat-supp han-extg han-exth emoji symbol dingbat; do
+# Must stay clean. The first three are the deliberate divergence from PCRE2
+# \p{Han}, which resolves to Script_Extensions and so includes characters whose
+# own script is Common or Inherited; they occur in ordinary Latin and phonetic
+# text. The rest guard against the byte ranges creeping into neighbouring
+# scripts, which is easy to do wrong: Latin Extended-D sits directly above the
+# modifier tone letters, Arabic presentation forms directly above the small form
+# variants, and the Tangut, Nushu and Khitan marks are interleaved with the two
+# ideographic marks covered above.
+write_codepoint_fixture middle-dot      '\302\267'              # U+00B7  scx Han, script Common
+write_codepoint_fixture caron           '\313\207'              # U+02C7  scx Han, script Common
+write_codepoint_fixture overline        '\314\205'              # U+0305  scx Han, script Inherited
+write_codepoint_fixture latin1          '\303\251'              # U+00E9  e with acute
+write_codepoint_fixture emdash          '\342\200\224'          # U+2014  em dash
+write_codepoint_fixture cyrillic        '\320\226'              # U+0416  Cyrillic Zhe
+write_codepoint_fixture latin-ext-d     '\352\234\240'          # U+A720  Latin Extended-D
+write_codepoint_fixture combining-half  '\357\270\240'          # U+FE20  combining half marks
+write_codepoint_fixture arabic-pf       '\357\271\260'          # U+FE70  Arabic presentation forms
+write_codepoint_fixture tangut-mark     '\360\226\277\240'      # U+16FE0 Tangut iteration mark
+write_codepoint_fixture nushu-mark      '\360\226\277\241'      # U+16FE1 Nushu iteration mark
+write_codepoint_fixture khitan-filler   '\360\226\277\244'      # U+16FE4 Khitan small script filler
+write_codepoint_fixture plane4          '\361\200\200\200'      # U+40000 beyond planes 2-3
+write_codepoint_fixture ascii           'plain text'
+
+CLEAN_FIXTURES="middle-dot caron overline latin1 emdash cyrillic latin-ext-d \
+combining-half arabic-pf tangut-mark nushu-mark khitan-filler plane4 ascii"
+
+for name in $CJK_FIXTURES; do
     if portable_contains_cjk_or_emoji "$TEST_DIR/scan-$name.txt"; then
         pass "portable_contains_cjk_or_emoji flags $name"
     else
@@ -263,7 +312,7 @@ for name in han han-exta han-radical han-kangxi han-compat han-extb \
     fi
 done
 
-for name in latin1 emdash cyrillic plane4 ascii; do
+for name in $CLEAN_FIXTURES; do
     if portable_contains_cjk_or_emoji "$TEST_DIR/scan-$name.txt"; then
         fail "portable_contains_cjk_or_emoji leaves $name alone" "not detected" "detected"
     else
@@ -308,36 +357,62 @@ fi
 echo ""
 echo "Section 6: SIGINT stays trappable in a suite"
 
+# The child signals itself and checks synchronously: Bash runs a trap as soon as
+# the current command finishes, so there is no sleep to lose and no background
+# helper whose delivery could arrive after the script exits. An earlier version
+# polled for a signal from a background helper and was racy under load.
 SIGINT_CHILD="$TEST_DIR/sigint-child.sh"
 cat > "$SIGINT_CHILD" <<'CHILD'
 #!/usr/bin/env bash
 handled=false
-_on_int() { handled=true; echo "TRAP_FIRED"; }
-trap '_on_int' INT
-( sleep 0.1; kill -INT $$ ) &
-helper=$!
-for _ in 1 2 3 4 5 6 7 8 9 10; do
-    sleep 0.1
-    [[ "$handled" == "true" ]] && break
-done
-kill "$helper" 2>/dev/null || true
-wait "$helper" 2>/dev/null || true
-[[ "$handled" == "true" ]]
+trap 'handled=true' INT
+kill -INT $$
+if [ "$handled" = true ]; then
+    echo "TRAP_FIRED"
+fi
 CHILD
 chmod +x "$SIGINT_CHILD"
 
-# With job control off, Bash sets SIGINT to SIG_IGN for asynchronous commands,
-# macOS passes that ignore on across exec, and a signal ignored on entry can
-# never be trapped -- so a suite asserting its own SIGINT handler could not
-# observe the signal. run-all-tests.sh enables job control to avoid that; this
-# reproduces the runner's launch model and checks the child still sees SIGINT.
-SIGINT_OUT="$TEST_DIR/sigint-out.txt"
-bash -c 'set -m; ( "$1" > "$2" 2>&1 ) & wait' _ "$SIGINT_CHILD" "$SIGINT_OUT"
+# Baseline first. A signal ignored on entry to a shell can never be trapped, and
+# the ignore is inherited across exec, so if whatever started this suite had
+# SIGINT ignored then no descendant can demonstrate the property and the
+# assertion below would fail for a reason that has nothing to do with the runner.
+# Under run-all-tests.sh the baseline always holds, because the runner enables job
+# control precisely so that its suites keep a trappable SIGINT.
+SIGINT_BASE="$TEST_DIR/sigint-baseline.txt"
+"$SIGINT_CHILD" > "$SIGINT_BASE" 2>&1 || true
 
-if grep -q "TRAP_FIRED" "$SIGINT_OUT"; then
-    pass "a suite launched with job control can trap SIGINT"
+if ! grep -q "TRAP_FIRED" "$SIGINT_BASE"; then
+    skip "SIGINT trappable under job control" \
+        "this suite was started with SIGINT already ignored, so no child can trap it"
 else
-    fail "SIGINT trappable under job control" "TRAP_FIRED in output" "$(cat "$SIGINT_OUT")"
+    # With job control off, Bash sets SIGINT to SIG_IGN for asynchronous commands,
+    # and macOS passes that ignore on across exec -- so a suite asserting its own
+    # SIGINT handler could not observe the signal. run-all-tests.sh enables job
+    # control to avoid that; reproduce the runner's launch model and check that a
+    # child still sees SIGINT.
+    SIGINT_OUT="$TEST_DIR/sigint-out.txt"
+    # Bash 3.2 prints a "[1]+ Done" job notification with job control on; the
+    # child's own output goes to the file, so drop the launcher's stderr.
+    bash -c 'set -m; ( "$1" > "$2" 2>&1 ) & wait' _ "$SIGINT_CHILD" "$SIGINT_OUT" 2>/dev/null
+
+    if grep -q "TRAP_FIRED" "$SIGINT_OUT"; then
+        pass "a suite launched with job control can trap SIGINT"
+    else
+        fail "SIGINT trappable under job control" "TRAP_FIRED in output" "$(cat "$SIGINT_OUT")"
+    fi
+
+    # The same launch without job control must NOT deliver the signal, otherwise
+    # the assertion above proves nothing about set -m.
+    SIGINT_PLAIN="$TEST_DIR/sigint-plain.txt"
+    bash -c '( "$1" > "$2" 2>&1 ) & wait' _ "$SIGINT_CHILD" "$SIGINT_PLAIN" 2>/dev/null
+
+    if grep -q "TRAP_FIRED" "$SIGINT_PLAIN"; then
+        fail "job control is what makes SIGINT trappable" \
+            "no TRAP_FIRED without set -m" "the trap fired anyway, so this platform never ignored SIGINT"
+    else
+        pass "without job control the same child cannot trap SIGINT"
+    fi
 fi
 
 # The behavior above only holds because the runner turns job control on, and the

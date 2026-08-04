@@ -202,42 +202,80 @@ portable_frontmatter_value() {
     ' "$file"
 }
 
-# Report whether a file contains CJK ideographs or emoji, which the project
-# rules forbid in committed content.
+# Report whether a file contains CJK characters or emoji, which the project rules
+# forbid in committed content ("No Emoji or CJK char is allowed").
 #
 # Exit status: 0 found, 1 not found (or no such file).
 #
-# The naive form for this is `grep -P '[\p{Han}]|[\x{1F300}-...]'`, but BSD grep
-# has no PCRE support, so on macOS that call failed and -- with stderr swallowed
-# -- reported "clean" for any input at all. Instead, match the UTF-8 encodings of
-# those ranges as raw bytes in the C locale, which is POSIX ERE and behaves the
-# same under GNU and BSD grep. Per ADR-0003 the Bash layer must not reach for
-# Python, so a Python scanner is not an option here.
+# The naive form is `grep -P '\p{Han}|[\x{1F300}-...]'`, but BSD grep has no PCRE
+# support, so on macOS that call failed and -- with stderr swallowed -- reported
+# "clean" for any input at all. ADR-0003 rules out a Python scanner, so instead
+# match the UTF-8 encodings of the target ranges as raw bytes in the C locale.
+# That is POSIX ERE and behaves identically under GNU and BSD grep.
 #
-# The byte patterns, built with printf octal escapes so this file itself stays
-# pure ASCII. Between them they cover every Han block that \p{Han} matches:
-#   \342 \272-\277 x1          U+2E80-U+2FFF    CJK radicals supplement,
-#                                                Kangxi radicals
-#   \343-\351 x2 continuation  U+3000-U+9FFF    CJK punctuation through
-#                                                Unified Ideographs, incl. Ext A
-#   \357 \244-\253 x1          U+F900-U+FAFF    compatibility ideographs
-#   \360 \240-\277 x2          U+20000-U+3FFFF  planes 2 and 3: Ext B through
-#                                                Ext I, compatibility
-#                                                supplement, Ext G and Ext H
-#   \360\237 \214-\247 x1      U+1F300-U+1F9FF  emoji
-#   \342 \230-\236 x1          U+2600-U+27BF    misc symbols and dingbats
+# SCOPE, and how it differs from `grep -P '\p{Han}'`:
 #
-# The plane 2-3 range must stay \240-\277 rather than \240-\257: Ext G starts at
-# U+30000, which encodes as F0 B0 80 80, so stopping at \257 silently reported
-# those ideographs as clean.
+#   * Every Script=Han code point is flagged. Verified exhaustively against
+#     `pcre2grep -u '\p{sc:Han}'` over all 1,112,032 encodable code points:
+#     zero misses. Earlier hand-picked ranges missed Ext G/H, the CJK radical
+#     blocks, and the plane 1 Han ranges, each of which read as "clean".
+#
+#   * Deliberately wider than Han: kana, Hangul, Bopomofo, CJK punctuation and
+#     symbols, CJK strokes, enclosed and compatibility forms, halfwidth and
+#     fullwidth forms, Yijing hexagrams, counting rod numerals and the emoji
+#     blocks are all flagged too. The rule this guard enforces says "CJK", not
+#     "Han", and a Han-only test passes text written purely in kana or Hangul.
+#     Everything flagged outside the CJK scripts lies inside one of the blocks
+#     listed below or in unassigned space inside them -- checked exhaustively,
+#     so there are no surprise matches anywhere in Unicode.
+#
+#   * Deliberately narrower in one respect: PCRE2 10.43+ resolves `\p{Han}` to
+#     Script_Extensions, which pulls in ten characters whose own script is
+#     Common or Inherited -- U+00B7 MIDDLE DOT, U+02C7 CARON, U+02C9-02CB,
+#     U+02D9 DOT ABOVE, U+02EA-02EB, U+0305 COMBINING OVERLINE and U+0323
+#     COMBINING DOT BELOW. Those appear in ordinary Latin and phonetic text, so
+#     flagging them would reject legitimate English content. They are excluded.
+#
+# Not covered, and out of scope for a "no CJK" guard on English documents:
+# Tangut, Nushu, Khitan, Yi and Lisu are separate scripts, not CJK.
 #
 # Usage: if portable_contains_cjk_or_emoji "$file"; then ...
 portable_contains_cjk_or_emoji() {
     local file="${1:-}"
     [ -n "$file" ] && [ -f "$file" ] || return 1
 
-    local pattern
-    pattern=$(printf '[\343-\351][\200-\277][\200-\277]|\357[\244-\253][\200-\277]|\360[\240-\277][\200-\277][\200-\277]|\360\237[\214-\247][\200-\277]|\342[\230-\236][\200-\277]|\342[\272-\277][\200-\277]')
+    # One UTF-8 byte range per line, written with \0nnn octal escapes so this
+    # file itself stays pure ASCII. Keep each comment in step with its escape:
+    # tests/test-runner-portability.sh carries a fixture per entry.
+    local branches=(
+        '\0342[\0230-\0236][\0200-\0277]'             # U+2600-U+27BF   misc symbols, dingbats
+        '\0342[\0272-\0277][\0200-\0277]'             # U+2E80-U+2FFF   CJK radicals, Kangxi, IDC
+        '[\0343-\0351][\0200-\0277][\0200-\0277]'     # U+3000-U+9FFF   CJK punct, kana, bopomofo, Ext A, Unified
+        '\0341[\0204-\0207][\0200-\0277]'             # U+1100-U+11FF   Hangul Jamo
+        '\0352\0245[\0240-\0277]'                     # U+A960-U+A97F   Hangul Jamo Ext-A
+        '\0352[\0260-\0277][\0200-\0277]'             # U+AC00-U+AFFF   Hangul syllables
+        '[\0353\0354][\0200-\0277][\0200-\0277]'      # U+B000-U+CFFF   Hangul syllables
+        '\0355[\0200-\0237][\0200-\0277]'             # U+D000-U+D7FF   Hangul syllables, Jamo Ext-B
+        '\0352\0234[\0200-\0237]'                     # U+A700-U+A71F   modifier tone letters
+        '\0357[\0244-\0253][\0200-\0277]'             # U+F900-U+FAFF   CJK compatibility ideographs
+        '\0357\0270[\0220-\0237]'                     # U+FE10-U+FE1F   vertical forms
+        '\0357\0270[\0260-\0277]'                     # U+FE30-U+FE3F   CJK compatibility forms
+        '\0357\0271[\0200-\0257]'                     # U+FE40-U+FE6F   CJK compat forms, small form variants
+        '\0357[\0274-\0276][\0200-\0277]'             # U+FF00-U+FFBF   halfwidth and fullwidth forms
+        '\0357\0277[\0200-\0257]'                     # U+FFC0-U+FFEF   halfwidth and fullwidth forms
+        '\0360\0226\0277[\0242-\0243]'                # U+16FE2-U+16FE3 old Chinese hook and iteration marks
+        '\0360\0226\0277[\0260-\0261]'                # U+16FF0-U+16FF1 ideographic tone marks
+        '\0360\0232\0277[\0260-\0277]'                # U+1AFF0-U+1AFFF kana Ext-B
+        '\0360\0233[\0200-\0204][\0200-\0277]'        # U+1B000-U+1B13F kana supplement, kana Ext-A
+        '\0360\0233\0205[\0200-\0257]'                # U+1B140-U+1B16F kana Ext-A
+        '\0360\0235\0215[\0240-\0277]'                # U+1D360-U+1D37F counting rod numerals
+        '\0360\0237[\0210-\0247][\0200-\0277]'        # U+1F200-U+1F9FF enclosed ideographic supplement, emoji
+        '\0360[\0240-\0277][\0200-\0277][\0200-\0277]' # U+20000-U+3FFFF planes 2-3: Ext B through Ext H
+    )
+
+    local joined pattern
+    joined=$(printf '%s|' "${branches[@]}")
+    pattern=$(printf '%b' "${joined%|}")
 
     LC_ALL=C grep -qE "$pattern" "$file"
 }
