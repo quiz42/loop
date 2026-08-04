@@ -63,6 +63,12 @@
     });
   }
 
+  function classFragment(value, fallback) {
+    var fragment = typeof value === "string" ? value : "";
+    fragment = fragment.replace(/[^a-z0-9-]/gi, "-").replace(/^-+|-+$/g, "");
+    return fragment || fallback;
+  }
+
   function shortHash(value) {
     var text = string(value, "");
     if (!text || text === "—") {
@@ -100,7 +106,7 @@
 
   function statusChip(value) {
     var valueText = string(value, "unverifiable");
-    return element("span", "status status--" + valueText.replace(/[^a-z0-9-]/gi, "-"), valueText);
+    return element("span", "status status--" + classFragment(valueText, "unverifiable"), valueText);
   }
 
   function section(heading, description) {
@@ -267,7 +273,7 @@
     var conclusions = element("div", "conclusion-grid");
     append(
       conclusions,
-      conclusion("Proof Integrity", integrityStatus(), "Schema, hashes, and required evidence are verified by `loop proof verify`."),
+      conclusion("Proof Integrity", integrityStatus(), "This is the packaged manifest's recorded status. Run `loop proof verify` to establish the integrity of the files you received."),
       conclusion("Terminal State", string(run.terminal_state), "What happened to the Loop Run."),
       conclusion("Delivery Verdict", string(verdict.decision), "Whether the admitted evidence supports delivery.")
     );
@@ -470,7 +476,7 @@
         activeRound = event.round !== undefined ? event.round : nextRound;
         nextRound = Number(activeRound) + 1;
       }
-      var item = element("li", "timeline-event timeline-event--" + string(event.kind, "event"));
+      var item = element("li", "timeline-event timeline-event--" + classFragment(event.kind, "event"));
       var heading = element("div", "timeline-event-heading");
       append(heading, element("strong", "", timelineLabel(event, activeRound)));
       append(heading, element("time", "muted", string(event.at, "time not recorded")));
@@ -654,7 +660,9 @@
   }
 
   function render() {
-    app.replaceChildren();
+    while (app.firstChild) {
+      app.removeChild(app.firstChild);
+    }
     if (!object(proof)) {
       append(app, empty("The Bundle does not contain a usable window.PROOF object. Re-export it, then open index.html again."));
       return;
@@ -669,20 +677,23 @@
     append(app, views[activeView]());
   }
 
-  navigation.forEach(function (button) {
-    button.addEventListener("click", function () {
-      activeView = button.getAttribute("data-view");
-      navigation.forEach(function (item) {
-        if (item === button) {
-          item.setAttribute("aria-current", "page");
-        } else {
-          item.removeAttribute("aria-current");
+  for (var navigationIndex = 0; navigationIndex < navigation.length; navigationIndex += 1) {
+    (function (button) {
+      button.addEventListener("click", function () {
+        activeView = button.getAttribute("data-view");
+        for (var itemIndex = 0; itemIndex < navigation.length; itemIndex += 1) {
+          var item = navigation[itemIndex];
+          if (item === button) {
+            item.setAttribute("aria-current", "page");
+          } else {
+            item.removeAttribute("aria-current");
+          }
         }
+        render();
+        app.focus();
       });
-      render();
-      app.focus();
-    });
-  });
+    }(navigation[navigationIndex]));
+  }
 
   renderHeader();
   render();

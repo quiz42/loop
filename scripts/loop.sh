@@ -1227,7 +1227,7 @@ _loop_proof() {
             ;;
         open)
             _loop_proof_require_python39 || return $?
-            "$LOOP_SCRIPT_DIR/proof-open.sh" "$@"
+            python3 "$LOOP_SCRIPT_DIR/proof-open.py" "$@"
             ;;
         *)
             _loop_proof_usage

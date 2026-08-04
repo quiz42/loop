@@ -170,6 +170,35 @@ class SchemaValidationTests(unittest.TestCase):
         bundle["specification"]["acceptance_criteria"] = []
         self.assertTrue(validate_instance(bundle, self.bundle_schema).is_valid)
 
+    def test_explorer_attestation_is_optional_for_legacy_bundles(self):
+        legacy = deepcopy(self.bundle)
+        legacy.pop("explorer", None)
+        self.assertTrue(validate_instance(legacy, self.bundle_schema).is_valid)
+
+        current = deepcopy(legacy)
+        current["explorer"] = {
+            "assets": {
+                "index.html": "sha256:" + "a" * 64,
+                "app.js": "sha256:" + "b" * 64,
+                "styles.css": "sha256:" + "c" * 64,
+            }
+        }
+        self.assertTrue(validate_instance(current, self.bundle_schema).is_valid)
+
+        missing_asset = deepcopy(current)
+        missing_asset["explorer"]["assets"].pop("app.js")
+        self.assertIn(
+            "required",
+            error_keywords(validate_instance(missing_asset, self.bundle_schema)),
+        )
+
+        malformed_hash = deepcopy(current)
+        malformed_hash["explorer"]["assets"]["styles.css"] = "not-a-sha256"
+        self.assertIn(
+            "pattern",
+            error_keywords(validate_instance(malformed_hash, self.bundle_schema)),
+        )
+
     def test_every_public_field_has_a_description(self):
         for schema in (self.bundle_schema, self.profile_schema):
             for property_schema in walk_public_properties(schema):

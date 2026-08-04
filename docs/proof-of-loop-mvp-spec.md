@@ -23,7 +23,7 @@ Three commands form the complete loop:
 ```bash
 loop proof export --latest --profile public-v0   # compile: read-only Run + Git -> Proof Bundle
 loop proof verify .loop/proofs/<proof-id>/       # validate: schema / hash / references / required evidence
-loop proof open   .loop/proofs/<proof-id>/       # browse: offline Explorer, double-click to open
+loop proof open   .loop/proofs/<proof-id>/       # verified browse: validate Bundle + renderer, then open
 ```
 
 The product's core promise is **honesty rather than good looks**: Proof Integrity (is the evidence complete and untampered), Terminal State (did the Run finish), and Delivery Verdict (does the delivery meet its criteria) stay separate in both data and UI; anything not derivable from structured facts is marked `unverifiable`, never turned green by natural-language heuristics. What the maintainer receives is an evidence package that can attest to its own completeness, not a "verified" rubber stamp.
@@ -62,7 +62,7 @@ The product's core promise is **honesty rather than good looks**: Proof Integrit
 
 ### Browsing (Proof Explorer)
 
-25. As a maintainer, I want to see everything by **double-clicking `index.html`** after unpacking — no server, no network, no login — so that review has zero friction.
+25. As a maintainer, I want to see everything by **double-clicking `index.html`** after unpacking — no server, no network, no login — so that review has zero friction, while the page makes clear that this portable display does not itself verify the files.
 26. As a maintainer, I want one screen of Overview showing Proof ID, repository, base/head commit, Terminal State, Delivery Verdict, Proof Integrity, the profile used, and scale statistics, so that I form an overall judgment within tens of seconds.
 27. As a maintainer, I want the coverage disclaimer always visible on the Overview (covers only these ACs, this commit, this profile), so that I never misread it as "the code is proven correct".
 28. As a maintainer, I want the Acceptance Matrix to show each AC's status (`met | partial | unmet | unverifiable`), rationale, and links to supporting and contradicting evidence, so that I can jump straight to the raw material to check.
@@ -83,7 +83,7 @@ The product's core promise is **honesty rather than good looks**: Proof Integrit
 
 41. As an author, I want the Bundle directory to remain fully usable after being copied, archived, or uploaded as a CI artifact, so that sharing depends on no service.
 42. As a maintainer, I want to open a received Bundle in a completely offline environment (on a plane, on an intranet), so that review is not limited by network access.
-43. As an author, I want `loop proof open` to open the local Bundle directly in a browser, so that I can self-check before sending it out.
+43. As an author, I want `loop proof open` to verify the local Bundle and its packaged renderer before opening it directly in a browser, so that I can self-check before sending it out.
 44. As an author, I want an explicit redaction declaration in the Bundle (which items were withheld and why), so that I can explain the gaps to the maintainer and they can judge whether to request the full version.
 
 ### Compatibility and Evolution
@@ -106,11 +106,11 @@ The MVP consists of six compile-time modules plus a validator and a static Explo
 | Verdict Deriver | Derive per-AC status, Finding lifecycle, and Delivery Verdict from structured facts | Reads only the intermediate representation; rules in F/G |
 | Profile Engine | Decide include/omit per item according to the Verification Profile, run the secret/path scan, produce the disclosure declaration | The only place that decides "what enters the Bundle" |
 | Canonicalizer | Canonical JSON serialization, `run_id` / `proof_id` computation | Shared by Compiler and Validator so both use one algorithm |
-| Bundle Writer | Write out `proof.json`, the evidence file tree, `proof-data.js`, and the Explorer static assets | Writes only the target directory |
+| Bundle Writer | Write out `proof.json`, the evidence file tree, `proof-data.js`, and the Explorer static assets | Binds static assets in the manifest; writes only the target directory |
 | Proof Validator | Schema, hash, cross-reference, profile required evidence, `proof_id` recomputation | Calls no LLM, accesses no network |
 | Proof Explorer | Zero-dependency static pages for the five views | Reads only `window.PROOF`, never parses Markdown |
 
-`proof.json` is the **only** stable interface between Compiler, Validator, and Explorer (Draft §9.1).
+`proof.json` is the **only** stable data interface between Compiler, Validator, and Explorer (Draft §9.1). Its optional `explorer.assets` declaration binds the static renderer for the separately verified `proof open` path.
 
 ### B. Proof Bundle structure and schema
 
@@ -118,9 +118,9 @@ A Bundle is an ordinary directory:
 
 ```text
 <bundle>/
-├── proof.json          canonical machine interface, the only thing the Validator checks
-├── proof-data.js       display copy derived from proof.json: window.PROOF = {...} (D15)
-├── index.html / app.js / styles.css
+├── proof.json          canonical machine interface; explorer.assets binds static renderer hashes
+├── proof-data.js       exact display derivation from proof.json: window.PROOF = {...} (D15)
+├── index.html / app.js / styles.css  renderer attested by proof open
 └── evidence/<run-relative-path>    original Evidence files, keeping their Run-relative paths
 ```
 
@@ -318,6 +318,7 @@ Integrity status mapping (D7 — three states unchanged, causes live in `reason`
 | `schema-violation` | `invalid` |
 | `hash-mismatch` | `invalid` |
 | `proof-id-mismatch` | `invalid` |
+| `integrity-status-mismatch` | `invalid` |
 | `dangling-reference` | `invalid` |
 | `duplicate-evidence-id` | `invalid` |
 | `missing-file` (declared in the Bundle but absent from the directory) | `invalid` |
@@ -337,7 +338,8 @@ Export exit codes: `0` success; `1` usage/environment error; `2` Run not in a te
 
 - At export time, derive `proof-data.js` (`window.PROOF = {...}`) from `proof.json`; `index.html` loads it via `<script src>`, so double-clicking over `file://` works (D15 — avoiding the same-origin policy's block on `fetch`);
 - the original Evidence files remain individual files in the directory, and the UI navigates to them with relative `<a href>`;
-- `proof.json` is the only canonical interface and the only thing the Validator checks — tampering with `proof-data.js` can only fool someone reading that one HTML page, never `loop proof verify`;
+- `proof.json` is the canonical interface and `loop proof verify` remains data-canonical — a display-only edit does not alter its result. New Bundles also bind `index.html`, `app.js`, and `styles.css` to canonical SHA-256 values in `explorer.assets`; `proof-data.js` is checked as an exact derivation of `proof.json`;
+- `loop proof open` is the verified viewing entry point: it accepts only valid or incomplete Bundles whose bound renderer and display projection pass its preflight. Direct `file://` double-clicking remains supported for offline convenience, but the Explorer labels it as non-verifying;
 - native HTML/CSS/JS, no build step, no CDN, no web fonts.
 
 ### L. CLI integration
@@ -353,7 +355,7 @@ loop proof open   <bundle-dir>
 - The entry point performs a **Python 3.9+ prerequisite check** (ADR-0003), giving an actionable installation hint when it is missing; the repository already has `hooks/check-todos-from-transcript.py` depending on `python3`, so this is not a new burden.
 - Default output goes to `.loop/proofs/<first 12 chars of proof-id>/`; `.loop/` is already blocked from entering Git by Loop's write validators, so no extra gitignore work is needed.
 - A non-empty `--out` directory must already contain a schema-valid, identity-matching Proof Bundle. Re-exporting replaces that managed Bundle as a whole so a later public export cannot retain raw evidence from an earlier local one; arbitrary nonempty directories are rejected untouched.
-- `proof open`: the MVP opens over `file://` (macOS `open`, Linux `xdg-open`), and provides an optional `--server` wrapper (`python3 -m http.server` bound to `127.0.0.1` on an ephemeral port) as an experience improvement — this settles the fourth sub-choice in the decision appendix.
+- `proof open`: after its integrity and renderer preflight, the MVP opens over `file://` (macOS `open`, Linux `xdg-open`) and provides an optional loopback-only `--server` wrapper bound to `127.0.0.1` on an ephemeral port. Bundles without the renderer binding are legacy display packages and are refused with re-export guidance.
 
 ### M. Run Recorder: one Loop-side addition (D17, confirmed)
 
@@ -378,7 +380,7 @@ Legacy Runs without these fields → both values `null`, a `legacy-version-gap` 
 1. **JSON Schema validator → a hand-written subset validator.** Vendoring is not actually viable: modern `jsonschema` depends on `referencing` + `rpds-py` (the latter a Rust extension, not pure Python), and the vendorable older versions are too dated. A hand-written validator needs to cover only the keywords our own schemas use (`type`, `required`, `properties`, `additionalProperties`, `enum`, `const`, `items`, `minItems`, `pattern`, and limited `oneOf`/`anyOf`), with positive and negative cases for each schema. This also satisfies ADR-0003's "no dependency requiring pip install".
 2. **`run_id` field list and serialization → see section D**, including the fixed test vector requirement.
 3. **Integrity `reason` enum → see the table in section J**; the enum values themselves are written into the schema.
-4. **`loop proof open` → open over `file://` plus an optional `--server` wrapper**, see section L.
+4. **`loop proof open` → preflight the data, renderer, and display derivation before opening over `file://`, plus an optional loopback-only `--server` wrapper**, see section L.
 
 ### O. Non-functional requirements
 
@@ -410,7 +412,7 @@ surface directly. Milestone 2 retains the CLI subprocess boundary as the sole
 product-behavior seam; it must not add a second Adapter, Compiler, or Validator
 test interface.
 
-The Explorer's UI rendering is outside this seam: the MVP relies on manual walkthrough plus screenshots over the three golden Runs (Milestone 3), while automation asserts only that the static assets are all present and that `proof-data.js`, with its `window.PROOF = ` prefix stripped, is semantically equal to `proof.json`.
+The Explorer's UI rendering is outside this seam: the MVP relies on manual walkthrough plus screenshots over the three golden Runs (Milestone 3), while automation asserts that the static assets are present and manifest-bound, and that `proof-data.js` has the exact deterministic bytes derived from `proof.json`.
 
 ### Modules under test and cases
 
@@ -438,6 +440,7 @@ Following the repository's existing shell suite form (`tests/test-*.sh`, temp di
 - `reviewed_commit` behind `head_commit` → integrity still `valid`, but the badge condition false (D8);
 - `--json` output parseable with stable fields;
 - tampering with `proof-data.js` without touching `proof.json` → verify still `valid` (proving the canonical interface boundary, D15).
+- tampering with any renderer asset or `proof-data.js` → `proof open` refuses to launch; legacy Bundles without `explorer.assets` are refused with re-export guidance.
 
 ### Fixture strategy
 
@@ -495,7 +498,7 @@ Not in this MVP, left to P1 and beyond:
 - **AC-4 AC traceability**: every AC has a status, a rationale, and evidence references; zero evidence must never be `met`; a deferred AC must cite a replan record.
 - **AC-5 Finding lifecycle**: the Explorer shows discovery, fix commit, and re-review result; when it cannot be linked it is `unverifiable`, never `resolved`.
 - **AC-6 Privacy by default**: `public-v0` contains no full prompts, transcripts, absolute paths, secrets, or BitLesson body text, and emits a redaction declaration.
-- **AC-7 Offline review**: the copied directory shows all public evidence by double-clicking `index.html`, with no network and no login.
+- **AC-7 Offline review**: the copied directory shows all public evidence by double-clicking `index.html`, with no network and no login; that direct display visibly remains non-verifying, while `proof open` is the verified viewing entry point.
 - **AC-8 Read-only export**: export does not modify the source Run, Git index, working tree, or commit history.
 - **AC-9 Honest status**: Proof Integrity, Terminal State, and Delivery Verdict stay mutually independent in both data and UI.
 - **AC-10 Actionable failure**: missing files, legacy formats, and parse failures each produce a specific warning or error; never a crash, never a silent pass.

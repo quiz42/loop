@@ -43,6 +43,7 @@ _INTEGRITY_INVALID_REASONS = frozenset(
         "proof-id-mismatch",
         "dangling-reference",
         "duplicate-evidence-id",
+        "integrity-status-mismatch",
     )
 )
 _INTEGRITY_INCOMPLETE_REASONS = frozenset(
@@ -56,6 +57,7 @@ _INTEGRITY_INCOMPLETE_REASONS = frozenset(
         "reviewed-commit-unknown",
     )
 )
+_INTEGRITY_STATUS_MISMATCH_REASON = "integrity-status-mismatch"
 
 
 class ProofError(RuntimeError):
@@ -617,13 +619,10 @@ class RunAdapter:
         rounds = [{"index": index} for index in sorted(indexes)]
         plan_events = _plan_evolution_events(goal_tracker)
         plan_events_by_round: Dict[int, List[Dict[str, Any]]] = {}
-        unsorted_plan_events: List[Dict[str, Any]] = []
         for event in plan_events:
-            round_index = event.get("round")
-            if isinstance(round_index, int):
-                plan_events_by_round.setdefault(round_index, []).append(event)
-            else:
-                unsorted_plan_events.append(event)
+            # _plan_evolution_events emits only integer rounds, so every
+            # projected event has a deterministic position in this timeline.
+            plan_events_by_round.setdefault(event["round"], []).append(event)
         events: List[Dict[str, Any]] = [{"kind": "setup", "at": None}]
         for index in sorted(indexes):
             events.append({"kind": "round", "at": None, "round": index})
@@ -645,7 +644,6 @@ class RunAdapter:
                         }
                     )
             events.extend(plan_events_by_round.pop(index, []))
-        events.extend(unsorted_plan_events)
         for round_index in sorted(plan_events_by_round):
             events.extend(plan_events_by_round[round_index])
         drift_status = state.get("drift_status")
@@ -731,6 +729,33 @@ def _explorer_asset_bytes() -> Dict[str, bytes]:
             f"cannot read bundled Proof Explorer assets from {source_dir}: {error}"
         ) from error
     return assets
+
+
+def _explorer_asset_hashes(assets: Mapping[str, bytes]) -> Dict[str, str]:
+    """Return the canonical renderer attestations for the packaged assets."""
+    return {
+        name: "sha256:" + hashlib.sha256(assets[name]).hexdigest()
+        for name in _EXPLORER_ASSET_NAMES
+    }
+
+
+def _declared_explorer_asset_hashes(bundle: Mapping[str, Any]) -> Dict[str, str]:
+    """Require complete renderer attestations before writing a new Bundle."""
+    explorer = bundle.get("explorer")
+    assets = explorer.get("assets") if isinstance(explorer, Mapping) else None
+    if not isinstance(assets, Mapping):
+        raise BundleWriteError(
+            "Proof Bundle must declare explorer.assets for its packaged Explorer."
+        )
+    declared: Dict[str, str] = {}
+    for name in _EXPLORER_ASSET_NAMES:
+        digest = assets.get(name)
+        if not isinstance(digest, str):
+            raise BundleWriteError(
+                f"Proof Bundle explorer.assets is missing an attestation for {name}."
+            )
+        declared[name] = digest
+    return declared
 
 
 def _deterministic_managed_bundle_bytes(
@@ -1358,6 +1383,7 @@ class BundleCompiler:
     def compile(self) -> Tuple[Dict[str, Any], EvidenceCollection]:
         run = self.adapter.adapt()
         profile = load_profile(self.profile_name)
+        explorer_assets = _explorer_asset_bytes()
         profile_omit_on = set((profile.get("secret_scan", {}) or {}).get("omit_on", []))
         evidence = EvidenceCompiler(run, profile).collect()
         evidence_by_path = {item["path"]: item for item in evidence.items}
@@ -1372,18 +1398,18 @@ class BundleCompiler:
         state_included = (
             evidence_by_path.get(state_relative_path, {}).get("status") == "included"
         )
-        tracker_omitted = (
-            evidence_by_path.get("goal-tracker.md", {}).get("status") == "omitted"
+        tracker_included = (
+            evidence_by_path.get("goal-tracker.md", {}).get("status") == "included"
         )
         # Goal and acceptance-criteria text are projections of file evidence.
-        # Once the source item is withheld, retaining those projections would
-        # allow an absolute home path to bypass the profile's disclosure rule.
+        # Once the source item is absent from the Bundle, retaining those
+        # projections would let source prose bypass its disclosure boundary.
         projected_goal = (
             run.goal
-            if evidence_by_path.get("plan.md", {}).get("status") != "omitted"
+            if evidence_by_path.get("plan.md", {}).get("status") == "included"
             else ""
         )
-        projected_criteria = run.acceptance_criteria if not tracker_omitted else []
+        projected_criteria = run.acceptance_criteria if tracker_included else []
         projected_events = run.events
         if not state_included:
             # Circuit-breaker fields come directly from state frontmatter.
@@ -1395,10 +1421,11 @@ class BundleCompiler:
                 for event in run.events
                 if event.get("kind") != "circuit_breaker"
             ]
-        if tracker_omitted:
+        if not tracker_included:
             # Plan-evolution facts are projections of the Goal Tracker just
             # like acceptance criteria.  Do not retain even their structured
-            # shape when a profile withheld that source artifact.
+            # shape when that source artifact was omitted, truncated, or is
+            # otherwise unavailable in the Bundle.
             projected_events = [
                 event
                 for event in projected_events
@@ -1489,7 +1516,7 @@ class BundleCompiler:
         findings, finding_warnings, findings_parseable = _derive_findings(
             run, evidence_by_path
         )
-        if tracker_omitted:
+        if not tracker_included:
             # Without the Goal Tracker, finding-to-AC links are not
             # profile-verifiable.  Keep the finding lifecycle facts, but do
             # not emit dangling acceptance-criterion references.
@@ -1605,6 +1632,7 @@ class BundleCompiler:
                 "version": profile["version"],
                 "schema_hash": _profile_hash(profile),
             },
+            "explorer": {"assets": _explorer_asset_hashes(explorer_assets)},
             "source": source,
             "specification": {"goal": projected_goal, "acceptance_criteria": projected_criteria},
             "run": {
@@ -1671,6 +1699,14 @@ def write_bundle(
     target = Path(output_dir).expanduser().resolve()
     proof_json, proof_data = _bundle_document_bytes(bundle)
     explorer_assets = _explorer_asset_bytes()
+    declared_assets = _declared_explorer_asset_hashes(bundle)
+    actual_assets = _explorer_asset_hashes(explorer_assets)
+    for name in _EXPLORER_ASSET_NAMES:
+        if declared_assets[name] != actual_assets[name]:
+            raise BundleWriteError(
+                "Proof Bundle explorer.assets does not match the packaged "
+                f"Explorer asset {name}."
+            )
     try:
         if target.exists():
             if not target.is_dir():
@@ -2082,7 +2118,10 @@ class BundleValidator:
 
         for warning in bundle.get("integrity", {}).get("compile_warnings", []):
             report.warnings.append({"target": warning.get("target", ""), "detail": warning.get("detail", ""), "reason": warning.get("reason", "")})
-            if warning.get("reason") in {"missing-file", "legacy-version-gap", "unparseable-artifact", "head-commit-unknown", "reviewed-commit-unknown", "truncated-evidence", "profile-required-evidence-missing"} and report.status == "valid":
+            if (
+                warning.get("reason") in _INTEGRITY_INCOMPLETE_REASONS
+                and report.status == "valid"
+            ):
                 report.status = "incomplete"
 
         def report_has_warning(reason: str) -> bool:
@@ -2132,12 +2171,16 @@ class BundleValidator:
             if isinstance(declared_integrity, Mapping)
             else None
         )
-        if declared_status is not None and declared_status != report.status:
+        if (
+            report.status != "invalid"
+            and declared_status is not None
+            and declared_status != report.status
+        ):
             expected_status = report.status
             report.status = "invalid"
             report.reasons.append(
                 {
-                    "reason": "schema-violation",
+                    "reason": _INTEGRITY_STATUS_MISMATCH_REASON,
                     "target": "integrity.status",
                     "detail": (
                         f"Declared integrity status {declared_status!r} does not match "

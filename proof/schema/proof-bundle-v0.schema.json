@@ -59,6 +59,37 @@
       },
       "additionalProperties": true
     },
+    "explorer": {
+      "description": "Optional renderer attestations for the packaged offline Explorer. Current proof open requires these bindings; legacy Bundles may omit the whole object.",
+      "type": "object",
+      "required": ["assets"],
+      "properties": {
+        "assets": {
+          "description": "Canonical SHA-256 attestations for each static Explorer file.",
+          "type": "object",
+          "required": ["index.html", "app.js", "styles.css"],
+          "properties": {
+            "index.html": {
+              "description": "SHA-256 attestation for the Explorer HTML entry point.",
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            },
+            "app.js": {
+              "description": "SHA-256 attestation for the Explorer application script.",
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            },
+            "styles.css": {
+              "description": "SHA-256 attestation for the Explorer stylesheet.",
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": true
+    },
     "source": {
       "description": "Repository and exporter facts recorded for the source delivery.",
       "type": "object",
@@ -532,6 +563,7 @@
                   "proof-id-mismatch",
                   "dangling-reference",
                   "duplicate-evidence-id",
+                  "integrity-status-mismatch",
                   "missing-file",
                   "profile-required-evidence-missing",
                   "legacy-version-gap",

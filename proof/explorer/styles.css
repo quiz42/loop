@@ -32,7 +32,8 @@ a:hover { color: var(--accent); }
 .site-header,
 .view-nav,
 #proof-app,
-noscript { max-width: 1200px; margin-left: auto; margin-right: auto; }
+noscript,
+.verification-notice { max-width: 1200px; margin-left: auto; margin-right: auto; }
 
 .site-header {
   display: flex;
@@ -61,6 +62,20 @@ h4 { margin: 0 0 0.3rem; font-size: 0.86rem; }
   font-size: 0.9rem;
   font-weight: 700;
 }
+
+.verification-notice {
+  margin-top: 0;
+  margin-bottom: 1.25rem;
+  padding: 0.8rem 1.5rem;
+  border: 1px solid var(--warning);
+  border-radius: 0.6rem;
+  background: color-mix(in srgb, var(--warning) 10%, var(--surface));
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+
+.verification-notice strong { margin-right: 0.35rem; }
+.verification-notice code { overflow-wrap: anywhere; }
 
 .view-nav {
   display: flex;
@@ -122,6 +137,7 @@ h4 { margin: 0 0 0.3rem; font-size: 0.86rem; }
 .evidence-link { overflow-wrap: anywhere; font-size: 0.82rem; }
 .evidence-link--missing { color: var(--danger); }
 .evidence-link--withheld, .evidence-link--unavailable { color: var(--purple); }
+.evidence-link--truncated { color: var(--warning); }
 .hash { overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.75rem; }
 
 .timeline { position: relative; margin: 0; padding: 0 0 0 1.4rem; list-style: none; }

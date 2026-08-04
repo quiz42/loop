@@ -180,6 +180,66 @@ if [[ "$evidence_report" == *'"target": "plan.md"'* ]]; then
 else
     fail "hash mismatch target" "plan.md" "$evidence_report"
 fi
+if python3 - "$evidence_report" <<'PY'
+import json
+import sys
+
+report = json.loads(sys.argv[1])
+assert not any(
+    reason.get("reason") == "integrity-status-mismatch"
+    for reason in report["reasons"]
+)
+PY
+then
+    pass "an independent invalid finding suppresses integrity-status mismatch noise"
+else
+    fail "integrity-status mismatch suppression" "no secondary mismatch reason" "$evidence_report"
+fi
+
+cp -R "$TEST_DIR/clean" "$TEST_DIR/integrity-status-mismatch"
+python3 - "$TEST_DIR/integrity-status-mismatch/proof.json" <<'PY'
+import hashlib
+import json
+import sys
+
+path = sys.argv[1]
+bundle = json.load(open(path, encoding="utf-8"))
+assert bundle["integrity"]["status"] == "valid"
+bundle["integrity"]["status"] = "incomplete"
+payload = dict(bundle)
+payload.pop("proof_id", None)
+payload.pop("transport", None)
+bundle["proof_id"] = "sha256:" + hashlib.sha256(
+    json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+).hexdigest()
+with open(path, "w", encoding="utf-8") as output:
+    json.dump(bundle, output, ensure_ascii=False, sort_keys=True)
+PY
+status_mismatch_report=$(loop proof verify "$TEST_DIR/integrity-status-mismatch" --json)
+status_mismatch_status=$?
+assert_exit "declared integrity status mismatch is invalid" 3 "$status_mismatch_status"
+assert_report "integrity status mismatch has a dedicated reason" "$status_mismatch_report" invalid integrity-status-mismatch
+if python3 - "$status_mismatch_report" <<'PY'
+import json
+import sys
+
+report = json.loads(sys.argv[1])
+assert any(
+    reason.get("reason") == "integrity-status-mismatch"
+    and reason.get("target") == "integrity.status"
+    for reason in report["reasons"]
+)
+assert not any(
+    reason.get("reason") == "schema-violation"
+    and reason.get("target") == "integrity.status"
+    for reason in report["reasons"]
+)
+PY
+then
+    pass "integrity status mismatch identifies the declared status field"
+else
+    fail "integrity status mismatch detail" "dedicated integrity.status reason without schema violation" "$status_mismatch_report"
+fi
 
 cp -R "$TEST_DIR/clean" "$TEST_DIR/tampered-manifest"
 python3 - "$TEST_DIR/tampered-manifest/proof.json" <<'PY'
