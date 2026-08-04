@@ -54,7 +54,7 @@ The loop moves through two phases:
 
 - [Claude Code](https://docs.claude.com/en/docs/claude-code) with plugin support.
 - [Codex CLI](https://github.com/openai/codex) for the review agent.
-- Python 3.9 or newer for the `loop proof export` and `loop proof verify` commands.
+- Python 3.9 or newer for the `loop proof export`, `loop proof verify`, and `loop proof open` commands.
 - (Optional) Gemini CLI for `/rloop:ask-gemini` deep-research queries.
 
 ## Install

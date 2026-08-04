@@ -150,7 +150,7 @@ Top-level objects in `proof.json` (`proof-bundle-v0.schema.json`):
                  "per_ac": [ { "ac_id": "ac-1", "status": "met|partial|unmet|unverifiable|deferred",
                                "reason": "...", "supporting": [...], "contradicting": [...] } ],
                  "required_set": ["ac-1", "..."], "deferred": [ { "ac_id": "ac-3", "replan_ref": "..." } ] },
-  "integrity": { "compile_warnings": [ { "reason": "...", "target": "...", "detail": "..." } ] },
+  "integrity": { "status": "valid|incomplete|invalid", "compile_warnings": [ { "reason": "...", "target": "...", "detail": "..." } ] },
   "disclosure":{ "omitted": [ { "path": "...", "reason": "..." } ], "field_redactions": [ ... ] },
   "transport": { "exported_at": "...", "exporter_host_class": "..." }   // excluded from proof_id
 }

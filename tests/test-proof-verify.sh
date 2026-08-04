@@ -102,6 +102,34 @@ else
     fail "clean Bundle warnings" "an empty warning list" "$clean_report"
 fi
 
+ALTERNATE_VERIFIER="$TEST_DIR/alternate-verifier"
+mkdir -p "$ALTERNATE_VERIFIER/scripts"
+cp -R "$PROJECT_ROOT/proof" "$ALTERNATE_VERIFIER/proof"
+cp "$PROJECT_ROOT/scripts/proof-verify.py" "$ALTERNATE_VERIFIER/scripts/proof-verify.py"
+python3 - "$ALTERNATE_VERIFIER/proof/explorer/app.js" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+path.write_bytes(path.read_bytes() + b"x" * (11 * 1024 * 1024))
+PY
+alternate_report=$(python3 "$ALTERNATE_VERIFIER/scripts/proof-verify.py" "$TEST_DIR/clean" --json)
+alternate_status=$?
+assert_exit "verification uses the received Bundle's Explorer bytes" 0 "$alternate_status"
+if python3 - "$alternate_report" <<'PY'
+import json
+import sys
+
+report = json.loads(sys.argv[1])
+assert report["status"] == "valid"
+assert not any(item.get("reason") == "size-budget-exceeded" for item in report["warnings"])
+PY
+then
+    pass "a verifier installation's changed Explorer assets do not change Bundle results"
+else
+    fail "verifier Explorer size isolation" "valid with no installation-dependent size warning" "$alternate_report"
+fi
+
 CANCEL_RUN_DIR="$TEST_DIR/cancel-run"
 cp -R "$PROJECT_ROOT/tests/fixtures/proof/runs/cancel-after-review" "$CANCEL_RUN_DIR"
 loop proof export --run "$CANCEL_RUN_DIR" --profile local-v0 --out "$TEST_DIR/cancel" >/dev/null 2>&1
@@ -184,6 +212,32 @@ assert_report "missing Evidence names missing-file" "$missing_report" invalid mi
 loop proof export --run "$RUN_DIR" --profile public-v0 --out "$TEST_DIR/public" >/dev/null 2>&1
 public_setup_status=$?
 assert_exit "public Bundle exports for policy verification" 0 "$public_setup_status"
+
+cp -R "$TEST_DIR/public" "$TEST_DIR/public-event-omitted-ref"
+python3 - "$TEST_DIR/public-event-omitted-ref/proof.json" <<'PY'
+import hashlib
+import json
+import sys
+
+path = sys.argv[1]
+bundle = json.load(open(path, encoding="utf-8"))
+omitted = next(item for item in bundle["evidence"] if item["status"] == "omitted")
+setup = next(event for event in bundle["run"]["events"] if event["kind"] == "setup")
+setup["evidence_refs"] = [omitted["id"]]
+payload = dict(bundle)
+payload.pop("proof_id", None)
+payload.pop("transport", None)
+bundle["proof_id"] = "sha256:" + hashlib.sha256(
+    json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+).hexdigest()
+with open(path, "w", encoding="utf-8") as output:
+    json.dump(bundle, output, ensure_ascii=False, sort_keys=True)
+PY
+event_ref_report=$(loop proof verify "$TEST_DIR/public-event-omitted-ref" --json)
+event_ref_status=$?
+assert_exit "event evidence references require included files" 3 "$event_ref_status"
+assert_report "event evidence reference violation is actionable" "$event_ref_report" invalid schema-violation
+
 cp -R "$TEST_DIR/public" "$TEST_DIR/public-omitted-evidence-leak"
 mkdir -p "$TEST_DIR/public-omitted-evidence-leak/evidence"
 cp "$RUN_DIR/round-0-prompt.md" "$TEST_DIR/public-omitted-evidence-leak/evidence/round-0-prompt.md"

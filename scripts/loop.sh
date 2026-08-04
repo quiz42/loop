@@ -1204,11 +1204,12 @@ _loop_proof_require_python39() {
 }
 
 _loop_proof_usage() {
-    echo "Usage: loop proof <export|verify> [args]" >&2
+    echo "Usage: loop proof <export|verify|open> [args]" >&2
     echo "" >&2
     echo "Subcommands:" >&2
     echo "  export [--latest | --run <dir>] [--profile <name>] [--out <dir>]" >&2
     echo "  verify <bundle-dir | proof.json> [--json]" >&2
+    echo "  open <bundle-dir> [--server]" >&2
 }
 
 _loop_proof() {
@@ -1223,6 +1224,10 @@ _loop_proof() {
         verify)
             _loop_proof_require_python39 || return $?
             python3 "$LOOP_SCRIPT_DIR/proof-verify.py" "$@"
+            ;;
+        open)
+            _loop_proof_require_python39 || return $?
+            "$LOOP_SCRIPT_DIR/proof-open.sh" "$@"
             ;;
         *)
             _loop_proof_usage
@@ -1284,6 +1289,7 @@ loop() {
             echo "  monitor gemini  Monitor ask-gemini skill invocations only"
             echo "  proof export    Export a terminal Loop Run as a Proof Bundle"
             echo "  proof verify    Verify a Proof Bundle offline"
+            echo "  proof open      Open a Proof Bundle's offline Explorer"
             return 1
             ;;
     esac

@@ -36,6 +36,27 @@ EXIT_VALID = 0
 EXIT_INCOMPLETE = 2
 EXIT_INVALID = 3
 
+_INTEGRITY_INVALID_REASONS = frozenset(
+    (
+        "schema-violation",
+        "hash-mismatch",
+        "proof-id-mismatch",
+        "dangling-reference",
+        "duplicate-evidence-id",
+    )
+)
+_INTEGRITY_INCOMPLETE_REASONS = frozenset(
+    (
+        "missing-file",
+        "profile-required-evidence-missing",
+        "legacy-version-gap",
+        "unparseable-artifact",
+        "truncated-evidence",
+        "head-commit-unknown",
+        "reviewed-commit-unknown",
+    )
+)
+
 
 class ProofError(RuntimeError):
     """Base class for deterministic Proof compiler errors."""
@@ -60,6 +81,26 @@ class SecretScanError(ProofError):
 
 class BundleWriteError(ProofError):
     """A bundle could not be written safely."""
+
+
+def _integrity_status(warnings: Iterable[Mapping[str, Any]]) -> str:
+    """Project compiler facts into the three public integrity states.
+
+    The static Explorer cannot read raw files over ``file://`` to run the
+    validator itself.  Export therefore records the compiler's conservative
+    integrity projection in the canonical manifest, while ``proof verify``
+    remains the authority for validation after the Bundle is copied.
+    """
+    reasons = {
+        warning.get("reason")
+        for warning in warnings
+        if isinstance(warning, Mapping) and isinstance(warning.get("reason"), str)
+    }
+    if reasons.intersection(_INTEGRITY_INVALID_REASONS):
+        return "invalid"
+    if reasons.intersection(_INTEGRITY_INCOMPLETE_REASONS):
+        return "incomplete"
+    return "valid"
 
 
 def _parse_scalar(raw: str) -> Any:
@@ -267,6 +308,34 @@ def _parse_table_rows(section: Optional[str]) -> List[List[str]]:
             continue
         rows.append(cells)
     return rows
+
+
+def _plan_evolution_events(goal_tracker: Optional[str]) -> List[Dict[str, Any]]:
+    """Project Goal Tracker plan-evolution rows into safe timeline facts.
+
+    The Explorer is intentionally prohibited from parsing Markdown.  This
+    adapter-side projection retains the round without copying free-form tracker
+    prose (which may be redacted by a public profile).  A Plan Evolution row
+    alone is not enough to infer that a replan occurred.
+    """
+    rows = _parse_table_rows(
+        _first_heading_section(goal_tracker or "", "Plan Evolution Log")
+    )
+    if not rows:
+        return []
+    header = [cell.strip().lower() for cell in rows[0]]
+    if "round" not in header:
+        return []
+    round_column = header.index("round")
+    events: List[Dict[str, Any]] = []
+    for row in rows[1:]:
+        if round_column >= len(row):
+            continue
+        match = re.fullmatch(r"(?:round\s+)?([0-9]+)", row[round_column], re.IGNORECASE)
+        if match is None:
+            continue
+        events.append({"kind": "plan_evolution", "at": None, "round": int(match.group(1))})
+    return events
 
 
 def _parse_completed_and_deferred(
@@ -506,7 +575,9 @@ class RunAdapter:
                     "detail": "Run Recorder facts head_commit/reviewed_commit/ended_at are absent; values remain null.",
                 }
             )
-        rounds, events = self._rounds_and_events(_timestamp_or_none(state.get("ended_at")))
+        rounds, events = self._rounds_and_events(
+            _timestamp_or_none(state.get("ended_at")), state, tracker_text
+        )
         return RunRecord(
             run_dir=self.run_dir,
             terminal_state=terminal_state,
@@ -528,7 +599,13 @@ class RunAdapter:
     def _has_any_state_fact(state: Mapping[str, Any], names: Sequence[str]) -> bool:
         return any(state.get(name) not in (None, "") for name in names)
 
-    def _rounds_and_events(self, ended_at: Optional[str]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    def _rounds_and_events(
+        self,
+        ended_at: Optional[str],
+        state: Mapping[str, Any],
+        goal_tracker: Optional[str],
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Record only structured Run facts needed by the offline timeline."""
         indexes = set()
         completed_artifact = re.compile(
             r"round-([0-9]+)-(?:contract|summary|review-result)\.md$"
@@ -538,12 +615,18 @@ class RunAdapter:
             if match:
                 indexes.add(int(match.group(1)))
         rounds = [{"index": index} for index in sorted(indexes)]
+        plan_events = _plan_evolution_events(goal_tracker)
+        plan_events_by_round: Dict[int, List[Dict[str, Any]]] = {}
+        unsorted_plan_events: List[Dict[str, Any]] = []
+        for event in plan_events:
+            round_index = event.get("round")
+            if isinstance(round_index, int):
+                plan_events_by_round.setdefault(round_index, []).append(event)
+            else:
+                unsorted_plan_events.append(event)
         events: List[Dict[str, Any]] = [{"kind": "setup", "at": None}]
         for index in sorted(indexes):
-            # The v0 event schema deliberately exposes only ``kind`` and
-            # ``at``. The chronological order already carries the round
-            # relationship, so avoid emitting our own unknown extensions.
-            events.append({"kind": "round", "at": None})
+            events.append({"kind": "round", "at": None, "round": index})
             review = self.run_dir / f"round-{index}-review-result.md"
             text = _read_text(review)
             if text:
@@ -557,8 +640,36 @@ class RunAdapter:
                         {
                             "kind": "mainline_verdict",
                             "at": None,
+                            "round": index,
+                            "verdict": verdict.group(1).lower(),
                         }
                     )
+            events.extend(plan_events_by_round.pop(index, []))
+        events.extend(unsorted_plan_events)
+        for round_index in sorted(plan_events_by_round):
+            events.extend(plan_events_by_round[round_index])
+        drift_status = state.get("drift_status")
+        if drift_status == "replan_required":
+            stall_count = state.get("mainline_stall_count")
+            circuit_breaker: Dict[str, Any] = {
+                "kind": "circuit_breaker",
+                "at": None,
+                "drift_status": drift_status,
+                "detail": "Mainline drift required a replan before the Run ended.",
+            }
+            if isinstance(stall_count, int) and not isinstance(stall_count, bool):
+                circuit_breaker["stall_count"] = stall_count
+            last_verdict = state.get("last_mainline_verdict")
+            if isinstance(last_verdict, str):
+                normalized_verdict = last_verdict.lower()
+                if normalized_verdict in {
+                    "advanced",
+                    "stalled",
+                    "regressed",
+                    "unknown",
+                }:
+                    circuit_breaker["last_mainline_verdict"] = normalized_verdict
+            events.append(circuit_breaker)
         if (self.run_dir / ".review-phase-started").exists():
             events.append({"kind": "review_phase", "at": None})
         if (self.run_dir / "finalize-summary.md").exists():
@@ -602,18 +713,43 @@ def _bundle_document_bytes(bundle: Mapping[str, Any]) -> Tuple[bytes, bytes]:
     return proof_json, proof_data
 
 
+_EXPLORER_ASSET_NAMES = ("index.html", "app.js", "styles.css")
+
+
+def _explorer_asset_bytes() -> Dict[str, bytes]:
+    """Load the static, dependency-free Explorer files shipped with Loop."""
+    source_dir = Path(__file__).resolve().parent / "explorer"
+    assets: Dict[str, bytes] = {}
+    try:
+        for name in _EXPLORER_ASSET_NAMES:
+            contents = (source_dir / name).read_bytes()
+            if not contents:
+                raise BundleWriteError(f"Proof Explorer asset is empty: {name}")
+            assets[name] = contents
+    except OSError as error:
+        raise BundleWriteError(
+            f"cannot read bundled Proof Explorer assets from {source_dir}: {error}"
+        ) from error
+    return assets
+
+
 def _deterministic_managed_bundle_bytes(
-    bundle: Mapping[str, Any], published_evidence_bytes: int
+    bundle: Mapping[str, Any], published_evidence_bytes: int, explorer_bytes: Optional[int] = None
 ) -> int:
     """Measure generated Bundle files without mutable transport metadata."""
     projection = dict(bundle)
     projection.pop("transport", None)
     proof_json, proof_data = _bundle_document_bytes(projection)
-    return len(proof_json) + len(proof_data) + published_evidence_bytes
+    if explorer_bytes is None:
+        explorer_bytes = sum(len(contents) for contents in _explorer_asset_bytes().values())
+    return len(proof_json) + len(proof_data) + explorer_bytes + published_evidence_bytes
 
 
 def _size_budget_warning(
-    profile: Mapping[str, Any], bundle: Mapping[str, Any], published_evidence_bytes: int
+    profile: Mapping[str, Any],
+    bundle: Mapping[str, Any],
+    published_evidence_bytes: int,
+    explorer_bytes: Optional[int] = None,
 ) -> Optional[Dict[str, str]]:
     """Return a stable size warning from the pre-warning managed output.
 
@@ -623,7 +759,7 @@ def _size_budget_warning(
     """
     max_bundle_bytes = profile.get("max_bundle_bytes")
     managed_bundle_bytes = _deterministic_managed_bundle_bytes(
-        bundle, published_evidence_bytes
+        bundle, published_evidence_bytes, explorer_bytes
     )
     if (
         isinstance(max_bundle_bytes, bool)
@@ -1228,11 +1364,13 @@ class BundleCompiler:
         warnings = list(run.warnings) + list(evidence.warnings)
         published_evidence_bytes = sum(len(content) for content in evidence.contents.values())
         state_relative_path = run.state_path.relative_to(run.run_dir).as_posix()
-        state_omitted = (
-            evidence_by_path.get(state_relative_path, {}).get("status") == "omitted"
-        )
-        tracker_included = (
-            evidence_by_path.get("goal-tracker.md", {}).get("status") == "included"
+        # State-derived projections are safe only when the complete source
+        # artifact is present in the Bundle.  A truncated item has no raw file
+        # to link back to, just like a profile-omitted item; retaining its
+        # frontmatter (especially free-form circuit-breaker values) would let
+        # arbitrary source text bypass the per-item size/redaction boundary.
+        state_included = (
+            evidence_by_path.get(state_relative_path, {}).get("status") == "included"
         )
         tracker_omitted = (
             evidence_by_path.get("goal-tracker.md", {}).get("status") == "omitted"
@@ -1246,18 +1384,67 @@ class BundleCompiler:
             else ""
         )
         projected_criteria = run.acceptance_criteria if not tracker_omitted else []
-        projected_events = (
-            run.events
-            if not state_omitted
-            else [{**event, "at": None} for event in run.events]
-        )
+        projected_events = run.events
+        if not state_included:
+            # Circuit-breaker fields come directly from state frontmatter.
+            # Withhold the entire event when that source artifact is not
+            # published, rather than letting an unknown future state value
+            # escape through an optional event property.
+            projected_events = [
+                {**event, "at": None}
+                for event in run.events
+                if event.get("kind") != "circuit_breaker"
+            ]
+        if tracker_omitted:
+            # Plan-evolution facts are projections of the Goal Tracker just
+            # like acceptance criteria.  Do not retain even their structured
+            # shape when a profile withheld that source artifact.
+            projected_events = [
+                event
+                for event in projected_events
+                if event.get("kind") not in {"plan_evolution", "replan"}
+            ]
+
+        def event_evidence_paths(event: Mapping[str, Any]) -> List[str]:
+            kind = event.get("kind")
+            round_index = event.get("round")
+            if kind == "setup":
+                return ["plan.md"]
+            if kind == "round" and isinstance(round_index, int):
+                return [
+                    f"round-{round_index}-summary.md",
+                    f"round-{round_index}-contract.md",
+                ]
+            if kind == "mainline_verdict" and isinstance(round_index, int):
+                return [f"round-{round_index}-review-result.md"]
+            if kind in {"plan_evolution", "replan"}:
+                return ["goal-tracker.md"]
+            if kind == "circuit_breaker" or kind == "terminal":
+                return [state_relative_path]
+            if kind == "review_phase":
+                return [".review-phase-started"]
+            if kind == "finalize":
+                return ["finalize-summary.md"]
+            return []
+
+        evidence_linked_events: List[Dict[str, Any]] = []
+        for event in projected_events:
+            linked_event = dict(event)
+            references: List[str] = []
+            for path in event_evidence_paths(linked_event):
+                item = evidence_by_path.get(path)
+                if item and item.get("status") == "included":
+                    _append_unique(references, item["id"])
+            linked_event["evidence_refs"] = references
+            evidence_linked_events.append(linked_event)
+        projected_events = evidence_linked_events
         source = {
             "repo_name": _repo_name(self.repo_root, run.run_dir),
             "base_commit": run.base_commit,
             "head_commit": run.head_commit,
             "reviewed_commit": run.reviewed_commit,
             "loop_version": str(run.state.get("loop_version") or "unknown")
-            if not state_omitted
+            if state_included
             else "unknown",
             "exporter_version": self.exporter_version,
         }
@@ -1421,7 +1608,7 @@ class BundleCompiler:
             "source": source,
             "specification": {"goal": projected_goal, "acceptance_criteria": projected_criteria},
             "run": {
-                "session_timestamp": run.session_timestamp if not state_omitted else None,
+                "session_timestamp": run.session_timestamp if state_included else None,
                 "terminal_state": run.terminal_state,
                 "rounds": run.rounds,
                 "events": projected_events,
@@ -1435,7 +1622,10 @@ class BundleCompiler:
                 "required_set": required_set,
                 "deferred": deferred_output,
             },
-            "integrity": {"compile_warnings": warnings},
+            "integrity": {
+                "status": _integrity_status(warnings),
+                "compile_warnings": warnings,
+            },
             "disclosure": {"omitted": evidence.disclosure, "field_redactions": list(profile.get("field_redactions", []))},
             "transport": {"exported_at": _utc_now(), "exporter_host_class": platform.system().lower() or "unknown"},
         }
@@ -1449,6 +1639,7 @@ class BundleCompiler:
         )
         if size_warning is not None:
             warnings.append(size_warning)
+            bundle["integrity"]["status"] = _integrity_status(warnings)
             bundle["proof_id"] = compute_proof_id(bundle)
         schema_result = validate_instance(bundle, load_schema("proof-bundle-v0"))
         if not schema_result.is_valid:
@@ -1476,8 +1667,10 @@ def write_bundle(
     evidence: EvidenceCollection,
     output_dir: Union[str, os.PathLike[str]],
 ) -> Path:
-    """Write canonical ``proof.json`` and included raw evidence safely."""
+    """Write a canonical manifest, offline Explorer, and raw evidence safely."""
     target = Path(output_dir).expanduser().resolve()
+    proof_json, proof_data = _bundle_document_bytes(bundle)
+    explorer_assets = _explorer_asset_bytes()
     try:
         if target.exists():
             if not target.is_dir():
@@ -1497,9 +1690,10 @@ def write_bundle(
         target.mkdir(parents=True, exist_ok=True)
         evidence_root = target / "evidence"
         proof_path = target / "proof.json"
-        proof_json, proof_data = _bundle_document_bytes(bundle)
         proof_path.write_bytes(proof_json)
         (target / "proof-data.js").write_bytes(proof_data)
+        for name, contents in explorer_assets.items():
+            (target / name).write_bytes(contents)
         for relative, content in evidence.contents.items():
             destination = evidence_root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -1596,6 +1790,18 @@ class BundleValidator:
         self.bundle_dir = supplied if supplied.is_dir() else supplied.parent
         self.proof_path = supplied / "proof.json" if supplied.is_dir() else supplied
         self.profile = profile
+
+    def _explorer_bytes(self) -> int:
+        """Measure regular Explorer files in the received Bundle, not this checkout."""
+        total = 0
+        for name in _EXPLORER_ASSET_NAMES:
+            path = self.bundle_dir / name
+            try:
+                if path.is_file() and not path.is_symlink():
+                    total += path.stat().st_size
+            except OSError:
+                continue
+        return total
 
     def validate(self) -> ValidationReport:
         report = ValidationReport("valid", proof_path=str(self.proof_path))
@@ -1748,10 +1954,22 @@ class BundleValidator:
             elif status == "truncated":
                 report.warnings.append({"target": relative, "detail": "Evidence is truncated by its export profile."})
 
-        def require_evidence(identifier: str, target: str) -> None:
-            if identifier not in ids:
+        def require_evidence(
+            identifier: str, target: str, included_only: bool = False
+        ) -> None:
+            item = ids.get(identifier)
+            if item is None:
                 report.status = "invalid"
                 report.reasons.append({"reason": "dangling-reference", "target": target, "detail": f"Unknown evidence reference {identifier!r}."})
+            elif included_only and item.get("status") != "included":
+                report.status = "invalid"
+                report.reasons.append(
+                    {
+                        "reason": "schema-violation",
+                        "target": target,
+                        "detail": f"Evidence reference {identifier!r} must point to included evidence.",
+                    }
+                )
 
         for finding in bundle.get("findings", []):
             for identifier in finding.get("evidence_refs", []):
@@ -1772,6 +1990,13 @@ class BundleValidator:
                 report.status = "invalid"
                 report.reasons.append({"reason": "dangling-reference", "target": "verdict.deferred", "detail": f"Unknown deferred criterion {row.get('ac_id')!r}."})
             require_evidence(row.get("replan_ref", ""), "verdict.deferred")
+        for event in bundle.get("run", {}).get("events", []):
+            for identifier in event.get("evidence_refs", []):
+                require_evidence(
+                    identifier,
+                    f"run.event:{event.get('kind', '?')}",
+                    included_only=True,
+                )
         for ac_id in bundle.get("verdict", {}).get("required_set", []):
             if ac_id not in ac_ids:
                 report.status = "invalid"
@@ -1857,7 +2082,7 @@ class BundleValidator:
 
         for warning in bundle.get("integrity", {}).get("compile_warnings", []):
             report.warnings.append({"target": warning.get("target", ""), "detail": warning.get("detail", ""), "reason": warning.get("reason", "")})
-            if warning.get("reason") in {"legacy-version-gap", "unparseable-artifact", "head-commit-unknown", "reviewed-commit-unknown", "truncated-evidence", "profile-required-evidence-missing"} and report.status == "valid":
+            if warning.get("reason") in {"missing-file", "legacy-version-gap", "unparseable-artifact", "head-commit-unknown", "reviewed-commit-unknown", "truncated-evidence", "profile-required-evidence-missing"} and report.status == "valid":
                 report.status = "incomplete"
 
         def report_has_warning(reason: str) -> bool:
@@ -1894,10 +2119,32 @@ class BundleValidator:
         )
         size_candidate = _bundle_without_size_budget_warning(bundle)
         size_warning = _size_budget_warning(
-            profile, size_candidate, published_evidence_bytes
+            profile,
+            size_candidate,
+            published_evidence_bytes,
+            self._explorer_bytes(),
         )
         if size_warning is not None and not report_has_warning("size-budget-exceeded"):
             report.warnings.append(size_warning)
+        declared_integrity = bundle.get("integrity", {})
+        declared_status = (
+            declared_integrity.get("status")
+            if isinstance(declared_integrity, Mapping)
+            else None
+        )
+        if declared_status is not None and declared_status != report.status:
+            expected_status = report.status
+            report.status = "invalid"
+            report.reasons.append(
+                {
+                    "reason": "schema-violation",
+                    "target": "integrity.status",
+                    "detail": (
+                        f"Declared integrity status {declared_status!r} does not match "
+                        f"the validator result {expected_status!r}."
+                    ),
+                }
+            )
         return report
 
 
