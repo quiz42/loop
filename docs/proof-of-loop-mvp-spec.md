@@ -158,6 +158,11 @@ Top-level objects in `proof.json` (`proof-bundle-v0.schema.json`):
 
 `verification-profile-v0.schema.json`: `name`, `version`, `description`, `required_evidence_kinds[]`, `omit_paths[]` (glob), `omit_kinds[]`, `field_redactions[]`, `secret_scan.fail_on[]`, `secret_scan.omit_on[]`, `max_bundle_bytes`, `max_item_bytes`, `require_reviewed_equals_head` (affects the badge only, never integrity).
 
+`max_bundle_bytes` measures the deterministic managed Bundle projection: included
+raw evidence plus the rendered manifest files, excluding mutable `transport`
+metadata so a size warning cannot make the same Run's Proof ID host- or
+time-dependent.
+
 The Bundle records the profile document's own `schema_hash`, making "which rule set produced this export" itself verifiable.
 
 The v0 schemas use two registered Proof annotations in addition to the supported

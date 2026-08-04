@@ -32,10 +32,6 @@ from .contract import (
 
 
 TERMINAL_STATES = frozenset(("complete", "stop", "cancel", "maxiter", "unexpected"))
-EXIT_EXPORT_ERROR = 1
-EXIT_ACTIVE_RUN = 2
-EXIT_SECRET_SCAN = 3
-EXIT_UNREADABLE_RUN = 4
 EXIT_VALID = 0
 EXIT_INCOMPLETE = 2
 EXIT_INVALID = 3
@@ -593,6 +589,91 @@ def _profile_hash(profile: Mapping[str, Any]) -> str:
     return "sha256:" + hashlib.sha256(canonical_json_bytes(dict(profile))).hexdigest()
 
 
+def _bundle_document_bytes(bundle: Mapping[str, Any]) -> Tuple[bytes, bytes]:
+    """Render the two manifest-derived Bundle files in their write format."""
+    proof_json = (
+        json.dumps(bundle, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+    ).encode("utf-8")
+    proof_data = (
+        "window.PROOF = "
+        + json.dumps(bundle, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        + ";\n"
+    ).encode("utf-8")
+    return proof_json, proof_data
+
+
+def _deterministic_managed_bundle_bytes(
+    bundle: Mapping[str, Any], published_evidence_bytes: int
+) -> int:
+    """Measure generated Bundle files without mutable transport metadata."""
+    projection = dict(bundle)
+    projection.pop("transport", None)
+    proof_json, proof_data = _bundle_document_bytes(projection)
+    return len(proof_json) + len(proof_data) + published_evidence_bytes
+
+
+def _size_budget_warning(
+    profile: Mapping[str, Any], bundle: Mapping[str, Any], published_evidence_bytes: int
+) -> Optional[Dict[str, str]]:
+    """Return a stable size warning from the pre-warning managed output.
+
+    The rendered manifests count toward the bundle budget, while transport does
+    not: it is outside Proof identity and would make this canonical warning vary
+    by host or export time.
+    """
+    max_bundle_bytes = profile.get("max_bundle_bytes")
+    managed_bundle_bytes = _deterministic_managed_bundle_bytes(
+        bundle, published_evidence_bytes
+    )
+    if (
+        isinstance(max_bundle_bytes, bool)
+        or not isinstance(max_bundle_bytes, int)
+        or max_bundle_bytes < 0
+        or managed_bundle_bytes <= max_bundle_bytes
+    ):
+        return None
+    return {
+        "reason": "size-budget-exceeded",
+        "target": "bundle",
+        "detail": (
+            f"Deterministic managed Bundle output is {managed_bundle_bytes} bytes, exceeding "
+            f"max_bundle_bytes ({max_bundle_bytes})."
+        ),
+    }
+
+
+def _bundle_without_size_budget_warning(bundle: Mapping[str, Any]) -> Dict[str, Any]:
+    """Return the compiler's pre-warning candidate for deterministic rechecks."""
+    candidate = dict(bundle)
+    integrity = dict(candidate.get("integrity", {}))
+    integrity["compile_warnings"] = [
+        warning
+        for warning in integrity.get("compile_warnings", [])
+        if warning.get("reason") != "size-budget-exceeded"
+    ]
+    candidate["integrity"] = integrity
+    candidate["proof_id"] = compute_proof_id(candidate)
+    return candidate
+
+
+def _reviewed_head_warning(
+    profile: Mapping[str, Any], head_commit: Optional[str], reviewed_commit: Optional[str]
+) -> Optional[Dict[str, str]]:
+    """Return the badge-only review coverage warning required by a profile."""
+    if (
+        profile.get("require_reviewed_equals_head") is not True
+        or not head_commit
+        or not reviewed_commit
+        or reviewed_commit == head_commit
+    ):
+        return None
+    return {
+        "reason": "reviewed-commit-behind-head",
+        "target": "source.reviewed_commit",
+        "detail": "Reviewed commit differs from the final head commit; badge is withheld.",
+    }
+
+
 def _utc_now() -> str:
     return _datetime.datetime.now(_datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -764,9 +845,6 @@ class EvidenceCompiler:
                 "status": "included",
                 "omitted_reason": None,
             }
-            match = _secret_match(data, fail_on)
-            if match:
-                raise SecretScanError(relative, match)
             omit_reason: Optional[str] = None
             if _profile_omits_evidence(relative, kind, self.profile):
                 omit_reason = "profile-redaction"
@@ -779,6 +857,13 @@ class EvidenceCompiler:
                         "detail": "Absolute local path detected; evidence omitted by profile.",
                     }
                 )
+            # Omitted evidence bytes never enter the Bundle.  Scan every item
+            # that can be published (including a later truncated item), while
+            # allowing the profile to withhold sensitive source-only artifacts.
+            if omit_reason is None:
+                match = _secret_match(data, fail_on)
+                if match:
+                    raise SecretScanError(relative, match)
             if omit_reason:
                 item["status"] = "omitted"
                 item["omitted_reason"] = omit_reason
@@ -1137,9 +1222,11 @@ class BundleCompiler:
     def compile(self) -> Tuple[Dict[str, Any], EvidenceCollection]:
         run = self.adapter.adapt()
         profile = load_profile(self.profile_name)
+        profile_omit_on = set((profile.get("secret_scan", {}) or {}).get("omit_on", []))
         evidence = EvidenceCompiler(run, profile).collect()
         evidence_by_path = {item["path"]: item for item in evidence.items}
         warnings = list(run.warnings) + list(evidence.warnings)
+        published_evidence_bytes = sum(len(content) for content in evidence.contents.values())
         state_relative_path = run.state_path.relative_to(run.run_dir).as_posix()
         state_omitted = (
             evidence_by_path.get(state_relative_path, {}).get("status") == "omitted"
@@ -1187,14 +1274,15 @@ class BundleCompiler:
             warnings.append(
                 {"reason": "head-commit-unknown", "target": "source.head_commit", "detail": "Head commit was not recorded by the Run."}
             )
+        reviewed_head_warning = _reviewed_head_warning(
+            profile, run.head_commit, run.reviewed_commit
+        )
         if run.reviewed_commit is None:
             warnings.append(
                 {"reason": "reviewed-commit-unknown", "target": "source.reviewed_commit", "detail": "Reviewed commit was not recorded by the Run."}
             )
-        elif run.head_commit and run.reviewed_commit != run.head_commit:
-            warnings.append(
-                {"reason": "reviewed-commit-behind-head", "target": "source.reviewed_commit", "detail": "Reviewed commit differs from the final head commit; badge is withheld."}
-            )
+        elif reviewed_head_warning is not None:
+            warnings.append(reviewed_head_warning)
 
         def evidence_refs_for_path(path: str) -> List[str]:
             item = evidence_by_path.get(path)
@@ -1351,11 +1439,17 @@ class BundleCompiler:
             "disclosure": {"omitted": evidence.disclosure, "field_redactions": list(profile.get("field_redactions", []))},
             "transport": {"exported_at": _utc_now(), "exporter_host_class": platform.system().lower() or "unknown"},
         }
-        if profile.get("name") == "public-v0" and _contains_absolute_home_path(bundle):
+        if "absolute-path" in profile_omit_on and _contains_absolute_home_path(bundle):
             raise ProofError(
-                "public-v0 profile projection contains an absolute home path"
+                "profile projection contains an absolute home path"
             )
         bundle["proof_id"] = compute_proof_id(bundle)
+        size_warning = _size_budget_warning(
+            profile, bundle, published_evidence_bytes
+        )
+        if size_warning is not None:
+            warnings.append(size_warning)
+            bundle["proof_id"] = compute_proof_id(bundle)
         schema_result = validate_instance(bundle, load_schema("proof-bundle-v0"))
         if not schema_result.is_valid:
             detail = "; ".join(f"{issue.path}: {issue.message}" for issue in schema_result.errors)
@@ -1403,16 +1497,9 @@ def write_bundle(
         target.mkdir(parents=True, exist_ok=True)
         evidence_root = target / "evidence"
         proof_path = target / "proof.json"
-        proof_path.write_text(
-            json.dumps(bundle, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
-            encoding="utf-8",
-        )
-        (target / "proof-data.js").write_text(
-            "window.PROOF = "
-            + json.dumps(bundle, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-            + ";\n",
-            encoding="utf-8",
-        )
+        proof_json, proof_data = _bundle_document_bytes(bundle)
+        proof_path.write_bytes(proof_json)
+        (target / "proof-data.js").write_bytes(proof_data)
         for relative, content in evidence.contents.items():
             destination = evidence_root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -1649,7 +1736,7 @@ class BundleValidator:
                 if "absolute-path" in omit_on and _has_absolute_path(data):
                     profile_violation(
                         relative,
-                        "Included evidence contains an absolute home path that public-v0 requires to be omitted.",
+                        "Included evidence contains an absolute home path that the selected profile requires to be omitted.",
                     )
                 else:
                     match = _secret_match(data, fail_on)
@@ -1751,10 +1838,7 @@ class BundleValidator:
                     f"commits[{index}]",
                     f"Commit metadata matches the profile secret class {match!r}.",
                 )
-        if (
-            "absolute-path" in set((profile.get("secret_scan", {}) or {}).get("omit_on", []))
-            and _contains_absolute_home_path(bundle)
-        ):
+        if "absolute-path" in omit_on and _contains_absolute_home_path(bundle):
             profile_violation(
                 "proof.json",
                 "Bundle contains an absolute home path prohibited by the selected profile.",
@@ -1775,6 +1859,45 @@ class BundleValidator:
             report.warnings.append({"target": warning.get("target", ""), "detail": warning.get("detail", ""), "reason": warning.get("reason", "")})
             if warning.get("reason") in {"legacy-version-gap", "unparseable-artifact", "head-commit-unknown", "reviewed-commit-unknown", "truncated-evidence", "profile-required-evidence-missing"} and report.status == "valid":
                 report.status = "incomplete"
+
+        def report_has_warning(reason: str) -> bool:
+            return any(warning.get("reason") == reason for warning in report.warnings)
+
+        source = bundle.get("source", {})
+        for field, reason, detail in (
+            (
+                "head_commit",
+                "head-commit-unknown",
+                "Head commit was not recorded by the Run.",
+            ),
+            (
+                "reviewed_commit",
+                "reviewed-commit-unknown",
+                "Reviewed commit was not recorded by the Run.",
+            ),
+        ):
+            if source.get(field) is None and not report_has_warning(reason):
+                report.warnings.append(
+                    {"reason": reason, "target": f"source.{field}", "detail": detail}
+                )
+                if report.status == "valid":
+                    report.status = "incomplete"
+        reviewed_head_warning = _reviewed_head_warning(
+            profile, source.get("head_commit"), source.get("reviewed_commit")
+        )
+        if reviewed_head_warning is not None and not report_has_warning(
+            "reviewed-commit-behind-head"
+        ):
+            report.warnings.append(reviewed_head_warning)
+        published_evidence_bytes = sum(
+            item["bytes"] for item in items if item.get("status") == "included"
+        )
+        size_candidate = _bundle_without_size_budget_warning(bundle)
+        size_warning = _size_budget_warning(
+            profile, size_candidate, published_evidence_bytes
+        )
+        if size_warning is not None and not report_has_warning("size-budget-exceeded"):
+            report.warnings.append(size_warning)
         return report
 
 

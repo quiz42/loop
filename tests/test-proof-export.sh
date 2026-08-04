@@ -145,6 +145,34 @@ else
     fail "--latest selection" "$first_id" "$(proof_id "$TEST_DIR/bundle-latest/proof.json")"
 fi
 
+SUBDIRECTORY="$TEST_PROJECT/nested/export"
+mkdir -p "$SUBDIRECTORY"
+(
+    cd "$SUBDIRECTORY" || exit 1
+    loop proof export --run "$RUN_DIR" --out "$TEST_DIR/bundle-subdirectory"
+) >/dev/null 2>&1
+subdirectory_status=$?
+assert_exit "subdirectory --run export succeeds" 0 "$subdirectory_status"
+subdirectory_id=$(proof_id "$TEST_DIR/bundle-subdirectory/proof.json")
+if [[ "$subdirectory_id" == "$first_id" ]]; then
+    pass "subdirectory --run preserves the root export proof_id"
+else
+    fail "subdirectory --run proof_id" "$first_id" "$subdirectory_id"
+fi
+
+(
+    cd "$SUBDIRECTORY" || exit 1
+    loop proof export --latest --out "$TEST_DIR/bundle-subdirectory-latest"
+) >/dev/null 2>&1
+subdirectory_latest_status=$?
+assert_exit "subdirectory --latest export succeeds" 0 "$subdirectory_latest_status"
+subdirectory_latest_id=$(proof_id "$TEST_DIR/bundle-subdirectory-latest/proof.json")
+if [[ "$subdirectory_latest_id" == "$first_id" ]]; then
+    pass "subdirectory --latest preserves the root export proof_id"
+else
+    fail "subdirectory --latest proof_id" "$first_id" "$subdirectory_latest_id"
+fi
+
 loop proof export --run "$RUN_DIR" >/dev/null 2>&1
 default_status=$?
 assert_exit "default identity-addressed output exports" 0 "$default_status"
@@ -770,6 +798,59 @@ else
     fail "truncated required evidence verdict" "truncated tracker makes all ACs unverifiable" "unexpected truncated tracker bundle"
 fi
 
+OVERSIZED_BUNDLE_RUN="$TEST_DIR/oversized-bundle-run"
+cp -R "$PROJECT_ROOT/tests/fixtures/proof/runs/clean-complete" "$OVERSIZED_BUNDLE_RUN"
+python3 - "$OVERSIZED_BUNDLE_RUN" <<'PY'
+import sys
+from pathlib import Path
+
+run_dir = Path(sys.argv[1])
+limit = 10485760
+existing_bytes = sum(path.stat().st_size for path in run_dir.rglob("*") if path.is_file())
+remaining_bytes = limit - existing_bytes
+assert remaining_bytes > 0
+per_file, remainder = divmod(remaining_bytes, 10)
+assert per_file + (1 if remainder else 0) <= 1048576
+for index in range(1, 11):
+    size = per_file + (1 if index <= remainder else 0)
+    (run_dir / f"round-{index}-summary.md").write_bytes(b"x" * size)
+PY
+loop proof export --run "$OVERSIZED_BUNDLE_RUN" --profile local-v0 --out "$TEST_DIR/oversized-bundle" >/dev/null 2>&1
+oversized_bundle_status=$?
+assert_exit "oversized Bundle exports with a warning" 0 "$oversized_bundle_status"
+oversized_bundle_report=$(loop proof verify "$TEST_DIR/oversized-bundle" --json)
+oversized_bundle_verify_status=$?
+assert_exit "oversized Bundle remains valid" 0 "$oversized_bundle_verify_status"
+if python3 - "$TEST_DIR/oversized-bundle" "$oversized_bundle_report" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+bundle_dir = Path(sys.argv[1])
+report = json.loads(sys.argv[2])
+bundle = json.loads((bundle_dir / "proof.json").read_text(encoding="utf-8"))
+published_evidence_bytes = sum(
+    item["bytes"] for item in bundle["evidence"] if item["status"] == "included"
+)
+assert published_evidence_bytes == 10485760
+assert any(
+    warning["reason"] == "size-budget-exceeded"
+    and warning["target"] == "bundle"
+    for warning in bundle["integrity"]["compile_warnings"]
+)
+assert report["status"] == "valid"
+assert any(
+    warning["reason"] == "size-budget-exceeded"
+    and warning["target"] == "bundle"
+    for warning in report["warnings"]
+)
+PY
+then
+    pass "size budget overage is a valid Bundle warning"
+else
+    fail "size budget warning" "size-budget-exceeded without an integrity downgrade" "$oversized_bundle_report"
+fi
+
 UNEXPECTED_DIR="$RUNS_DIR/2026-07-30_01-00-00"
 cp -R "$PROJECT_ROOT/tests/fixtures/proof/runs/unexpected-derived" "$UNEXPECTED_DIR"
 loop proof export --run "$UNEXPECTED_DIR" --out "$TEST_DIR/unexpected-bundle" >/dev/null 2>&1
@@ -825,6 +906,36 @@ if [[ "$public_entropy_output" == *"entropy-fixture.txt"* && "$public_entropy_ou
     pass "high-entropy failure names its file and match type without exposing the value"
 else
     fail "high-entropy diagnostic redaction" "file and match type named without secret value" "diagnostic redaction contract failed"
+fi
+
+OMITTED_SECRET_DIR="$TEST_DIR/public-omitted-secret-run"
+OMITTED_SECRET_VALUE='AKIAABCDEFGHIJKLMNOP'
+cp -R "$PROJECT_ROOT/tests/fixtures/proof/runs/clean-complete" "$OMITTED_SECRET_DIR"
+printf '\n%s\n' "$OMITTED_SECRET_VALUE" >> "$OMITTED_SECRET_DIR/round-0-prompt.md"
+omitted_secret_output=$(loop proof export --run "$OMITTED_SECRET_DIR" --profile public-v0 --out "$TEST_DIR/public-omitted-secret-bundle" 2>&1)
+omitted_secret_status=$?
+assert_exit "public-v0 omits a secret in profile-redacted evidence" 0 "$omitted_secret_status"
+omitted_secret_verify=$(loop proof verify "$TEST_DIR/public-omitted-secret-bundle" --json 2>&1)
+omitted_secret_verify_status=$?
+assert_exit "public-v0 Bundle with omitted secret verifies" 0 "$omitted_secret_verify_status"
+if python3 - "$TEST_DIR/public-omitted-secret-bundle/proof.json" "$omitted_secret_verify" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+proof_path = Path(sys.argv[1])
+report = json.loads(sys.argv[2])
+bundle = json.loads(proof_path.read_text(encoding="utf-8"))
+prompt = next(item for item in bundle["evidence"] if item["path"] == "round-0-prompt.md")
+assert prompt["status"] == "omitted"
+assert prompt["omitted_reason"] == "profile-redaction"
+assert not (proof_path.parent / "evidence" / "round-0-prompt.md").exists()
+assert report["status"] == "valid"
+PY
+then
+    pass "omitted secret bytes never enter a valid public Bundle"
+else
+    fail "omitted secret public Bundle" "redacted prompt and valid verification" "$omitted_secret_output"
 fi
 
 for secret_case in pem-header cloud-credential token-assignment; do

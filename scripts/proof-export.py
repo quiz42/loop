@@ -10,6 +10,7 @@ sourced from a different current working directory.
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 from pathlib import Path
 from typing import Optional, Sequence
@@ -67,6 +68,28 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _repository_root() -> Path:
+    """Resolve the Git top-level so export identity does not depend on ``cwd``."""
+    cwd = Path.cwd().resolve()
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=cwd,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except OSError:
+        return cwd
+    root = result.stdout.rstrip("\n")
+    if result.returncode == 0 and root:
+        return Path(root).resolve()
+    return cwd
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     if sys.version_info < (3, 9):
         print(
@@ -91,7 +114,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"Error: {error}", file=sys.stderr)
         return EXIT_USAGE
 
-    project_root = Path.cwd().resolve()
+    project_root = _repository_root()
     try:
         run_dir = (
             find_latest_terminal_run(project_root / ".loop" / "rlcr")

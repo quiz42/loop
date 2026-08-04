@@ -142,7 +142,7 @@
       "additionalProperties": true
     },
     "max_bundle_bytes": {
-      "description": "The maximum preferred total output size in bytes.",
+      "description": "The maximum preferred deterministic managed-output size in bytes, excluding transport metadata.",
       "type": "integer"
     },
     "max_item_bytes": {
