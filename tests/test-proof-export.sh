@@ -133,20 +133,39 @@ else
     fail "manifest Run facts" "public-v0 with only completed round 0" "unexpected manifest"
 fi
 
-if python3 - "$TEST_DIR/bundle-a/proof.json" "$TEST_DIR/bundle-a/proof-data.js" "$TEST_DIR/bundle-a/index.html" "$TEST_DIR/bundle-a/app.js" "$TEST_DIR/bundle-a/styles.css" <<'PY'
+if python3 - "$PROJECT_ROOT" "$TEST_DIR/bundle-a/proof.json" "$TEST_DIR/bundle-a/proof-data.js" "$TEST_DIR/bundle-a/index.html" "$TEST_DIR/bundle-a/app.js" "$TEST_DIR/bundle-a/styles.css" <<'PY'
+import hashlib
 import json
 import sys
+from copy import deepcopy
 from pathlib import Path
 
-proof = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-display = Path(sys.argv[2]).read_text(encoding="utf-8")
-prefix = "window.PROOF = "
-assert display.startswith(prefix)
-assert display.rstrip().endswith(";")
-assert json.loads(display[len(prefix):].strip()[:-1]) == proof
-index = Path(sys.argv[3]).read_text(encoding="utf-8")
-app = Path(sys.argv[4]).read_text(encoding="utf-8")
-styles = Path(sys.argv[5]).read_text(encoding="utf-8")
+sys.path.insert(0, sys.argv[1])
+from proof.contract import compute_proof_id
+
+proof = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+display_path = Path(sys.argv[3])
+expected_display = (
+    "window.PROOF = "
+    + json.dumps(proof, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    + ";\n"
+).encode("utf-8")
+assert display_path.read_bytes() == expected_display
+index = Path(sys.argv[4]).read_text(encoding="utf-8")
+app = Path(sys.argv[5]).read_text(encoding="utf-8")
+styles = Path(sys.argv[6]).read_text(encoding="utf-8")
+asset_hashes = proof["explorer"]["assets"]
+assert set(asset_hashes) == {"index.html", "app.js", "styles.css"}
+for name, path in {
+    "index.html": Path(sys.argv[4]),
+    "app.js": Path(sys.argv[5]),
+    "styles.css": Path(sys.argv[6]),
+}.items():
+    assert asset_hashes[name] == "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+assert compute_proof_id(proof) == proof["proof_id"]
+asset_mutation = deepcopy(proof)
+asset_mutation["explorer"]["assets"]["index.html"] = "sha256:" + "0" * 64
+assert compute_proof_id(asset_mutation) != proof["proof_id"]
 assert '<script src="proof-data.js"></script>' in index
 assert '<script src="app.js"></script>' in index
 assert 'window.PROOF' in app
@@ -156,11 +175,18 @@ assert 'http://' not in styles and 'https://' not in styles
 assert 'event.stall_count' in app
 assert 'event.last_mainline_verdict' in app
 assert 'Affected acceptance criteria' in app
+assert "Packaged display, not live verification." in index
+assert "function classFragment" in app
+assert 'replace(/[^a-z0-9-]/gi, "-")' in app
+assert 'timeline-event--" + classFragment(event.kind, "event")' in app
+assert ".evidence-link--truncated" in styles
+assert "replaceChildren" not in app
+assert "navigation.forEach" not in app
 PY
 then
-    pass "Explorer assets work from the proof-data.js display projection without network fetches"
+    pass "Explorer assets are attested, deterministic, offline, and render with safe compatibility guards"
 else
-    fail "Explorer packaging" "assets and proof-data.js semantically equal to proof.json" "unexpected Explorer asset content"
+    fail "Explorer packaging" "attested assets and exact proof-data.js derivation" "unexpected Explorer asset content"
 fi
 
 FAKE_OPEN_BIN="$TEST_DIR/fake-open-bin"
@@ -170,6 +196,34 @@ printf '#!/bin/sh\nprintf "%%s\\n" "$1" > "$LOOP_PROOF_OPEN_CAPTURE"\n' > "$FAKE
 chmod +x "$FAKE_OPEN_BIN/open"
 cp "$FAKE_OPEN_BIN/open" "$FAKE_OPEN_BIN/xdg-open"
 chmod +x "$FAKE_OPEN_BIN/xdg-open"
+
+assert_open_rejected_without_launcher() {
+    local name="$1"
+    local bundle="$2"
+    local expected_fragment="$3"
+    local open_output
+    local open_status
+
+    rm -f "$OPEN_CAPTURE"
+    open_output=$( (
+            export PATH="$FAKE_OPEN_BIN:$PATH"
+            export LOOP_PROOF_OPEN_CAPTURE="$OPEN_CAPTURE"
+            loop proof open "$bundle"
+        ) 2>&1 )
+    open_status=$?
+    assert_exit "$name" 1 "$open_status"
+    if [[ "$open_output" == *"$expected_fragment"* ]]; then
+        pass "$name reports the renderer preflight failure"
+    else
+        fail "$name error" "$expected_fragment" "$open_output"
+    fi
+    if [[ ! -e "$OPEN_CAPTURE" ]]; then
+        pass "$name never invokes the system launcher"
+    else
+        fail "$name launcher guard" "no launcher invocation" "$(<"$OPEN_CAPTURE")"
+    fi
+}
+
 open_output=$( (
         export PATH="$FAKE_OPEN_BIN:$PATH"
         export LOOP_PROOF_OPEN_CAPTURE="$OPEN_CAPTURE"
@@ -189,6 +243,98 @@ if [[ -f "$OPEN_CAPTURE" && "$(<"$OPEN_CAPTURE")" == "$expected_file_url" ]]; th
 else
     fail "proof open file URL" "$expected_file_url" "${open_output:-no launcher output}"
 fi
+
+INVALID_OPEN_DIR="$TEST_DIR/invalid-open-bundle"
+cp -R "$TEST_DIR/bundle-a" "$INVALID_OPEN_DIR"
+python3 - "$INVALID_OPEN_DIR/proof.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+bundle = json.loads(path.read_text(encoding="utf-8"))
+bundle["proof_id"] = "sha256:" + ("0" * 64)
+path.write_text(
+    json.dumps(bundle, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+    encoding="utf-8",
+)
+PY
+assert_open_rejected_without_launcher \
+    "proof open rejects an invalid Bundle before launch" \
+    "$INVALID_OPEN_DIR" \
+    "validation is invalid"
+
+for renderer_asset in index.html app.js styles.css; do
+    TAMPERED_RENDERER_DIR="$TEST_DIR/tampered-$renderer_asset"
+    cp -R "$TEST_DIR/bundle-a" "$TAMPERED_RENDERER_DIR"
+    printf '\n// renderer tamper\n' >> "$TAMPERED_RENDERER_DIR/$renderer_asset"
+    assert_open_rejected_without_launcher \
+        "proof open rejects a tampered $renderer_asset" \
+        "$TAMPERED_RENDERER_DIR" \
+        "asset hash mismatch: $renderer_asset"
+done
+
+TAMPERED_DISPLAY_DIR="$TEST_DIR/tampered-proof-data"
+cp -R "$TEST_DIR/bundle-a" "$TAMPERED_DISPLAY_DIR"
+printf '\n// display-only tamper\n' >> "$TAMPERED_DISPLAY_DIR/proof-data.js"
+assert_open_rejected_without_launcher \
+    "proof open rejects tampered proof-data.js" \
+    "$TAMPERED_DISPLAY_DIR" \
+    "proof-data.js does not exactly match proof.json"
+
+rm -f "$OPEN_CAPTURE"
+server_preflight_output=$( (
+        export PATH="$FAKE_OPEN_BIN:$PATH"
+        export LOOP_PROOF_OPEN_CAPTURE="$OPEN_CAPTURE"
+        loop proof open --server "$TAMPERED_DISPLAY_DIR"
+    ) 2>&1 )
+server_preflight_status=$?
+assert_exit "proof open --server applies renderer preflight before listening" 1 "$server_preflight_status"
+if [[ "$server_preflight_output" == *"proof-data.js does not exactly match proof.json"* && "$server_preflight_output" != *"Serving Proof Explorer"* && ! -e "$OPEN_CAPTURE" ]]; then
+    pass "proof open --server neither listens nor launches after preflight failure"
+else
+    fail "proof open --server preflight guard" "no server or launcher after proof-data.js mismatch" "$server_preflight_output"
+fi
+
+LEGACY_OPEN_DIR="$TEST_DIR/legacy-renderer-bundle"
+cp -R "$TEST_DIR/bundle-a" "$LEGACY_OPEN_DIR"
+python3 - "$PROJECT_ROOT" "$LEGACY_OPEN_DIR" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, sys.argv[1])
+from proof.contract import compute_proof_id
+
+bundle_dir = Path(sys.argv[2])
+proof_path = bundle_dir / "proof.json"
+bundle = json.loads(proof_path.read_text(encoding="utf-8"))
+bundle.pop("explorer")
+bundle["proof_id"] = compute_proof_id(bundle)
+proof_path.write_text(
+    json.dumps(bundle, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+    encoding="utf-8",
+)
+(bundle_dir / "proof-data.js").write_bytes(
+    (
+        "window.PROOF = "
+        + json.dumps(bundle, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        + ";\n"
+    ).encode("utf-8")
+)
+PY
+legacy_verify=$(loop proof verify --json "$LEGACY_OPEN_DIR" 2>&1)
+legacy_verify_status=$?
+assert_exit "legacy renderer Bundle remains canonically valid" 0 "$legacy_verify_status"
+if [[ "$legacy_verify" == *'"status": "valid"'* ]]; then
+    pass "legacy renderer Bundle is accepted by normal validation"
+else
+    fail "legacy renderer validation" "a valid verifier report" "$legacy_verify"
+fi
+assert_open_rejected_without_launcher \
+    "proof open refuses legacy renderer metadata" \
+    "$LEGACY_OPEN_DIR" \
+    "lacks explorer.assets renderer attestations"
 
 SERVER_LOG="$TEST_DIR/proof-open-server.log"
 (
@@ -215,6 +361,37 @@ then
 else
     fail "proof open --server" "a loopback server that serves index.html" "$(<"$SERVER_LOG")"
 fi
+if python3 - "$server_url" <<'PY'
+import sys
+from http.client import HTTPConnection
+from urllib.parse import urlsplit
+
+parts = urlsplit(sys.argv[1])
+assert parts.hostname == "127.0.0.1"
+assert parts.port is not None
+
+def status_for(host):
+    connection = HTTPConnection(parts.hostname, parts.port, timeout=2)
+    connection.putrequest("GET", "/", skip_host=True)
+    connection.putheader("Host", host)
+    connection.endheaders()
+    response = connection.getresponse()
+    response.read()
+    connection.close()
+    return response.status
+
+assert status_for(f"localhost:{parts.port}") == 200
+assert status_for(f"LOCALHOST:{parts.port}") == 200
+assert status_for(f"127.0.0.1:{parts.port}") == 200
+assert status_for(f"attacker.invalid:{parts.port}") == 400
+assert status_for("127.0.0.1:1") == 400
+PY
+then
+    pass "proof open --server accepts only the current loopback Host header"
+else
+    fail "proof open --server Host guard" "200 for loopback and 400 for hostile Host headers" "$(<"$SERVER_LOG")"
+fi
+
 printf 'outside the Bundle\n' > "$TEST_DIR/outside-bundle.txt"
 ln -s "$TEST_DIR/outside-bundle.txt" "$TEST_DIR/bundle-a/escaped-hosts"
 if python3 - "$server_url/escaped-hosts" <<'PY'
@@ -1036,8 +1213,13 @@ import sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
-path.write_bytes(path.read_bytes() + b"x" * 1048577)
+path.write_bytes(
+    path.read_bytes()
+    + b"\n| 9 | TRACKER_TRUNCATION_SENTINEL | This tracker-only plan change must not be published. | AC1 |\n"
+    + b"x" * 1048577
+)
 PY
+printf '\n> [P1] AC1 has a tracker-gated synthetic regression.\n' >> "$TRUNCATED_TRACKER_DIR/round-0-review-result.md"
 loop proof export --run "$TRUNCATED_TRACKER_DIR" --out "$TEST_DIR/truncated-tracker-bundle" >/dev/null 2>&1
 truncated_tracker_status=$?
 assert_exit "Run with truncated required evidence exports" 0 "$truncated_tracker_status"
@@ -1049,19 +1231,39 @@ bundle = json.load(open(sys.argv[1], encoding="utf-8"))
 tracker = next(item for item in bundle["evidence"] if item["path"] == "goal-tracker.md")
 assert tracker["status"] == "truncated"
 assert bundle["verdict"]["decision"] == "unverifiable"
-per_ac = {row["ac_id"]: row["status"] for row in bundle["verdict"]["per_ac"]}
-assert per_ac == {
-    "ac-1": "unverifiable",
-    "ac-2": "unverifiable",
-    "ac-3": "unverifiable",
-    "ac-4": "unverifiable",
-    "ac-5": "unverifiable",
-}
+assert bundle["specification"]["goal"] == (
+    "Add a tiny Python greeting module with one independently verifiable behavior."
+)
+assert bundle["specification"]["acceptance_criteria"] == []
+assert bundle["verdict"]["per_ac"] == []
+assert bundle["verdict"]["required_set"] == []
+assert bundle["verdict"]["deferred"] == []
+assert all(
+    event["kind"] not in {"plan_evolution", "replan"}
+    for event in bundle["run"]["events"]
+)
+assert bundle["findings"]
+assert all(finding["ac_refs"] == [] for finding in bundle["findings"])
+assert "TRACKER_TRUNCATION_SENTINEL" not in json.dumps(bundle)
 PY
 then
-    pass "truncated required evidence cannot produce an accept verdict"
+    pass "truncated tracker prose and all tracker-derived projections stay out of the Bundle"
 else
-    fail "truncated required evidence verdict" "truncated tracker makes all ACs unverifiable" "unexpected truncated tracker bundle"
+    fail "truncated tracker projection" "no tracker prose, AC rows, finding links, or plan events" "unexpected truncated tracker bundle"
+fi
+
+rm -f "$OPEN_CAPTURE"
+incomplete_open_output=$( (
+        export PATH="$FAKE_OPEN_BIN:$PATH"
+        export LOOP_PROOF_OPEN_CAPTURE="$OPEN_CAPTURE"
+        loop proof open "$TEST_DIR/truncated-tracker-bundle"
+    ) 2>&1 )
+incomplete_open_status=$?
+assert_exit "proof open allows an incomplete but renderer-attested Bundle" 0 "$incomplete_open_status"
+if [[ -f "$OPEN_CAPTURE" ]]; then
+    pass "proof open launches an incomplete Bundle only after renderer preflight"
+else
+    fail "proof open incomplete Bundle" "a launcher invocation" "$incomplete_open_output"
 fi
 
 OVERSIZED_BUNDLE_RUN="$TEST_DIR/oversized-bundle-run"

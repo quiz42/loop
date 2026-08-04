@@ -5,5 +5,5 @@ The distribution form of the Proof of Loop MVP is a locally generated Proof Bund
 ## Consequences
 
 - A Bundle must be copyable as an ordinary directory, transferable by email, and shareable as a CI artifact (AC-7).
-- The Explorer must not depend on any network request or login, including the case of double-clicking it open over `file://` (see design decision D15: data is inlined through a `proof-data.js` file derived at export time, while `proof.json` remains the only canonical interface the Validator recognizes).
+- The Explorer must not depend on any network request or login, including the case of double-clicking it open over `file://` (see design decision D15: data is inlined through a `proof-data.js` file derived at export time). Direct opening is a portable display-only path; `loop proof open` is the verified viewing path and preflights the manifest-bound renderer plus the derived display data.
 - Any future hosted version is another consumer of `proof.json`, not a new data source.

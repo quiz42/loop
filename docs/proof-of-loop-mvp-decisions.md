@@ -77,7 +77,8 @@ AC-7's "no network required" has to cover the case of double-clicking `index.htm
 
 - at export time, derive `proof-data.js` (`window.PROOF = {...}`) from `proof.json`; `index.html` loads it via `<script src>`, so a double-click is enough;
 - the original Evidence files remain individual files in the directory, and the UI links to them with relative `<a href>`;
-- `proof.json` is the only canonical machine interface and the only thing the Validator checks — `proof-data.js` is a derived display copy, so tampering with it can only fool someone reading that one HTML page, never `loop proof verify`.
+- `proof.json` remains the only canonical machine interface and `loop proof verify` remains data-canonical, so display-only tampering does not alter its result;
+- `loop proof open` is the recommended verified viewing path: before opening it validates the Bundle, verifies the renderer assets bound by `explorer.assets`, and checks that `proof-data.js` is the exact derivation of `proof.json`. Direct `file://` double-clicking remains a portable convenience path, but it is visibly non-verifying and must not be treated as a trust decision.
 
 ### D16. The Compiler never emits `reject` automatically
 
@@ -111,5 +112,5 @@ The four sub-choices originally left to Milestones 1-2 are settled in [`proof-of
 
 - JSON Schema validator → a hand-written subset validator (modern `jsonschema` depends on the Rust extension `rpds-py`, so vendoring a pure-Python implementation is not viable);
 - `run_id` canonical hash field list and serialization rules → spec section D, including the fixed test vector requirement;
-- Integrity report `reason` enum → the 14-value enum and integrity status mapping table in spec section J;
-- `loop proof open` implementation → open directly over `file://`, with an optional `--server` wrapper.
+- Integrity report `reason` enum → the versioned enum and integrity status mapping table in spec section J;
+- `loop proof open` implementation → validate the Bundle and renderer before opening over `file://`, with an optional loopback-only `--server` wrapper.

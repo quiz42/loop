@@ -90,7 +90,7 @@ loop proof open .loop/proofs/<proof-id>/proof.json
 3. `export` reads the Run, Git, and review artifacts read-only;
 4. a content-addressed Proof Bundle is generated;
 5. `verify` checks schema, hashes, references, and required evidence;
-6. `open` opens the offline Proof Explorer in a browser;
+6. `open` validates the Bundle and its bound renderer, then opens the offline Proof Explorer in a browser;
 7. the user inspects the AC matrix, round timeline, finding-to-fix chains, and integrity report.
 
 `complete` is not a precondition for export. Failed, cancelled, and stalled Runs have retrospective value too, and must also be able to produce a Proof Bundle.
@@ -306,7 +306,7 @@ proof/
 scripts/
 ├── proof-export.py
 ├── proof-verify.py
-└── proof-open.sh
+└── proof-open.py
 tests/
 ├── test-proof-export.sh
 ├── test-proof-verify.sh
