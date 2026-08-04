@@ -57,7 +57,15 @@ if ! python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 9) el
 fi
 
 TEST_DIR=$(mktemp -d)
-trap 'rm -rf "$TEST_DIR"' EXIT
+SERVER_PID=""
+cleanup() {
+    if [[ -n "${SERVER_PID:-}" ]]; then
+        kill "$SERVER_PID" >/dev/null 2>&1 || true
+        wait "$SERVER_PID" >/dev/null 2>&1 || true
+    fi
+    rm -rf "$TEST_DIR"
+}
+trap cleanup EXIT
 TEST_PROJECT="$TEST_DIR/project"
 RUNS_DIR="$TEST_PROJECT/.loop/rlcr"
 RUN_DIR="$RUNS_DIR/2026-07-29_20-22-19"
@@ -95,10 +103,10 @@ output=$(loop proof export --run "$RUN_DIR" --out "$TEST_DIR/bundle-a" 2>&1)
 export_status=$?
 assert_exit "clean complete Run exports" 0 "$export_status"
 
-if [[ -f "$TEST_DIR/bundle-a/proof.json" && -f "$TEST_DIR/bundle-a/evidence/plan.md" && -f "$TEST_DIR/bundle-a/proof-data.js" ]]; then
-    pass "bundle contains manifest, display data, and raw evidence"
+if [[ -f "$TEST_DIR/bundle-a/proof.json" && -f "$TEST_DIR/bundle-a/evidence/plan.md" && -f "$TEST_DIR/bundle-a/proof-data.js" && -f "$TEST_DIR/bundle-a/index.html" && -f "$TEST_DIR/bundle-a/app.js" && -f "$TEST_DIR/bundle-a/styles.css" ]]; then
+    pass "bundle contains manifest, offline Explorer, display data, and raw evidence"
 else
-    fail "bundle contents" "proof.json, proof-data.js, and evidence/plan.md" "$output"
+    fail "bundle contents" "proof.json, proof-data.js, index.html, app.js, styles.css, and evidence/plan.md" "$output"
 fi
 
 if python3 - "$TEST_DIR/bundle-a/proof.json" <<'PY'
@@ -110,12 +118,194 @@ assert bundle["profile"]["name"] == "public-v0"
 assert bundle["run"]["terminal_state"] == "complete"
 assert bundle["run"]["rounds"] == [{"index": 0}]
 assert bundle["proof_id"].startswith("sha256:")
+assert bundle["integrity"]["status"] == "valid"
+verdict_event = next(event for event in bundle["run"]["events"] if event["kind"] == "mainline_verdict")
+assert verdict_event["round"] == 0
+assert verdict_event["verdict"] == "advanced"
+assert verdict_event["evidence_refs"]
+plan_event = next(event for event in bundle["run"]["events"] if event["kind"] == "plan_evolution")
+assert plan_event["round"] == 0
+assert plan_event["evidence_refs"]
 PY
 then
     pass "manifest defaults to the public profile and records completed Run facts"
 else
     fail "manifest Run facts" "public-v0 with only completed round 0" "unexpected manifest"
 fi
+
+if python3 - "$TEST_DIR/bundle-a/proof.json" "$TEST_DIR/bundle-a/proof-data.js" "$TEST_DIR/bundle-a/index.html" "$TEST_DIR/bundle-a/app.js" "$TEST_DIR/bundle-a/styles.css" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+proof = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+display = Path(sys.argv[2]).read_text(encoding="utf-8")
+prefix = "window.PROOF = "
+assert display.startswith(prefix)
+assert display.rstrip().endswith(";")
+assert json.loads(display[len(prefix):].strip()[:-1]) == proof
+index = Path(sys.argv[3]).read_text(encoding="utf-8")
+app = Path(sys.argv[4]).read_text(encoding="utf-8")
+styles = Path(sys.argv[5]).read_text(encoding="utf-8")
+assert '<script src="proof-data.js"></script>' in index
+assert '<script src="app.js"></script>' in index
+assert 'window.PROOF' in app
+assert 'fetch(' not in app
+assert '@import' not in styles
+assert 'http://' not in styles and 'https://' not in styles
+assert 'event.stall_count' in app
+assert 'event.last_mainline_verdict' in app
+assert 'Affected acceptance criteria' in app
+PY
+then
+    pass "Explorer assets work from the proof-data.js display projection without network fetches"
+else
+    fail "Explorer packaging" "assets and proof-data.js semantically equal to proof.json" "unexpected Explorer asset content"
+fi
+
+FAKE_OPEN_BIN="$TEST_DIR/fake-open-bin"
+OPEN_CAPTURE="$TEST_DIR/opened-url"
+mkdir -p "$FAKE_OPEN_BIN"
+printf '#!/bin/sh\nprintf "%%s\\n" "$1" > "$LOOP_PROOF_OPEN_CAPTURE"\n' > "$FAKE_OPEN_BIN/open"
+chmod +x "$FAKE_OPEN_BIN/open"
+cp "$FAKE_OPEN_BIN/open" "$FAKE_OPEN_BIN/xdg-open"
+chmod +x "$FAKE_OPEN_BIN/xdg-open"
+open_output=$( (
+        export PATH="$FAKE_OPEN_BIN:$PATH"
+        export LOOP_PROOF_OPEN_CAPTURE="$OPEN_CAPTURE"
+        loop proof open "$TEST_DIR/bundle-a"
+    ) 2>&1 )
+open_status=$?
+assert_exit "proof open launches the packaged file Explorer" 0 "$open_status"
+expected_file_url=$(python3 - "$TEST_DIR/bundle-a/index.html" <<'PY'
+import sys
+from pathlib import Path
+
+print(Path(sys.argv[1]).resolve().as_uri())
+PY
+)
+if [[ -f "$OPEN_CAPTURE" && "$(<"$OPEN_CAPTURE")" == "$expected_file_url" ]]; then
+    pass "proof open uses the file URL for index.html"
+else
+    fail "proof open file URL" "$expected_file_url" "${open_output:-no launcher output}"
+fi
+
+SERVER_LOG="$TEST_DIR/proof-open-server.log"
+(
+    export PATH="$FAKE_OPEN_BIN:$PATH"
+    export LOOP_PROOF_OPEN_CAPTURE="$OPEN_CAPTURE"
+    loop proof open --server "$TEST_DIR/bundle-a"
+) >"$SERVER_LOG" 2>&1 &
+SERVER_PID=$!
+server_url=""
+for _ in $(seq 1 30); do
+    server_url=$(sed -nE 's/^Serving Proof Explorer at (http:\/\/127\.0\.0\.1:[0-9]+\/)$/\1/p' "$SERVER_LOG" | head -1)
+    [[ -n "$server_url" ]] && break
+    sleep 0.1
+done
+if [[ -n "$server_url" ]] && python3 - "$server_url" <<'PY'
+import sys
+from urllib.request import urlopen
+
+with urlopen(sys.argv[1], timeout=2) as response:
+    assert b'proof-data.js' in response.read()
+PY
+then
+    pass "proof open --server serves the Explorer on loopback with an ephemeral port"
+else
+    fail "proof open --server" "a loopback server that serves index.html" "$(<"$SERVER_LOG")"
+fi
+printf 'outside the Bundle\n' > "$TEST_DIR/outside-bundle.txt"
+ln -s "$TEST_DIR/outside-bundle.txt" "$TEST_DIR/bundle-a/escaped-hosts"
+if python3 - "$server_url/escaped-hosts" <<'PY'
+import sys
+from urllib.error import HTTPError
+from urllib.request import urlopen
+
+try:
+    urlopen(sys.argv[1], timeout=2)
+except HTTPError as error:
+    assert error.code == 404
+else:
+    raise AssertionError("server followed a symlink outside the Bundle")
+PY
+then
+    pass "proof open --server refuses Bundle symlinks that escape its root"
+else
+    fail "proof open --server symlink guard" "HTTP 404 for an escaped symlink" "$(<"$SERVER_LOG")"
+fi
+mv "$TEST_DIR/bundle-a/index.html" "$TEST_DIR/bundle-a/index.safe.html"
+ln -s "$TEST_DIR/outside-bundle.txt" "$TEST_DIR/bundle-a/index.html"
+if python3 - "$server_url" <<'PY'
+import sys
+from urllib.error import HTTPError
+from urllib.request import urlopen
+
+try:
+    urlopen(sys.argv[1], timeout=2)
+except HTTPError as error:
+    assert error.code == 404
+else:
+    raise AssertionError("server followed an escaped Bundle index")
+PY
+then
+    pass "proof open --server refuses an escaped Bundle index after startup"
+else
+    fail "proof open --server index guard" "HTTP 404 for an escaped index.html" "$(<"$SERVER_LOG")"
+fi
+rm "$TEST_DIR/bundle-a/index.html"
+mv "$TEST_DIR/bundle-a/index.safe.html" "$TEST_DIR/bundle-a/index.html"
+kill "$SERVER_PID" >/dev/null 2>&1 || true
+wait "$SERVER_PID" >/dev/null 2>&1 || true
+SERVER_PID=""
+rm "$TEST_DIR/bundle-a/escaped-hosts"
+
+mkdir -p "$TEST_DIR/no-explorer"
+missing_open_output=$( (
+        export PATH="$FAKE_OPEN_BIN:$PATH"
+        export LOOP_PROOF_OPEN_CAPTURE="$OPEN_CAPTURE"
+        loop proof open "$TEST_DIR/no-explorer"
+    ) 2>&1 )
+missing_open_status=$?
+assert_exit "proof open rejects a directory without the packaged Explorer" 1 "$missing_open_status"
+if [[ "$missing_open_output" == *"no packaged Explorer"* ]]; then
+    pass "proof open missing Explorer failure is actionable"
+else
+    fail "proof open missing Explorer error" "an actionable packaged Explorer message" "$missing_open_output"
+fi
+
+UNSAFE_INDEX_DIR="$TEST_DIR/unsafe-index"
+mkdir -p "$UNSAFE_INDEX_DIR"
+ln -s "$TEST_DIR/outside-bundle.txt" "$UNSAFE_INDEX_DIR/index.html"
+unsafe_index_output=$( (
+        export PATH="$FAKE_OPEN_BIN:$PATH"
+        export LOOP_PROOF_OPEN_CAPTURE="$OPEN_CAPTURE"
+        loop proof open "$UNSAFE_INDEX_DIR"
+    ) 2>&1 )
+unsafe_index_status=$?
+assert_exit "proof open rejects an Explorer index symlink outside the Bundle" 1 "$unsafe_index_status"
+if [[ "$unsafe_index_output" == *"must remain inside the Bundle"* ]]; then
+    pass "proof open escaped index failure is actionable"
+else
+    fail "proof open escaped index error" "an actionable Bundle-boundary message" "$unsafe_index_output"
+fi
+
+mv "$TEST_DIR/bundle-a/app.js" "$TEST_DIR/bundle-a/app.safe.js"
+ln -s "$TEST_DIR/outside-bundle.txt" "$TEST_DIR/bundle-a/app.js"
+unsafe_asset_output=$( (
+        export PATH="$FAKE_OPEN_BIN:$PATH"
+        export LOOP_PROOF_OPEN_CAPTURE="$OPEN_CAPTURE"
+        loop proof open "$TEST_DIR/bundle-a"
+    ) 2>&1 )
+unsafe_asset_status=$?
+assert_exit "proof open rejects an Explorer asset symlink outside the Bundle" 1 "$unsafe_asset_status"
+if [[ "$unsafe_asset_output" == *"paths must remain inside the Bundle"* ]]; then
+    pass "proof open rejects escaped non-index assets before launching"
+else
+    fail "proof open escaped asset error" "an actionable Bundle-boundary message" "$unsafe_asset_output"
+fi
+rm "$TEST_DIR/bundle-a/app.js"
+mv "$TEST_DIR/bundle-a/app.safe.js" "$TEST_DIR/bundle-a/app.js"
 
 after_snapshot=$(run_snapshot "$RUN_DIR")
 after_status=$(git status --porcelain)
@@ -763,6 +953,82 @@ else
     fail "profile-relative completion evidence" "omitted tracker removes its derived acceptance criteria" "unexpected redacted tracker bundle"
 fi
 
+REDACTED_STATE_DIR="$TEST_DIR/redacted-state-run"
+cp -R "$PROJECT_ROOT/tests/fixtures/proof/runs/clean-complete" "$REDACTED_STATE_DIR"
+python3 - "$REDACTED_STATE_DIR/complete-state.md" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+text = re.sub(r"^drift_status: .*$", "drift_status: replan_required", text, flags=re.MULTILINE)
+text = re.sub(r"^mainline_stall_count: .*$", "mainline_stall_count: 2", text, flags=re.MULTILINE)
+text = re.sub(
+    r"^last_mainline_verdict: .*$",
+    "last_mainline_verdict: /Users/proof-test/private",
+    text,
+    flags=re.MULTILINE,
+)
+path.write_text(text, encoding="utf-8")
+PY
+loop proof export --run "$REDACTED_STATE_DIR" --profile public-v0 --out "$TEST_DIR/redacted-state-bundle" >/dev/null 2>&1
+redacted_state_status=$?
+assert_exit "public-v0 exports when a circuit-breaker state is path-redacted" 0 "$redacted_state_status"
+if python3 - "$TEST_DIR/redacted-state-bundle/proof.json" <<'PY'
+import json
+import sys
+
+bundle = json.load(open(sys.argv[1], encoding="utf-8"))
+state = next(item for item in bundle["evidence"] if item["path"] == "complete-state.md")
+assert state["status"] == "omitted"
+assert all(event["kind"] != "circuit_breaker" for event in bundle["run"]["events"])
+assert "/Users/proof-test/private" not in json.dumps(bundle)
+PY
+then
+    pass "path-redacted state does not leak circuit-breaker fields through the timeline"
+else
+    fail "path-redacted circuit breaker" "a safe public Bundle without leaked state fields" "unexpected redacted state bundle"
+fi
+
+TRUNCATED_STATE_DIR="$TEST_DIR/truncated-state-run"
+cp -R "$PROJECT_ROOT/tests/fixtures/proof/runs/clean-complete" "$TRUNCATED_STATE_DIR"
+python3 - "$TRUNCATED_STATE_DIR/complete-state.md" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+text = re.sub(r"^drift_status: .*$", "drift_status: replan_required", text, flags=re.MULTILINE)
+text = re.sub(r"^mainline_stall_count: .*$", "mainline_stall_count: 2", text, flags=re.MULTILINE)
+text = re.sub(
+    r"^last_mainline_verdict: .*$",
+    "last_mainline_verdict: " + ("untrusted-frontmatter-" + "x" * 1_100_000),
+    text,
+    flags=re.MULTILINE,
+)
+path.write_text(text, encoding="utf-8")
+PY
+loop proof export --run "$TRUNCATED_STATE_DIR" --profile public-v0 --out "$TEST_DIR/truncated-state-bundle" >/dev/null 2>&1
+truncated_state_status=$?
+assert_exit "public-v0 exports when circuit-breaker state is truncated" 0 "$truncated_state_status"
+if python3 - "$TEST_DIR/truncated-state-bundle/proof.json" <<'PY'
+import json
+import sys
+
+bundle = json.load(open(sys.argv[1], encoding="utf-8"))
+state = next(item for item in bundle["evidence"] if item["path"] == "complete-state.md")
+assert state["status"] == "truncated"
+assert all(event["kind"] != "circuit_breaker" for event in bundle["run"]["events"])
+assert "untrusted-frontmatter-" not in json.dumps(bundle)
+PY
+then
+    pass "truncated state does not leak circuit-breaker frontmatter into the Bundle"
+else
+    fail "truncated circuit breaker" "a safe Bundle without projected truncated state" "unexpected truncated state bundle"
+fi
+
 TRUNCATED_TRACKER_DIR="$TEST_DIR/truncated-tracker-run"
 cp -R "$PROJECT_ROOT/tests/fixtures/proof/runs/clean-complete" "$TRUNCATED_TRACKER_DIR"
 python3 - "$TRUNCATED_TRACKER_DIR/goal-tracker.md" <<'PY'
@@ -822,8 +1088,11 @@ oversized_bundle_report=$(loop proof verify "$TEST_DIR/oversized-bundle" --json)
 oversized_bundle_verify_status=$?
 assert_exit "oversized Bundle remains valid" 0 "$oversized_bundle_verify_status"
 if python3 - "$TEST_DIR/oversized-bundle" "$oversized_bundle_report" <<'PY'
+import hashlib
 import json
+import re
 import sys
+from copy import deepcopy
 from pathlib import Path
 
 bundle_dir = Path(sys.argv[1])
@@ -844,9 +1113,46 @@ assert any(
     and warning["target"] == "bundle"
     for warning in report["warnings"]
 )
+warning = next(
+    warning
+    for warning in bundle["integrity"]["compile_warnings"]
+    if warning["reason"] == "size-budget-exceeded"
+)
+reported_bytes = int(re.search(r"is ([0-9]+) bytes", warning["detail"]).group(1))
+candidate = deepcopy(bundle)
+candidate["integrity"]["compile_warnings"] = [
+    item
+    for item in candidate["integrity"]["compile_warnings"]
+    if item["reason"] != "size-budget-exceeded"
+]
+identity = deepcopy(candidate)
+identity.pop("proof_id", None)
+identity.pop("transport", None)
+candidate["proof_id"] = "sha256:" + hashlib.sha256(
+    json.dumps(
+        identity, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+).hexdigest()
+projection = deepcopy(candidate)
+projection.pop("transport", None)
+manifest_bytes = len(
+    (json.dumps(projection, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
+)
+display_bytes = len(
+    (
+        "window.PROOF = "
+        + json.dumps(projection, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        + ";\n"
+    ).encode("utf-8")
+)
+explorer_bytes = sum(
+    (bundle_dir / name).stat().st_size
+    for name in ("index.html", "app.js", "styles.css")
+)
+assert reported_bytes == manifest_bytes + display_bytes + published_evidence_bytes + explorer_bytes
 PY
 then
-    pass "size budget overage is a valid Bundle warning"
+    pass "size budget counts the Explorer and remains a valid Bundle warning"
 else
     fail "size budget warning" "size-budget-exceeded without an integrity downgrade" "$oversized_bundle_report"
 fi
@@ -857,17 +1163,24 @@ loop proof export --run "$UNEXPECTED_DIR" --out "$TEST_DIR/unexpected-bundle" >/
 unexpected_status=$?
 assert_exit "unexpected Run exports" 0 "$unexpected_status"
 
+STOP_DIR="$RUNS_DIR/2026-07-30_01-30-00"
+cp -R "$PROJECT_ROOT/tests/fixtures/proof/runs/stop-derived" "$STOP_DIR"
+loop proof export --run "$STOP_DIR" --profile local-v0 --out "$TEST_DIR/stop-bundle" >/dev/null 2>&1
+stop_status=$?
+assert_exit "stopped Run exports with circuit-breaker facts" 0 "$stop_status"
+
 CANCEL_DIR="$RUNS_DIR/2026-07-30_02-00-00"
 cp -R "$PROJECT_ROOT/tests/fixtures/proof/runs/cancel-after-review" "$CANCEL_DIR"
 loop proof export --run "$CANCEL_DIR" --out "$TEST_DIR/cancel-bundle" >/dev/null 2>&1
 cancel_status=$?
 assert_exit "cancel Run exports" 0 "$cancel_status"
-if python3 - "$TEST_DIR/unexpected-bundle/proof.json" "$TEST_DIR/cancel-bundle/proof.json" <<'PY'
+if python3 - "$TEST_DIR/unexpected-bundle/proof.json" "$TEST_DIR/stop-bundle/proof.json" "$TEST_DIR/cancel-bundle/proof.json" <<'PY'
 import json
 import sys
 
 unexpected = json.load(open(sys.argv[1], encoding="utf-8"))
-cancel = json.load(open(sys.argv[2], encoding="utf-8"))
+stopped = json.load(open(sys.argv[2], encoding="utf-8"))
+cancel = json.load(open(sys.argv[3], encoding="utf-8"))
 assert unexpected["run"]["terminal_state"] == "unexpected"
 unexpected_per_ac = {
     row["ac_id"]: row["status"] for row in unexpected["verdict"]["per_ac"]
@@ -881,6 +1194,14 @@ assert unexpected_per_ac == {
 }
 assert unexpected["verdict"]["decision"] == "changes_required"
 assert unexpected["verdict"]["decision"] != "accept"
+assert stopped["run"]["terminal_state"] == "stop"
+circuit_breaker = next(
+    event for event in stopped["run"]["events"] if event["kind"] == "circuit_breaker"
+)
+assert circuit_breaker["drift_status"] == "replan_required"
+assert circuit_breaker["stall_count"] == 3
+assert circuit_breaker["last_mainline_verdict"] == "stalled"
+assert circuit_breaker["evidence_refs"]
 assert cancel["run"]["terminal_state"] == "cancel"
 assert cancel["verdict"]["decision"] == "changes_required"
 assert cancel["verdict"]["decision"] != "accept"

@@ -33,7 +33,7 @@ This will:
 
 Requires Codex CLI `0.114.0` or newer for native hooks. Older Codex builds are not supported by the Codex install path.
 
-The optional `loop proof export` and `loop proof verify` commands require Python 3.9 or newer. Verify it with `python3 --version`.
+The optional `loop proof export`, `loop proof verify`, and `loop proof open` commands require Python 3.9 or newer. Verify it with `python3 --version`.
 
 ## Verify
 

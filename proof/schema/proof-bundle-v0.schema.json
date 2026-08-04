@@ -265,6 +265,40 @@
                     "type": "null"
                   }
                 ]
+              },
+              "round": {
+                "description": "The zero-based round associated with this event when recorded.",
+                "type": "integer"
+              },
+              "verdict": {
+                "description": "The structured mainline progress verdict recorded for a review event.",
+                "type": "string",
+                "enum": ["advanced", "stalled", "regressed"]
+              },
+              "stall_count": {
+                "description": "The consecutive stalled or regressed round count recorded by a circuit breaker.",
+                "type": "integer"
+              },
+              "last_mainline_verdict": {
+                "description": "The last recorded mainline verdict when a circuit breaker fires.",
+                "type": "string",
+                "enum": ["advanced", "stalled", "regressed", "unknown"]
+              },
+              "drift_status": {
+                "description": "The recorded Loop drift state associated with a circuit-breaker event.",
+                "type": "string"
+              },
+              "detail": {
+                "description": "A bounded adapter-generated explanation for the lifecycle event.",
+                "type": "string"
+              },
+              "evidence_refs": {
+                "description": "Included Evidence Item IDs supporting this event's displayed facts.",
+                "type": "array",
+                "items": {
+                  "description": "One referenced Evidence Item ID.",
+                  "type": "string"
+                }
               }
             },
             "additionalProperties": true
@@ -476,6 +510,11 @@
       "type": "object",
       "required": ["compile_warnings"],
       "properties": {
+        "status": {
+          "description": "The compiler's conservative integrity projection for offline Explorer display.",
+          "type": "string",
+          "enum": ["valid", "incomplete", "invalid"]
+        },
         "compile_warnings": {
           "description": "Warnings discovered while compiling the Bundle.",
           "type": "array",
