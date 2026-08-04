@@ -38,6 +38,9 @@ source "$SCRIPT_DIR/test-helpers.sh"
 
 setup_test_dir
 
+# /bin/true does not exist on macOS; resolve it rather than hardcoding a path.
+SHELL_TRUE=$(command -v true)
+
 echo "========================================"
 echo "Runner Portability Tests"
 echo "========================================"
@@ -265,7 +268,11 @@ write_codepoint_fixture kana-exta       '\360\233\205\220'      # U+1B150 kana E
 write_codepoint_fixture counting-rod    '\360\235\215\240'      # U+1D360 counting rod numerals
 write_codepoint_fixture enclosed-supp   '\360\237\210\200'      # U+1F200 enclosed ideographic supplement
 write_codepoint_fixture circled-ideo    '\360\237\211\220'      # U+1F250 circled ideograph
-write_codepoint_fixture emoji           '\360\237\230\200'      # U+1F600 emoji
+write_codepoint_fixture emoji           '\360\237\230\200'      # U+1F600 emoticons
+write_codepoint_fixture emoji-mahjong   '\360\237\200\204'      # U+1F004 mahjong, lowest plane 1 emoji
+write_codepoint_fixture emoji-flag      '\360\237\207\246'      # U+1F1E6 regional indicator
+write_codepoint_fixture emoji-ext-a     '\360\237\253\240'      # U+1FAE0 melting face, Ext-A
+write_codepoint_fixture emoji-legacy    '\360\237\257\260'      # U+1FBF0 symbols for legacy computing
 write_codepoint_fixture han-extb        '\360\240\200\200'      # U+20000 Ext B
 write_codepoint_fixture han-compat-supp '\360\257\240\200'      # U+2F800 compatibility supplement
 write_codepoint_fixture han-extg        '\360\260\200\200'      # U+30000 Ext G
@@ -275,8 +282,8 @@ CJK_FIXTURES="symbol dingbat han-radical han-kangxi cjk-punct hiragana katakana 
 bopomofo cjk-stroke enclosed-cjk han-exta han hangul-jamo hangul-jamo-a hangul-syl \
 hangul-syl-b hangul-syl-c tone-letter han-compat vertical-form cjk-compat-form \
 sesame-dot fullwidth halfwidth-stop fullwidth-cent ideo-hook ideo-tone kana-extb \
-kana-supp kana-exta counting-rod enclosed-supp circled-ideo emoji han-extb \
-han-compat-supp han-extg han-exth"
+kana-supp kana-exta counting-rod enclosed-supp circled-ideo emoji emoji-mahjong \
+emoji-flag emoji-ext-a emoji-legacy han-extb han-compat-supp han-extg han-exth"
 
 # Must stay clean. The first three are the deliberate divergence from PCRE2
 # \p{Han}, which resolves to Script_Extensions and so includes characters whose
@@ -299,10 +306,17 @@ write_codepoint_fixture tangut-mark     '\360\226\277\240'      # U+16FE0 Tangut
 write_codepoint_fixture nushu-mark      '\360\226\277\241'      # U+16FE1 Nushu iteration mark
 write_codepoint_fixture khitan-filler   '\360\226\277\244'      # U+16FE4 Khitan small script filler
 write_codepoint_fixture plane4          '\361\200\200\200'      # U+40000 beyond planes 2-3
-write_codepoint_fixture ascii           'plain text'
+# These four are in \p{Emoji} but deliberately not flagged: they are emoji only in
+# combination with U+FE0F or U+20E3, and appear in ordinary English text.
+write_codepoint_fixture copyright       '\302\251'              # U+00A9  copyright sign
+write_codepoint_fixture registered      '\302\256'              # U+00AE  registered sign
+write_codepoint_fixture trademark       '\342\204\242'          # U+2122  trade mark sign
+write_codepoint_fixture emoji-arrow     '\342\206\224'          # U+2194  left right arrow
+write_codepoint_fixture ascii           'plain text with 0123456789 # and *'
 
 CLEAN_FIXTURES="middle-dot caron overline latin1 emdash cyrillic latin-ext-d \
-combining-half arabic-pf tangut-mark nushu-mark khitan-filler plane4 ascii"
+combining-half arabic-pf tangut-mark nushu-mark khitan-filler plane4 copyright \
+registered trademark emoji-arrow ascii"
 
 for name in $CJK_FIXTURES; do
     if portable_contains_cjk_or_emoji "$TEST_DIR/scan-$name.txt"; then
@@ -327,11 +341,57 @@ else
 fi
 
 # ========================================
+# Timeouts
+# ========================================
+
+echo ""
+echo "Section 5: Shell-native timeout"
+
+# scripts/portable-timeout.sh resolves gtimeout -> timeout -> python3 -> nothing.
+# On the macOS runner the first two are absent, so a Bash-only suite using it
+# would depend on Python, against ADR-0003. portable_run_with_timeout uses only
+# builtins.
+TIMEOUT_STATUS=0
+portable_run_with_timeout 5 "$SHELL_TRUE" || TIMEOUT_STATUS=$?
+if [[ "$TIMEOUT_STATUS" -eq 0 ]]; then
+    pass "portable_run_with_timeout passes through a successful status"
+else
+    fail "portable_run_with_timeout success" "0" "$TIMEOUT_STATUS"
+fi
+
+TIMEOUT_STATUS=0
+portable_run_with_timeout 5 bash -c 'exit 7' || TIMEOUT_STATUS=$?
+if [[ "$TIMEOUT_STATUS" -eq 7 ]]; then
+    pass "portable_run_with_timeout passes through a non-zero status"
+else
+    fail "portable_run_with_timeout non-zero status" "7" "$TIMEOUT_STATUS"
+fi
+
+# 124 is GNU timeout's convention, so a caller can tell a timeout from a failure.
+TIMEOUT_START=$(portable_epoch_ms)
+TIMEOUT_STATUS=0
+portable_run_with_timeout 1 sleep 30 || TIMEOUT_STATUS=$?
+TIMEOUT_ELAPSED=$(( $(portable_epoch_ms) - TIMEOUT_START ))
+if [[ "$TIMEOUT_STATUS" -eq 124 ]]; then
+    pass "portable_run_with_timeout reports 124 when the timeout fires"
+else
+    fail "portable_run_with_timeout timeout status" "124" "$TIMEOUT_STATUS"
+fi
+
+# It must actually kill the command rather than wait for it: 30s would blow the
+# budget of every suite in the runner.
+if [[ "$TIMEOUT_ELAPSED" -lt 15000 ]]; then
+    pass "portable_run_with_timeout kills the command (${TIMEOUT_ELAPSED}ms, not 30s)"
+else
+    fail "portable_run_with_timeout kills the command" "< 15000 ms" "${TIMEOUT_ELAPSED}ms"
+fi
+
+# ========================================
 # Temp directories
 # ========================================
 
 echo ""
-echo "Section 5: Temp directory resolution"
+echo "Section 6: Temp directory resolution"
 
 CANDIDATE_DIR=$(portable_mktemp_dir)
 RESOLVED_DIR=$(cd "$CANDIDATE_DIR" && pwd -P)
@@ -355,7 +415,7 @@ fi
 # ========================================
 
 echo ""
-echo "Section 6: SIGINT stays trappable in a suite"
+echo "Section 7: SIGINT stays trappable in a suite"
 
 # The child signals itself and checks synchronously: Bash runs a trap as soon as
 # the current command finishes, so there is no sleep to lose and no background
@@ -431,7 +491,7 @@ fi
 # ========================================
 
 echo ""
-echo "Section 7: Runner contract"
+echo "Section 8: Runner contract"
 
 if bash -n "$RUNNER" 2>/dev/null; then
     pass "run-all-tests.sh parses under the current bash"
@@ -536,7 +596,7 @@ fi
 # ========================================
 
 echo ""
-echo "Section 8: Bash layer independence from Python"
+echo "Section 9: Bash layer independence from Python"
 
 # A python3 that fails on every invocation, first on PATH. `command -v python3`
 # still succeeds, so a helper that probes for Python and then uses it is caught
@@ -570,6 +630,10 @@ HELPER_PROBE=$(PATH="$NO_PYTHON_BIN:$PATH" bash -c "
     else
         printf '|ascii-clean'
     fi
+    portable_run_with_timeout 5 bash -c 'exit 3'
+    printf '|timeout-status-%s' \"\$?\"
+    portable_run_with_timeout 1 sleep 30
+    printf '|timeout-fired-%s' \"\$?\"
 " 2>&1)
 
 if [[ "$HELPER_PROBE" == *"PYTHON3_WAS_INVOKED"* ]]; then
@@ -578,7 +642,7 @@ else
     pass "helpers never invoke python3"
 fi
 
-EXPECTED_PROBE="ddddddddddddd|2.5s|abc|3|haiku|han-flagged|ascii-clean"
+EXPECTED_PROBE="ddddddddddddd|2.5s|abc|3|haiku|han-flagged|ascii-clean|timeout-status-3|timeout-fired-124"
 if [[ "$HELPER_PROBE" == "$EXPECTED_PROBE" ]]; then
     pass "every helper still works with python3 unusable"
 else
@@ -605,7 +669,7 @@ fi
 # ========================================
 
 echo ""
-echo "Section 9: Static guards over tests/"
+echo "Section 10: Static guards over tests/"
 
 # Implemented in awk, not Python: this suite is the thing that must not quietly
 # acquire a Python dependency (ADR-0003).

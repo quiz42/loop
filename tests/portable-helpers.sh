@@ -229,6 +229,21 @@ portable_frontmatter_value() {
 #     listed below or in unassigned space inside them -- checked exhaustively,
 #     so there are no surprise matches anywhere in Unicode.
 #
+#   * Emoji: the whole of plane 1's pictographic space, U+1F000-U+1FFFF, is
+#     flagged. Every emoji outside the BMP lives there -- mahjong and playing
+#     cards, enclosed alphanumerics, regional indicators, Symbols and Pictographs
+#     Extended-A (U+1FAE0 MELTING FACE among them) and Symbols for Legacy
+#     Computing -- and nothing there is ordinary text, so the range is taken
+#     wholesale rather than block by block. That also makes it future-proof: new
+#     emoji blocks are assigned inside it.
+#
+#     `\p{Emoji}` additionally contains 26 BMP ranges that are emoji only in
+#     combination with U+FE0F or U+20E3: `#`, `*`, the ASCII digits 0-9, U+00A9
+#     COPYRIGHT SIGN, U+00AE REGISTERED SIGN, U+2122 TRADE MARK SIGN, the arrows
+#     at U+2194-2199, and various geometric shapes. Flagging those would fail on
+#     every English document, so the BMP coverage stays at the U+2600-U+27BF misc
+#     symbols and dingbats the original guard used.
+#
 #   * Deliberately narrower in one respect: PCRE2 10.43+ resolves `\p{Han}` to
 #     Script_Extensions, which pulls in ten characters whose own script is
 #     Common or Inherited -- U+00B7 MIDDLE DOT, U+02C7 CARON, U+02C9-02CB,
@@ -269,7 +284,7 @@ portable_contains_cjk_or_emoji() {
         '\0360\0233[\0200-\0204][\0200-\0277]'        # U+1B000-U+1B13F kana supplement, kana Ext-A
         '\0360\0233\0205[\0200-\0257]'                # U+1B140-U+1B16F kana Ext-A
         '\0360\0235\0215[\0240-\0277]'                # U+1D360-U+1D37F counting rod numerals
-        '\0360\0237[\0210-\0247][\0200-\0277]'        # U+1F200-U+1F9FF enclosed ideographic supplement, emoji
+        '\0360\0237[\0200-\0277][\0200-\0277]'        # U+1F000-U+1FFFF plane 1 pictographs: enclosed ideographic supplement, all emoji blocks
         '\0360[\0240-\0277][\0200-\0277][\0200-\0277]' # U+20000-U+3FFFF planes 2-3: Ext B through Ext H
     )
 
@@ -278,6 +293,58 @@ portable_contains_cjk_or_emoji() {
     pattern=$(printf '%b' "${joined%|}")
 
     LC_ALL=C grep -qE "$pattern" "$file"
+}
+
+# ========================================
+# Timeouts
+# ========================================
+
+# Run a command with a wall-clock timeout, using only shell builtins.
+#
+# GNU coreutils `timeout` is not on the macOS runner image and macOS has shipped
+# no system python3 since 12.3, so scripts/portable-timeout.sh -- whose chain is
+# gtimeout -> timeout -> python3 -> nothing -- either reaches for Python or gives
+# up. ADR-0003 keeps the Bash layer off Python, so tests use this instead.
+#
+# The wait loop runs in the caller rather than in a background watchdog on
+# purpose. A `( sleep N; kill ... ) &` watchdog inherits the caller's stdout, so
+# when the caller is a command substitution the subshell holds the pipe open and
+# `$(...)` blocks for the full timeout even after the command has finished. That
+# turned a 4-second suite into 112 seconds.
+#
+# Exit status: the command's own status, or 124 when the timeout fired, matching
+# GNU timeout so callers can tell the two apart.
+#
+# Usage: portable_run_with_timeout 30 bash script.sh arg
+portable_run_with_timeout() {
+    local seconds="${1:-0}"
+    shift
+
+    "$@" &
+    local command_pid=$!
+
+    # Poll in tenths of a second. Bash reaps background children as they exit, so
+    # kill -0 stops succeeding promptly rather than lingering on a zombie.
+    local deciseconds=$((seconds * 10))
+    local waited=0
+    local timed_out=0
+    while kill -0 "$command_pid" 2>/dev/null; do
+        if [ "$waited" -ge "$deciseconds" ]; then
+            timed_out=1
+            kill -TERM "$command_pid" 2>/dev/null
+            break
+        fi
+        sleep 0.1
+        waited=$((waited + 1))
+    done
+
+    local status=0
+    wait "$command_pid" 2>/dev/null || status=$?
+    if [ "$timed_out" -eq 1 ]; then
+        status=124
+    fi
+
+    return "$status"
 }
 
 # ========================================
