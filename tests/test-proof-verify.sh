@@ -310,6 +310,120 @@ else
     fail "commit metadata verification redaction" "no secret value in verifier report" "$commit_secret_report"
 fi
 
+REVIEWED_BEHIND_RUN="$TEST_DIR/reviewed-behind-run"
+cp -R "$PROJECT_ROOT/tests/fixtures/proof/runs/clean-complete" "$REVIEWED_BEHIND_RUN"
+python3 - "$REVIEWED_BEHIND_RUN/complete-state.md" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+text = re.sub(r"^head_commit: .*$", "head_commit: " + "f" * 40, text, flags=re.MULTILINE)
+path.write_text(text, encoding="utf-8")
+PY
+loop proof export --run "$REVIEWED_BEHIND_RUN" --profile local-v0 --out "$TEST_DIR/reviewed-behind" >/dev/null 2>&1
+reviewed_behind_setup_status=$?
+assert_exit "reviewed-behind Bundle exports for verification" 0 "$reviewed_behind_setup_status"
+cp -R "$TEST_DIR/reviewed-behind" "$TEST_DIR/reviewed-behind-warning-tamper"
+python3 - "$TEST_DIR/reviewed-behind-warning-tamper/proof.json" <<'PY'
+import hashlib
+import json
+import sys
+
+path = sys.argv[1]
+bundle = json.load(open(path, encoding="utf-8"))
+bundle["integrity"]["compile_warnings"] = [
+    warning
+    for warning in bundle["integrity"]["compile_warnings"]
+    if warning["reason"] != "reviewed-commit-behind-head"
+]
+payload = dict(bundle)
+payload.pop("proof_id", None)
+payload.pop("transport", None)
+bundle["proof_id"] = "sha256:" + hashlib.sha256(
+    json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+).hexdigest()
+with open(path, "w", encoding="utf-8") as output:
+    json.dump(bundle, output, ensure_ascii=False, sort_keys=True)
+PY
+reviewed_behind_report=$(loop proof verify "$TEST_DIR/reviewed-behind-warning-tamper" --json)
+reviewed_behind_status=$?
+assert_exit "reviewed-behind Bundle remains valid" 0 "$reviewed_behind_status"
+if python3 - "$reviewed_behind_report" <<'PY'
+import json
+import sys
+
+report = json.loads(sys.argv[1])
+assert report["status"] == "valid"
+assert any(
+    warning.get("reason") == "reviewed-commit-behind-head"
+    and warning.get("target") == "source.reviewed_commit"
+    for warning in report["warnings"]
+)
+PY
+then
+    pass "validator restores the reviewed-head badge warning"
+else
+    fail "reviewed-head badge warning" "valid report with reviewed-commit-behind-head warning" "$reviewed_behind_report"
+fi
+
+UNKNOWN_COMMITS_RUN="$TEST_DIR/unknown-commits-run"
+cp -R "$PROJECT_ROOT/tests/fixtures/proof/runs/clean-complete" "$UNKNOWN_COMMITS_RUN"
+python3 - "$UNKNOWN_COMMITS_RUN/complete-state.md" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+text = re.sub(r"^head_commit: .*\n", "", text, flags=re.MULTILINE)
+text = re.sub(r"^reviewed_commit: .*\n", "", text, flags=re.MULTILINE)
+path.write_text(text, encoding="utf-8")
+PY
+loop proof export --run "$UNKNOWN_COMMITS_RUN" --profile local-v0 --out "$TEST_DIR/unknown-commits" >/dev/null 2>&1
+unknown_commits_setup_status=$?
+assert_exit "unknown-commit Bundle exports for verification" 0 "$unknown_commits_setup_status"
+cp -R "$TEST_DIR/unknown-commits" "$TEST_DIR/unknown-commits-warning-tamper"
+python3 - "$TEST_DIR/unknown-commits-warning-tamper/proof.json" <<'PY'
+import hashlib
+import json
+import sys
+
+path = sys.argv[1]
+bundle = json.load(open(path, encoding="utf-8"))
+bundle["integrity"]["compile_warnings"] = [
+    warning
+    for warning in bundle["integrity"]["compile_warnings"]
+    if warning["reason"] not in {"head-commit-unknown", "reviewed-commit-unknown"}
+]
+payload = dict(bundle)
+payload.pop("proof_id", None)
+payload.pop("transport", None)
+bundle["proof_id"] = "sha256:" + hashlib.sha256(
+    json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+).hexdigest()
+with open(path, "w", encoding="utf-8") as output:
+    json.dump(bundle, output, ensure_ascii=False, sort_keys=True)
+PY
+unknown_commits_report=$(loop proof verify "$TEST_DIR/unknown-commits-warning-tamper" --json)
+unknown_commits_status=$?
+assert_exit "unknown commits remain incomplete" 2 "$unknown_commits_status"
+if python3 - "$unknown_commits_report" <<'PY'
+import json
+import sys
+
+report = json.loads(sys.argv[1])
+assert report["status"] == "incomplete"
+reasons = {warning.get("reason") for warning in report["warnings"]}
+assert {"head-commit-unknown", "reviewed-commit-unknown"} <= reasons
+PY
+then
+    pass "validator restores unknown-commit completeness warnings"
+else
+    fail "unknown commit warnings" "incomplete report with both unknown-commit warnings" "$unknown_commits_report"
+fi
+
 cp -R "$TEST_DIR/clean" "$TEST_DIR/display-only-tamper"
 printf '\n// noncanonical display-only change\n' >> "$TEST_DIR/display-only-tamper/proof-data.js"
 display_report=$(loop proof verify "$TEST_DIR/display-only-tamper" --json)
