@@ -215,13 +215,21 @@ portable_frontmatter_value() {
 # Python, so a Python scanner is not an option here.
 #
 # The byte patterns, built with printf octal escapes so this file itself stays
-# pure ASCII:
-#   \343-\351 x2 continuation  U+3000-U+9FFF  CJK punctuation through Unified
-#                                             Ideographs, including Ext A
-#   \357 \244-\253 x1          U+F900-U+FAFF  compatibility ideographs
-#   \360 \240-\257 x2          U+20000-...    Unified Ideographs Ext B and later
+# pure ASCII. Between them they cover every Han block that \p{Han} matches:
+#   \342 \272-\277 x1          U+2E80-U+2FFF    CJK radicals supplement,
+#                                                Kangxi radicals
+#   \343-\351 x2 continuation  U+3000-U+9FFF    CJK punctuation through
+#                                                Unified Ideographs, incl. Ext A
+#   \357 \244-\253 x1          U+F900-U+FAFF    compatibility ideographs
+#   \360 \240-\277 x2          U+20000-U+3FFFF  planes 2 and 3: Ext B through
+#                                                Ext I, compatibility
+#                                                supplement, Ext G and Ext H
 #   \360\237 \214-\247 x1      U+1F300-U+1F9FF  emoji
-#   \342 \230-\236 x1          U+2600-U+27BF  misc symbols and dingbats
+#   \342 \230-\236 x1          U+2600-U+27BF    misc symbols and dingbats
+#
+# The plane 2-3 range must stay \240-\277 rather than \240-\257: Ext G starts at
+# U+30000, which encodes as F0 B0 80 80, so stopping at \257 silently reported
+# those ideographs as clean.
 #
 # Usage: if portable_contains_cjk_or_emoji "$file"; then ...
 portable_contains_cjk_or_emoji() {
@@ -229,7 +237,7 @@ portable_contains_cjk_or_emoji() {
     [ -n "$file" ] && [ -f "$file" ] || return 1
 
     local pattern
-    pattern=$(printf '[\343-\351][\200-\277][\200-\277]|\357[\244-\253][\200-\277]|\360[\240-\257][\200-\277][\200-\277]|\360\237[\214-\247][\200-\277]|\342[\230-\236][\200-\277]')
+    pattern=$(printf '[\343-\351][\200-\277][\200-\277]|\357[\244-\253][\200-\277]|\360[\240-\277][\200-\277][\200-\277]|\360\237[\214-\247][\200-\277]|\342[\230-\236][\200-\277]|\342[\272-\277][\200-\277]')
 
     LC_ALL=C grep -qE "$pattern" "$file"
 }
@@ -250,15 +258,4 @@ portable_mktemp_dir() {
     local dir
     dir=$(mktemp -d) || return 1
     ( cd "$dir" && pwd -P )
-}
-
-# Print the fully resolved form of an existing directory path.
-# Usage: canonical=$(portable_resolve_dir "$dir")
-portable_resolve_dir() {
-    local dir="${1:-}"
-    if [ -d "$dir" ]; then
-        ( cd "$dir" && pwd -P )
-    else
-        printf '%s' "$dir"
-    fi
 }

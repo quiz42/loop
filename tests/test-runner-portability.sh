@@ -229,23 +229,33 @@ write_codepoint_fixture() {
     printf 'prefix %b suffix\n' "$2" > "$TEST_DIR/scan-$1.txt"
 }
 
-# Should be flagged: the ranges the original grep -P expression covered.
-write_codepoint_fixture han      '\344\270\255'          # U+4E2D CJK unified
-write_codepoint_fixture han-exta '\343\221\220'          # U+3450 Ext A
-write_codepoint_fixture han-compat '\357\244\200'        # U+F900 compatibility
-write_codepoint_fixture han-extb '\360\240\200\200'     # U+20000 Ext B
-write_codepoint_fixture emoji    '\360\237\230\200'     # U+1F600 grinning face
-write_codepoint_fixture symbol   '\342\230\200'          # U+2600 misc symbol
-write_codepoint_fixture dingbat  '\342\234\224'          # U+2714 dingbat
+# Should be flagged. One fixture per Han block that \p{Han} matches, so a byte
+# range that silently stops short of a later extension is caught: Ext G at
+# U+30000 encodes as F0 B0 80 80, and a plane 2-3 range ending at \257 reported
+# it clean.
+write_codepoint_fixture han        '\344\270\255'         # U+4E2D  Unified
+write_codepoint_fixture han-exta   '\343\221\220'         # U+3450  Ext A
+write_codepoint_fixture han-radical '\342\272\200'        # U+2E80  radicals supp.
+write_codepoint_fixture han-kangxi '\342\274\200'         # U+2F00  Kangxi radicals
+write_codepoint_fixture han-compat '\357\244\200'         # U+F900  compatibility
+write_codepoint_fixture han-extb   '\360\240\200\200'    # U+20000 Ext B
+write_codepoint_fixture han-compat-supp '\360\257\240\200' # U+2F800 compat supp.
+write_codepoint_fixture han-extg   '\360\260\200\200'    # U+30000 Ext G
+write_codepoint_fixture han-exth   '\360\262\216\257'    # U+323AF Ext H, last Han
+write_codepoint_fixture emoji      '\360\237\230\200'    # U+1F600 grinning face
+write_codepoint_fixture symbol     '\342\230\200'         # U+2600  misc symbol
+write_codepoint_fixture dingbat    '\342\234\224'         # U+2714  dingbat
 
 # Should not be flagged: non-ASCII but neither CJK nor emoji, so the scan must
 # not degenerate into "any byte above 0x7F".
 write_codepoint_fixture latin1   '\303\251'               # U+00E9 e with acute
 write_codepoint_fixture emdash   '\342\200\224'          # U+2014 em dash
 write_codepoint_fixture cyrillic '\320\226'               # U+0416 Zhe
+write_codepoint_fixture plane4   '\361\200\200\200'      # U+40000 beyond Han
 write_codepoint_fixture ascii    'plain text'
 
-for name in han han-exta han-compat han-extb emoji symbol dingbat; do
+for name in han han-exta han-radical han-kangxi han-compat han-extb \
+            han-compat-supp han-extg han-exth emoji symbol dingbat; do
     if portable_contains_cjk_or_emoji "$TEST_DIR/scan-$name.txt"; then
         pass "portable_contains_cjk_or_emoji flags $name"
     else
@@ -253,7 +263,7 @@ for name in han han-exta han-compat han-extb emoji symbol dingbat; do
     fi
 done
 
-for name in latin1 emdash cyrillic ascii; do
+for name in latin1 emdash cyrillic plane4 ascii; do
     if portable_contains_cjk_or_emoji "$TEST_DIR/scan-$name.txt"; then
         fail "portable_contains_cjk_or_emoji leaves $name alone" "not detected" "detected"
     else
