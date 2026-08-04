@@ -861,8 +861,11 @@ extract_round_number() {
     local filename_lower
     filename_lower=$(to_lower "$filename")
 
-    # Use sed for portable regex extraction (works in both bash and zsh)
-    echo "$filename_lower" | sed -n 's/.*round-\([0-9][0-9]*\)-\(summary\|prompt\|todos\|contract\)\.md$/\1/p'
+    # Use sed for portable regex extraction (works in both bash and zsh).
+    # -E is required: "\|" alternation inside a BRE group is a GNU extension
+    # that BSD sed (macOS) ignores, which made this return an empty round
+    # number there and left the round-scoped access guards failing open.
+    echo "$filename_lower" | sed -nE 's/.*round-([0-9]+)-(summary|prompt|todos|contract)\.md$/\1/p'
 }
 
 # Check if a file is in the allowlist for the active loop

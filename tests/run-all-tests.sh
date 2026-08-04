@@ -3,18 +3,97 @@
 # Run all test suites for the Loop plugin (parallel execution)
 #
 # Usage: ./tests/run-all-tests.sh
+#        LOOP_TEST_RUNNER_CHECK_ONLY=1 ./tests/run-all-tests.sh
+#            Resolve the interpreter, report which Bash would run the suites,
+#            and exit without running them. Used by CI logs and by
+#            tests/test-runner-portability.sh.
 #
 # Each test suite runs in its own isolated temp directory, so parallel
 # execution is safe with no shared state or resource contention.
 #
+# Requires Bash >= 4.0 (associative arrays). macOS ships Bash 3.2, so on macOS
+# install a newer Bash (`brew install bash`); CI provisions it explicitly. When
+# started under an older Bash this script re-execs into a newer one if the
+# machine has it and otherwise fails with exit 1 -- it must never degrade
+# silently, because a partial run that exits 0 reads as a green test run.
+#
 # Exit codes:
 #   0 - All tests passed
-#   1 - One or more tests failed
+#   1 - One or more tests failed, or the runner could not run at all
 #
 
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_PATH="$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
+
+# Minimum Bash major version this runner needs.
+LOOP_RUNNER_MIN_BASH_MAJOR=4
+
+print_bash_requirement() {
+    echo "tests/run-all-tests.sh requires Bash >= ${LOOP_RUNNER_MIN_BASH_MAJOR}.0;" \
+         "no tests were run."
+    echo ""
+    echo "macOS ships Bash 3.2. Install a current Bash and re-run:"
+    echo "  brew install bash"
+    echo "  \"\$(brew --prefix)/bin/bash\" tests/run-all-tests.sh"
+}
+
+# Re-exec into a Bash >= 4 if the current one is too old, or fail loudly.
+require_modern_bash() {
+    local major="${BASH_VERSINFO[0]:-0}"
+    if [[ "$major" -ge "$LOOP_RUNNER_MIN_BASH_MAJOR" ]]; then
+        return 0
+    fi
+
+    if [[ -n "${LOOP_TEST_RUNNER_REEXEC:-}" ]]; then
+        echo "Error: re-exec did not reach a newer Bash (still Bash ${BASH_VERSION:-unknown})." >&2
+        print_bash_requirement >&2
+        exit 1
+    fi
+
+    local candidates=()
+    if command -v brew >/dev/null 2>&1; then
+        local brew_prefix
+        brew_prefix="$(brew --prefix 2>/dev/null || echo "")"
+        [[ -n "$brew_prefix" ]] && candidates+=("$brew_prefix/bin/bash")
+    fi
+    candidates+=("/opt/homebrew/bin/bash" "/usr/local/bin/bash")
+    local path_bash
+    path_bash="$(command -v bash 2>/dev/null || echo "")"
+    [[ -n "$path_bash" ]] && candidates+=("$path_bash")
+
+    local candidate candidate_major
+    for candidate in "${candidates[@]}"; do
+        [[ -x "$candidate" ]] || continue
+        candidate_major="$("$candidate" -c 'echo "${BASH_VERSINFO[0]}"' 2>/dev/null || echo 0)"
+        [[ "$candidate_major" =~ ^[0-9]+$ ]] || continue
+        [[ "$candidate_major" -ge "$LOOP_RUNNER_MIN_BASH_MAJOR" ]] || continue
+
+        echo "Note: Bash ${BASH_VERSION:-unknown} is older than ${LOOP_RUNNER_MIN_BASH_MAJOR}.0;" \
+             "re-executing under $candidate."
+        export LOOP_TEST_RUNNER_REEXEC=1
+        exec "$candidate" "$SCRIPT_PATH" "$@"
+    done
+
+    {
+        echo "Error: this is Bash ${BASH_VERSION:-unknown} and no newer Bash was found."
+        print_bash_requirement
+    } >&2
+    exit 1
+}
+
+require_modern_bash "$@"
+
+# shellcheck source=tests/portable-helpers.sh
+source "$SCRIPT_DIR/portable-helpers.sh"
+
+if [[ -n "${LOOP_TEST_RUNNER_CHECK_ONLY:-}" ]]; then
+    echo "Interpreter: Bash ${BASH_VERSION} (${BASH:-unknown})"
+    echo "Millisecond timestamp source: ${LOOP_PORTABLE_MS_MODE}"
+    echo "Runner prerequisites satisfied; no suites were run (check-only mode)."
+    exit 0
+fi
 
 # Max parallel test jobs (throttle to avoid resource exhaustion in small CI runners).
 # Override with LOOP_TEST_JOBS=<N>.
@@ -99,6 +178,8 @@ TEST_SUITES=(
     "test-model-router.sh"
     # Skill monitor tests
     "test-skill-monitor.sh"
+    # Cross-platform portability of the runner and its shared helpers
+    "test-runner-portability.sh"
     # Proof contract vectors
     "test-proof-contract.sh"
     "test-proof-export.sh"
@@ -129,7 +210,24 @@ ZSH_TESTS=(
 
 # Temp directory for per-suite output files
 OUTPUT_DIR=$(mktemp -d)
-trap "rm -rf $OUTPUT_DIR" EXIT
+
+# Set to 1 only once the summary has been printed. Any earlier exit -- an
+# aborted loop, an arithmetic error, an unbound variable -- must surface as a
+# failure instead of the exit 0 an incomplete run used to produce.
+RUNNER_REPORTED=0
+
+runner_exit_trap() {
+    local status=$?
+    rm -rf "$OUTPUT_DIR"
+    if [[ "$RUNNER_REPORTED" -ne 1 ]]; then
+        echo "" >&2
+        echo "Error: run-all-tests.sh aborted before printing its summary (exit status $status)." >&2
+        echo "No test results were produced; reporting this as a failure." >&2
+        exit 1
+    fi
+    exit "$status"
+}
+trap runner_exit_trap EXIT
 
 # Provide a mock codex binary when the real one is not installed.
 # Tests only need codex to pass the `command -v codex` check in setup scripts;
@@ -155,14 +253,6 @@ needs_zsh() {
     return 1
 }
 
-# Format milliseconds as human-readable duration
-format_ms() {
-    local ms="$1"
-    local s=$((ms / 1000))
-    local frac=$(( (ms % 1000) / 100 ))  # tenths of a second
-    echo "${s}.${frac}s"
-}
-
 # Launch all test suites in parallel
 declare -A PIDS          # suite -> PID
 declare -A SKIPPED       # suite -> reason
@@ -186,17 +276,17 @@ for suite in "${TEST_SUITES[@]}"; do
             continue
         fi
         (
-            t_start=$(date +%s%3N)
+            t_start=$(portable_epoch_ms)
             zsh "$suite_path" >"$out_file" 2>&1
             echo $? >"$exit_file"
-            echo $(( $(date +%s%3N) - t_start )) >"$time_file"
+            echo $(( $(portable_epoch_ms) - t_start )) >"$time_file"
         ) &
     else
         (
-            t_start=$(date +%s%3N)
+            t_start=$(portable_epoch_ms)
             "$suite_path" >"$out_file" 2>&1
             echo $? >"$exit_file"
-            echo $(( $(date +%s%3N) - t_start )) >"$time_file"
+            echo $(( $(portable_epoch_ms) - t_start )) >"$time_file"
         ) &
     fi
     PIDS["$suite"]=$!
@@ -230,7 +320,6 @@ FAILED_SUITES=()
 SORT_FILE="$OUTPUT_DIR/sortable.txt"
 : > "$SORT_FILE"
 
-esc=$'\033'
 for suite in "${TEST_SUITES[@]}"; do
     [[ -n "${SKIPPED[$suite]+x}" ]] && continue
 
@@ -245,10 +334,14 @@ for suite in "${TEST_SUITES[@]}"; do
     exit_code=$(cat "$exit_file" 2>/dev/null || echo "1")
     output=$(cat "$out_file" 2>/dev/null || echo "")
     elapsed_ms=$(cat "$time_file" 2>/dev/null || echo "0")
-    elapsed_display=$(format_ms "$elapsed_ms")
+    # A suite killed before it wrote its timing file must not break printf '%d'.
+    case "$elapsed_ms" in
+        '' | *[!0-9]*) elapsed_ms=0 ;;
+    esac
+    elapsed_display=$(portable_format_ms "$elapsed_ms")
 
     # Strip ANSI escape codes and extract pass/fail counts
-    output_stripped=$(echo "$output" | sed "s/${esc}\\[[0-9;]*m//g")
+    output_stripped=$(printf '%s\n' "$output" | portable_strip_ansi)
     passed=$(echo "$output_stripped" | grep -oE 'Passed:[[:space:]]*[0-9]+' | grep -oE '[0-9]+$' | tail -1 || echo "0")
     failed=$(echo "$output_stripped" | grep -oE 'Failed:[[:space:]]*[0-9]+' | grep -oE '[0-9]+$' | tail -1 || echo "0")
 
@@ -286,6 +379,9 @@ echo "========================================"
 echo -e "Total Passed: ${GREEN}$TOTAL_PASSED${NC}"
 echo -e "Total Failed: ${RED}$TOTAL_FAILED${NC}"
 echo ""
+
+# The summary is on screen, so the exit status below is a real verdict.
+RUNNER_REPORTED=1
 
 if [[ ${#FAILED_SUITES[@]} -gt 0 ]]; then
     echo -e "${RED}Failed Test Suites:${NC}"

@@ -344,9 +344,15 @@ SERVER_LOG="$TEST_DIR/proof-open-server.log"
 ) >"$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 server_url=""
-for _ in $(seq 1 30); do
+# The server validates the whole Bundle, re-hashing every asset, before it
+# announces its port. A fixed 3s window is not enough on a loaded CI runner --
+# it left server_url empty and the four --server assertions below failed with an
+# empty log. Poll for up to 30s instead, returning as soon as the URL appears,
+# and give up early if the server process died.
+for _ in $(seq 1 300); do
     server_url=$(sed -nE 's/^Serving Proof Explorer at (http:\/\/127\.0\.0\.1:[0-9]+\/)$/\1/p' "$SERVER_LOG" | head -1)
     [[ -n "$server_url" ]] && break
+    kill -0 "$SERVER_PID" 2>/dev/null || break
     sleep 0.1
 done
 if [[ -n "$server_url" ]] && python3 - "$server_url" <<'PY'

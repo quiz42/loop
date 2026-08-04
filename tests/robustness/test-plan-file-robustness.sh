@@ -340,10 +340,10 @@ echo "Test 7: Large plan file (1MB+) accepted by production"
 SIZE=$(wc -c < "$TEST_DIR/large-plan.md")
 if [[ "$SIZE" -gt "1000000" ]]; then
     # Test production validation handles large files
-    START=$(date +%s%N)
+    START=$(portable_epoch_ms)
     if test_plan_validation "large-plan.md"; then
-        END=$(date +%s%N)
-        ELAPSED_MS=$(( (END - START) / 1000000 ))
+        END=$(portable_epoch_ms)
+        ELAPSED_MS=$(( END - START ))
         pass "Large file validated ($SIZE bytes, ${ELAPSED_MS}ms)"
     else
         fail "Large file validation" "accepted" "rejected"
@@ -399,7 +399,9 @@ echo "Test 10: Plan file with very long lines"
     echo "Another normal line."
 } > "$TEST_DIR/long-lines.md"
 
-LINE_COUNT=$(wc -l < "$TEST_DIR/long-lines.md")
+# portable_count_lines strips the leading spaces BSD wc pads its output with,
+# which the string comparison below would otherwise never match.
+LINE_COUNT=$(portable_count_lines "$TEST_DIR/long-lines.md")
 if [[ "$LINE_COUNT" == "5" ]]; then
     pass "Long lines handled correctly ($LINE_COUNT lines)"
 else

@@ -13,6 +13,9 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 COMMANDS_DIR="$PROJECT_ROOT/commands"
 AGENTS_DIR="$PROJECT_ROOT/agents"
 
+# shellcheck source=tests/portable-helpers.sh
+source "$SCRIPT_DIR/portable-helpers.sh"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -69,7 +72,7 @@ fi
 echo ""
 echo "PT-2: Command description validation"
 if [[ -f "$GEN_PLAN_CMD" ]]; then
-    DESC=$(sed -n '/^---$/,/^---$/{ /^description:/{ s/^description:[[:space:]]*//p; q; } }' "$GEN_PLAN_CMD")
+    DESC=$(portable_frontmatter_value "$GEN_PLAN_CMD" "description")
     if [[ -n "$DESC" ]]; then
         pass "gen-plan.md has description: ${DESC:0:50}..."
     else
@@ -252,7 +255,7 @@ fi
 echo ""
 echo "PT-6: Agent name validation"
 if [[ -f "$RELEVANCE_AGENT" ]]; then
-    NAME=$(sed -n '/^---$/,/^---$/{ /^name:/{ s/^name:[[:space:]]*//p; q; } }' "$RELEVANCE_AGENT")
+    NAME=$(portable_frontmatter_value "$RELEVANCE_AGENT" "name")
     if [[ "$NAME" == "draft-relevance-checker" ]]; then
         pass "draft-relevance-checker agent has correct name field"
     else
@@ -266,7 +269,7 @@ fi
 echo ""
 echo "PT-7: Agent model specification validation"
 if [[ -f "$RELEVANCE_AGENT" ]]; then
-    MODEL=$(sed -n '/^---$/,/^---$/{ /^model:/{ s/^model:[[:space:]]*//p; q; } }' "$RELEVANCE_AGENT")
+    MODEL=$(portable_frontmatter_value "$RELEVANCE_AGENT" "model")
     if [[ "$MODEL" == "haiku" ]]; then
         pass "draft-relevance-checker agent uses haiku model"
     else
@@ -521,7 +524,7 @@ fi
 
 # Verify agent has valid model
 if [[ -f "$RELEVANCE_AGENT" ]]; then
-    MODEL=$(sed -n '/^---$/,/^---$/{ /^model:/{ s/^model:[[:space:]]*//p; q; } }' "$RELEVANCE_AGENT")
+    MODEL=$(portable_frontmatter_value "$RELEVANCE_AGENT" "model")
     if [[ -n "$MODEL" ]]; then
         if validate_model_name "$MODEL"; then
             pass "NT-6c: draft-relevance-checker has valid model: $MODEL"
@@ -537,20 +540,28 @@ fi
 echo ""
 echo "Content validation: No Emoji or CJK characters"
 
+# portable_contains_cjk_or_emoji replaces `grep -Pq`, which has no PCRE support
+# in BSD grep: with stderr swallowed, this check used to report "English only"
+# on macOS no matter what the file contained.
+assert_no_cjk_or_emoji() {
+    local file="$1"
+    local label="$2"
+    local status=0
+
+    portable_contains_cjk_or_emoji "$file" || status=$?
+    case "$status" in
+        0) fail "$label: Contains Emoji or CJK characters" ;;
+        1) pass "$label: Content is English only" ;;
+        *) fail "$label: Emoji/CJK scan unavailable (needs python3 or GNU grep -P)" ;;
+    esac
+}
+
 if [[ -f "$GEN_PLAN_CMD" ]]; then
-    if grep -Pq '[\p{Han}]|[\x{1F300}-\x{1F9FF}]|[\x{2600}-\x{26FF}]|[\x{2700}-\x{27BF}]' "$GEN_PLAN_CMD" 2>/dev/null; then
-        fail "gen-plan.md: Contains Emoji or CJK characters"
-    else
-        pass "gen-plan.md: Content is English only"
-    fi
+    assert_no_cjk_or_emoji "$GEN_PLAN_CMD" "gen-plan.md"
 fi
 
 if [[ -f "$RELEVANCE_AGENT" ]]; then
-    if grep -Pq '[\p{Han}]|[\x{1F300}-\x{1F9FF}]|[\x{2600}-\x{26FF}]|[\x{2700}-\x{27BF}]' "$RELEVANCE_AGENT" 2>/dev/null; then
-        fail "draft-relevance-checker.md: Contains Emoji or CJK characters"
-    else
-        pass "draft-relevance-checker.md: Content is English only"
-    fi
+    assert_no_cjk_or_emoji "$RELEVANCE_AGENT" "draft-relevance-checker.md"
 fi
 
 # ========================================

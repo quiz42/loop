@@ -15,6 +15,8 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$PROJECT_ROOT/hooks/lib/loop-common.sh"
+# shellcheck source=tests/portable-helpers.sh
+source "$SCRIPT_DIR/portable-helpers.sh"
 
 # Test helpers
 GREEN='\033[0;32m'
@@ -26,9 +28,12 @@ TESTS_FAILED=0
 pass() { echo -e "${GREEN}PASS${NC}: $1"; TESTS_PASSED=$((TESTS_PASSED + 1)); }
 fail() { echo -e "${RED}FAIL${NC}: $1"; echo "  Expected: $2"; echo "  Got: $3"; TESTS_FAILED=$((TESTS_FAILED + 1)); }
 
-# Setup test environment
-TEST_DIR=$(mktemp -d)
-trap "rm -rf $TEST_DIR" EXIT
+# Setup test environment.
+# The path must be fully resolved: the validators canonicalize the paths they
+# inspect, and on macOS mktemp -d hands back the /var/folders symlink form, so
+# is_allowlisted_file()'s exact string compare would never match.
+TEST_DIR=$(portable_mktemp_dir)
+trap 'rm -rf "$TEST_DIR"' EXIT
 
 setup_test_loop() {
     cd "$TEST_DIR"

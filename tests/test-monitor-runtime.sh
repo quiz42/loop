@@ -14,6 +14,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# shellcheck source=tests/portable-helpers.sh
+source "$SCRIPT_DIR/portable-helpers.sh"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -372,7 +375,11 @@ fi
 TESTSCRIPT
 
 chmod +x test_sigint_bash.sh
-output=$(./test_sigint_bash.sh 2>&1)
+# Reset SIGINT to its default disposition before exec'ing the child. This suite
+# itself runs as an async subshell under run-all-tests.sh, where Bash sets
+# SIGINT to SIG_IGN; on macOS the child inherits that and cannot trap SIGINT at
+# all, so the assertion below would fail for a reason unrelated to the monitor.
+output=$(portable_run_with_default_sigint ./test_sigint_bash.sh 2>&1)
 
 if echo "$output" | grep -q "CLEANUP_BY_SIGINT"; then
     pass "SIGINT triggers _cleanup in bash"

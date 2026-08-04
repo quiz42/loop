@@ -71,10 +71,10 @@ for i in $(seq 1 15); do
 done
 touch "$TEST_DIR/rlcr/2026-01-15_10-00-00/state.md"
 
-START_TIME=$(date +%s%N)
+START_TIME=$(portable_epoch_ms)
 RESULT=$(find_active_loop "$TEST_DIR/rlcr")
-END_TIME=$(date +%s%N)
-ELAPSED_MS=$(( (END_TIME - START_TIME) / 1000000 ))
+END_TIME=$(portable_epoch_ms)
+ELAPSED_MS=$(( END_TIME - START_TIME ))
 
 if [[ "$RESULT" == "$TEST_DIR/rlcr/2026-01-15_10-00-00" ]]; then
     if [[ $ELAPSED_MS -lt 1000 ]]; then

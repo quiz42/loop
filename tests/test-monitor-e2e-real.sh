@@ -50,6 +50,33 @@ cleanup_test() {
 }
 trap cleanup_test EXIT
 
+# Wait until a backgrounded monitor has produced output, so the signal or
+# deletion that follows lands on a monitor that is actually up. A fixed sleep is
+# not enough when the full suite runs 8 suites in parallel: the monitor can
+# still be starting, and the test then measures a race instead of the behavior
+# it is asserting.
+#
+# Usage: wait_for_monitor_output "$output_file" "$pid" [max_seconds]
+wait_for_monitor_output() {
+    local output_file="$1"
+    local pid="$2"
+    local max_seconds="${3:-15}"
+    local waited=0
+
+    while [[ "$waited" -lt "$((max_seconds * 4))" ]]; do
+        if [[ -s "$output_file" ]]; then
+            # Give the monitor a moment to finish installing its signal traps.
+            sleep 0.5
+            return 0
+        fi
+        kill -0 "$pid" 2>/dev/null || return 1
+        sleep 0.25
+        waited=$((waited + 1))
+    done
+
+    return 1
+}
+
 # ========================================
 # Test 1: Real _loop_monitor_codex with directory deletion (bash)
 # ========================================
@@ -159,7 +186,7 @@ MONITOR_SCRIPT
     MONITOR_PID=$!
 
     # Wait for monitor to start (check for initial output)
-    sleep 2
+    wait_for_monitor_output "$OUTPUT_FILE" "$MONITOR_PID" || true
 
     # Delete the .loop/rlcr directory to trigger graceful stop
     rm -rf "$TEST_PROJECT/.loop/rlcr"
@@ -327,7 +354,7 @@ ZSH_MONITOR_SCRIPT
         MONITOR_PID_ZSH=$!
 
         # Wait for monitor to start
-        sleep 2
+        wait_for_monitor_output "$OUTPUT_FILE_ZSH" "$MONITOR_PID_ZSH" || true
 
         # Delete the directory
         rm -rf "$TEST_PROJECT_ZSH/.loop/rlcr"
@@ -479,7 +506,7 @@ SIGINT_SCRIPT_EOF
     MONITOR_PID_SIGINT=$!
 
     # Wait for monitor to start (check if process is running)
-    sleep 3
+    wait_for_monitor_output "$OUTPUT_FILE_SIGINT" "$MONITOR_PID_SIGINT" || true
 
     # Debug: show early output
     if [[ -f "$OUTPUT_FILE_SIGINT" ]]; then
@@ -644,7 +671,7 @@ ZSH_SIGINT_SCRIPT
         zsh "$TEST_PROJECT_ZSH_SIGINT/run_real_monitor_zsh_sigint.zsh" "$TEST_PROJECT_ZSH_SIGINT" "$PROJECT_ROOT" "$FAKE_HOME_ZSH_SIGINT" > "$OUTPUT_FILE_ZSH_SIGINT" 2>&1 &
         MONITOR_PID_ZSH_SIGINT=$!
 
-        sleep 2
+        wait_for_monitor_output "$OUTPUT_FILE_ZSH_SIGINT" "$MONITOR_PID_ZSH_SIGINT" || true
 
         if kill -0 $MONITOR_PID_ZSH_SIGINT 2>/dev/null; then
             # Send SIGINT
