@@ -13,10 +13,18 @@
 #   - `wc -l` pads its output with leading spaces on BSD, so its result cannot
 #     be compared as a string.
 #   - BSD sed rejects nested brace blocks such as
-#     `/^---$/,/^---$/{ /^key:/{ s/^key://p; q; } }`.
+#     `/^---$/,/^---$/{ /^key:/{ s/^key://p; q; } }`, and ignores the GNU BRE
+#     extensions \+, \? and \|, silently matching them as literals.
+#   - BSD grep has no `-P`, so a PCRE guard reports "clean" for any input.
 #   - macOS `mktemp -d` returns a path under /var/folders, a symlink to
 #     /private/var/folders. Code that canonicalizes paths sees the second form,
 #     so exact path comparisons fail unless the test canonicalizes too.
+#
+# Per ADR-0003 only the Proof layer may depend on Python: these helpers use shell
+# builtins and POSIX tooling exclusively, so every suite stays runnable on its
+# declared interpreter with no Python installed. Where that costs precision the
+# helper says so rather than reaching for python3 -- see
+# LOOP_PORTABLE_MS_RESOLUTION_MS. tests/test-runner-portability.sh enforces this.
 #
 # This file is sourced, never executed as a test suite, so it is deliberately
 # absent from TEST_SUITES in run-all-tests.sh.
@@ -34,28 +42,40 @@ LOOP_PORTABLE_HELPERS_LOADED=1
 # ========================================
 
 # Cached result of the millisecond-timestamp capability probe:
-# "date" (GNU date with %N), "python3", or "seconds" (whole seconds only).
+#   epochrealtime - Bash 5's $EPOCHREALTIME, microsecond resolution
+#   date          - GNU date's %N, millisecond resolution
+#   seconds       - whole seconds only (Bash < 5 plus BSD date)
+#
+# Read LOOP_PORTABLE_MS_RESOLUTION_MS for the resolution a caller can rely on.
 LOOP_PORTABLE_MS_MODE=""
+LOOP_PORTABLE_MS_RESOLUTION_MS=1
 
 _portable_detect_ms_mode() {
+    # Bash 5 exposes microsecond wall-clock time with no external command.
+    if [ -n "${EPOCHREALTIME:-}" ]; then
+        LOOP_PORTABLE_MS_MODE="epochrealtime"
+        LOOP_PORTABLE_MS_RESOLUTION_MS=1
+        return 0
+    fi
+
     local probe
     probe=$(date +%s%3N 2>/dev/null || echo "")
     case "$probe" in
         '' | *[!0-9]*)
-            # BSD date: emits "<epoch>3N". Fall through to the alternatives.
+            # BSD date: emits "<epoch>3N". Fall through to whole seconds.
             ;;
         *)
             LOOP_PORTABLE_MS_MODE="date"
+            LOOP_PORTABLE_MS_RESOLUTION_MS=1
             return 0
             ;;
     esac
 
-    if command -v python3 >/dev/null 2>&1; then
-        LOOP_PORTABLE_MS_MODE="python3"
-        return 0
-    fi
-
+    # Bash 3.2 on macOS. Whole seconds is the honest answer here: per ADR-0003
+    # the Bash layer must not depend on Python, and there is no portable
+    # sub-second clock in POSIX shell tooling.
     LOOP_PORTABLE_MS_MODE="seconds"
+    LOOP_PORTABLE_MS_RESOLUTION_MS=1000
 }
 
 # Probe once, at source time, so the cached mode is visible to the command
@@ -71,14 +91,26 @@ portable_epoch_ms() {
     fi
 
     case "$LOOP_PORTABLE_MS_MODE" in
+        epochrealtime)
+            # "<seconds>.<microseconds>", but the separator follows LC_NUMERIC
+            # (a comma in some locales), so split on any non-digit.
+            local stamp seconds fraction
+            stamp="$EPOCHREALTIME"
+            seconds="${stamp%%[!0-9]*}"
+            fraction="${stamp#*[!0-9]}"
+            if [ "$fraction" = "$stamp" ]; then
+                fraction="000"
+            fi
+            # Pad, then keep exactly milliseconds. 10# forces base 10 so a
+            # fraction like "070" is not read as octal.
+            fraction="${fraction}000"
+            echo "$(( seconds * 1000 + 10#${fraction:0:3} ))"
+            ;;
         date)
             date +%s%3N
             ;;
-        python3)
-            python3 -c 'import time; print(int(time.time() * 1000))'
-            ;;
         *)
-            # Last resort: whole-second resolution, still digits only.
+            # Whole-second resolution, still digits only.
             echo "$(( $(date +%s) * 1000 ))"
             ;;
     esac
@@ -173,86 +205,33 @@ portable_frontmatter_value() {
 # Report whether a file contains CJK ideographs or emoji, which the project
 # rules forbid in committed content.
 #
-# Exit status: 0 found, 1 not found, 2 could not scan (no usable engine).
-# Callers must treat 2 as a failure rather than as "clean" -- the naive
-# `grep -Pq` form silently reported "clean" on macOS, where BSD grep has no -P.
+# Exit status: 0 found, 1 not found (or no such file).
 #
-# Usage: portable_contains_cjk_or_emoji "$file" ; status=$?
+# The naive form for this is `grep -P '[\p{Han}]|[\x{1F300}-...]'`, but BSD grep
+# has no PCRE support, so on macOS that call failed and -- with stderr swallowed
+# -- reported "clean" for any input at all. Instead, match the UTF-8 encodings of
+# those ranges as raw bytes in the C locale, which is POSIX ERE and behaves the
+# same under GNU and BSD grep. Per ADR-0003 the Bash layer must not reach for
+# Python, so a Python scanner is not an option here.
+#
+# The byte patterns, built with printf octal escapes so this file itself stays
+# pure ASCII:
+#   \343-\351 x2 continuation  U+3000-U+9FFF  CJK punctuation through Unified
+#                                             Ideographs, including Ext A
+#   \357 \244-\253 x1          U+F900-U+FAFF  compatibility ideographs
+#   \360 \240-\257 x2          U+20000-...    Unified Ideographs Ext B and later
+#   \360\237 \214-\247 x1      U+1F300-U+1F9FF  emoji
+#   \342 \230-\236 x1          U+2600-U+27BF  misc symbols and dingbats
+#
+# Usage: if portable_contains_cjk_or_emoji "$file"; then ...
 portable_contains_cjk_or_emoji() {
     local file="${1:-}"
     [ -n "$file" ] && [ -f "$file" ] || return 1
 
-    if command -v python3 >/dev/null 2>&1; then
-        python3 - "$file" <<'PY'
-import sys
-import unicodedata
+    local pattern
+    pattern=$(printf '[\343-\351][\200-\277][\200-\277]|\357[\244-\253][\200-\277]|\360[\240-\257][\200-\277][\200-\277]|\360\237[\214-\247][\200-\277]|\342[\230-\236][\200-\277]')
 
-# Code points only, so this file itself stays free of CJK and emoji characters.
-# Mirrors the ranges the original grep -P expression used.
-EMOJI_RANGES = ((0x2600, 0x26FF), (0x2700, 0x27BF), (0x1F300, 0x1F9FF))
-LOWEST_FLAGGED = 0x2600
-CJK_BLOCK_START = 0x2E80
-
-
-def is_flagged(char):
-    point = ord(char)
-    for low, high in EMOJI_RANGES:
-        if low <= point <= high:
-            return True
-    if point >= CJK_BLOCK_START and unicodedata.name(char, "").startswith("CJK"):
-        return True
-    return False
-
-
-with open(sys.argv[1], encoding="utf-8", errors="replace") as handle:
-    for line in handle:
-        for char in line:
-            if ord(char) < LOWEST_FLAGGED:
-                continue
-            if is_flagged(char):
-                sys.exit(0)
-sys.exit(1)
-PY
-        return $?
-    fi
-
-    if echo "" | grep -Pq '' 2>/dev/null; then
-        # GNU grep with PCRE support.
-        if grep -Pq '[\p{Han}]|[\x{1F300}-\x{1F9FF}]|[\x{2600}-\x{26FF}]|[\x{2700}-\x{27BF}]' "$file" 2>/dev/null; then
-            return 0
-        fi
-        return 1
-    fi
-
-    return 2
-}
-
-# ========================================
-# Signals
-# ========================================
-
-# Run a command with SIGINT reset to its default disposition.
-#
-# Bash sets SIGINT to SIG_IGN for asynchronous commands when job control is off,
-# and a signal ignored on entry to a shell cannot be trapped. On macOS that
-# disposition is inherited across exec, so a script asserting that its own
-# SIGINT trap fires never receives the signal when it was started from a
-# background subshell -- which is exactly how run-all-tests.sh launches every
-# suite. Linux does not inherit it the same way, which is why such a test can
-# pass there and fail on macOS.
-#
-# Falls back to running the command unchanged when python3 is unavailable, so
-# the caller is never worse off than without this helper.
-#
-# Usage: output=$(portable_run_with_default_sigint ./child.sh 2>&1)
-portable_run_with_default_sigint() {
-    if command -v python3 >/dev/null 2>&1; then
-        python3 -c 'import os, signal, sys
-signal.signal(signal.SIGINT, signal.SIG_DFL)
-os.execvp(sys.argv[1], sys.argv[1:])' "$@"
-    else
-        "$@"
-    fi
+    LC_ALL=C grep -qE "$pattern" "$file"
 }
 
 # ========================================

@@ -546,14 +546,12 @@ echo "Content validation: No Emoji or CJK characters"
 assert_no_cjk_or_emoji() {
     local file="$1"
     local label="$2"
-    local status=0
 
-    portable_contains_cjk_or_emoji "$file" || status=$?
-    case "$status" in
-        0) fail "$label: Contains Emoji or CJK characters" ;;
-        1) pass "$label: Content is English only" ;;
-        *) fail "$label: Emoji/CJK scan unavailable (needs python3 or GNU grep -P)" ;;
-    esac
+    if portable_contains_cjk_or_emoji "$file"; then
+        fail "$label: Contains Emoji or CJK characters"
+    else
+        pass "$label: Content is English only"
+    fi
 }
 
 if [[ -f "$GEN_PLAN_CMD" ]]; then

@@ -253,6 +253,20 @@ needs_zsh() {
     return 1
 }
 
+# Enable job control before launching suites.
+#
+# With job control off, Bash sets SIGINT and SIGQUIT to SIG_IGN for asynchronous
+# commands. On macOS that disposition is inherited across exec, and a signal
+# ignored on entry to a shell cannot be trapped -- so a suite asserting that its
+# own SIGINT handler fires could never observe the signal. Linux does not inherit
+# it the same way, which is why such a suite passed there and failed here.
+#
+# With job control on, each suite runs in its own process group with the
+# dispositions this script was started with, so signal behavior matches across
+# platforms. Bash emits no job notifications for a non-interactive shell, so the
+# report below is unaffected.
+set -m
+
 # Launch all test suites in parallel
 declare -A PIDS          # suite -> PID
 declare -A SKIPPED       # suite -> reason

@@ -20,6 +20,12 @@
 # Static guards cover tests/ only. Equivalent defects in scripts/ and hooks/ are
 # tracked separately so that this suite stays green while they are fixed.
 #
+# ADR-0003 requires the Bash layer to stay independent of Python, which the Proof
+# layer alone may depend on. The helpers therefore use only shell builtins and
+# POSIX tooling, and the guards below assert that: a stub python3 that fails on
+# any invocation is put first on PATH, and the shared infrastructure files are
+# scanned for python3 references.
+#
 
 set -uo pipefail
 
@@ -61,7 +67,20 @@ else
     fail "portable_epoch_ms magnitude" ">= 13 digits" "$TS_ONE"
 fi
 
-sleep 0.2
+echo "  clock source: $LOOP_PORTABLE_MS_MODE (resolution ${LOOP_PORTABLE_MS_RESOLUTION_MS}ms)"
+
+# Sleep past the clock's resolution, whatever it is. Bash 3.2 with BSD date has
+# no sub-second source that does not pull in Python, so there the resolution is
+# a whole second and the assertion has to allow for it.
+if [[ "$LOOP_PORTABLE_MS_RESOLUTION_MS" -ge 1000 ]]; then
+    SLEEP_FOR=1.2
+    MIN_ELAPSED=1000
+else
+    SLEEP_FOR=0.2
+    MIN_ELAPSED=100
+fi
+
+sleep "$SLEEP_FOR"
 TS_TWO=$(portable_epoch_ms)
 if [[ "$TS_TWO" -ge "$TS_ONE" ]]; then
     pass "portable_epoch_ms is non-decreasing"
@@ -70,10 +89,11 @@ else
 fi
 
 ELAPSED=$((TS_TWO - TS_ONE))
-if [[ "$ELAPSED" -ge 100 ]] && [[ "$ELAPSED" -lt 10000 ]]; then
-    pass "portable_epoch_ms advances across a 0.2s sleep (${ELAPSED}ms)"
+if [[ "$ELAPSED" -ge "$MIN_ELAPSED" ]] && [[ "$ELAPSED" -lt 10000 ]]; then
+    pass "portable_epoch_ms advances across a ${SLEEP_FOR}s sleep (${ELAPSED}ms)"
 else
-    fail "portable_epoch_ms advances across a 0.2s sleep" "100..10000 ms" "${ELAPSED}ms"
+    fail "portable_epoch_ms advances across a ${SLEEP_FOR}s sleep" \
+        "${MIN_ELAPSED}..10000 ms" "${ELAPSED}ms"
 fi
 
 if [[ "$(portable_format_ms 1543)" == "1.5s" ]]; then
@@ -203,47 +223,48 @@ fi
 echo ""
 echo "Section 4: CJK and emoji detection"
 
-if command -v python3 >/dev/null 2>&1; then
-    CLEAN_FIXTURE="$TEST_DIR/clean.md"
-    printf 'Plain English content only.\n' > "$CLEAN_FIXTURE"
+# Fixtures are written with printf octal escapes so this file itself stays pure
+# ASCII, and so the check does not depend on Python being present to build them.
+write_codepoint_fixture() {
+    printf 'prefix %b suffix\n' "$2" > "$TEST_DIR/scan-$1.txt"
+}
 
-    CJK_FIXTURE="$TEST_DIR/cjk.md"
-    EMOJI_FIXTURE="$TEST_DIR/emoji.md"
-    python3 - "$CJK_FIXTURE" "$EMOJI_FIXTURE" <<'PY'
-import sys
+# Should be flagged: the ranges the original grep -P expression covered.
+write_codepoint_fixture han      '\344\270\255'          # U+4E2D CJK unified
+write_codepoint_fixture han-exta '\343\221\220'          # U+3450 Ext A
+write_codepoint_fixture han-compat '\357\244\200'        # U+F900 compatibility
+write_codepoint_fixture han-extb '\360\240\200\200'     # U+20000 Ext B
+write_codepoint_fixture emoji    '\360\237\230\200'     # U+1F600 grinning face
+write_codepoint_fixture symbol   '\342\230\200'          # U+2600 misc symbol
+write_codepoint_fixture dingbat  '\342\234\224'          # U+2714 dingbat
 
-with open(sys.argv[1], "w", encoding="utf-8") as handle:
-    handle.write("prefix " + chr(0x4E2D) + chr(0x6587) + " suffix\n")
+# Should not be flagged: non-ASCII but neither CJK nor emoji, so the scan must
+# not degenerate into "any byte above 0x7F".
+write_codepoint_fixture latin1   '\303\251'               # U+00E9 e with acute
+write_codepoint_fixture emdash   '\342\200\224'          # U+2014 em dash
+write_codepoint_fixture cyrillic '\320\226'               # U+0416 Zhe
+write_codepoint_fixture ascii    'plain text'
 
-with open(sys.argv[2], "w", encoding="utf-8") as handle:
-    handle.write("prefix " + chr(0x1F600) + " suffix\n")
-PY
-
-    SCAN_STATUS=0
-    portable_contains_cjk_or_emoji "$CLEAN_FIXTURE" || SCAN_STATUS=$?
-    if [[ "$SCAN_STATUS" -eq 1 ]]; then
-        pass "portable_contains_cjk_or_emoji reports clean English content"
+for name in han han-exta han-compat han-extb emoji symbol dingbat; do
+    if portable_contains_cjk_or_emoji "$TEST_DIR/scan-$name.txt"; then
+        pass "portable_contains_cjk_or_emoji flags $name"
     else
-        fail "portable_contains_cjk_or_emoji clean" "status 1" "status $SCAN_STATUS"
+        fail "portable_contains_cjk_or_emoji flags $name" "detected" "not detected"
     fi
+done
 
-    SCAN_STATUS=0
-    portable_contains_cjk_or_emoji "$CJK_FIXTURE" || SCAN_STATUS=$?
-    if [[ "$SCAN_STATUS" -eq 0 ]]; then
-        pass "portable_contains_cjk_or_emoji detects CJK ideographs"
+for name in latin1 emdash cyrillic ascii; do
+    if portable_contains_cjk_or_emoji "$TEST_DIR/scan-$name.txt"; then
+        fail "portable_contains_cjk_or_emoji leaves $name alone" "not detected" "detected"
     else
-        fail "portable_contains_cjk_or_emoji CJK" "status 0" "status $SCAN_STATUS"
+        pass "portable_contains_cjk_or_emoji leaves $name alone"
     fi
+done
 
-    SCAN_STATUS=0
-    portable_contains_cjk_or_emoji "$EMOJI_FIXTURE" || SCAN_STATUS=$?
-    if [[ "$SCAN_STATUS" -eq 0 ]]; then
-        pass "portable_contains_cjk_or_emoji detects emoji"
-    else
-        fail "portable_contains_cjk_or_emoji emoji" "status 0" "status $SCAN_STATUS"
-    fi
+if portable_contains_cjk_or_emoji "$TEST_DIR/does-not-exist.txt"; then
+    fail "portable_contains_cjk_or_emoji missing file" "not detected" "detected"
 else
-    skip "portable_contains_cjk_or_emoji behavior" "python3 not available"
+    pass "portable_contains_cjk_or_emoji tolerates a missing file"
 fi
 
 # ========================================
@@ -275,7 +296,7 @@ fi
 # ========================================
 
 echo ""
-echo "Section 6: SIGINT disposition"
+echo "Section 6: SIGINT stays trappable in a suite"
 
 SIGINT_CHILD="$TEST_DIR/sigint-child.sh"
 cat > "$SIGINT_CHILD" <<'CHILD'
@@ -295,16 +316,26 @@ wait "$helper" 2>/dev/null || true
 CHILD
 chmod +x "$SIGINT_CHILD"
 
-# Run inside an async subshell, which is how run-all-tests.sh launches suites:
-# Bash sets SIGINT to SIG_IGN there, and on macOS the child inherits it.
+# With job control off, Bash sets SIGINT to SIG_IGN for asynchronous commands,
+# macOS passes that ignore on across exec, and a signal ignored on entry can
+# never be trapped -- so a suite asserting its own SIGINT handler could not
+# observe the signal. run-all-tests.sh enables job control to avoid that; this
+# reproduces the runner's launch model and checks the child still sees SIGINT.
 SIGINT_OUT="$TEST_DIR/sigint-out.txt"
-( portable_run_with_default_sigint "$SIGINT_CHILD" > "$SIGINT_OUT" 2>&1 ) &
-wait
+bash -c 'set -m; ( "$1" > "$2" 2>&1 ) & wait' _ "$SIGINT_CHILD" "$SIGINT_OUT"
 
 if grep -q "TRAP_FIRED" "$SIGINT_OUT"; then
-    pass "portable_run_with_default_sigint lets a child trap SIGINT from an async subshell"
+    pass "a suite launched with job control can trap SIGINT"
 else
-    fail "portable_run_with_default_sigint" "TRAP_FIRED in output" "$(cat "$SIGINT_OUT")"
+    fail "SIGINT trappable under job control" "TRAP_FIRED in output" "$(cat "$SIGINT_OUT")"
+fi
+
+# The behavior above only holds because the runner turns job control on, and the
+# test would still pass if that were removed, so assert the runner does it.
+if awk '/^set -m$/ { found = 1 } /^for suite in "\$\{TEST_SUITES\[@\]\}"; do$/ { exit found ? 0 : 1 }' "$RUNNER"; then
+    pass "run-all-tests.sh enables job control before launching suites"
+else
+    fail "run-all-tests.sh job control" "set -m before the suite launch loop" "not found"
 fi
 
 # ========================================
@@ -413,83 +444,135 @@ else
 fi
 
 # ========================================
+# Independence from Python (ADR-0003)
+# ========================================
+
+echo ""
+echo "Section 8: Bash layer independence from Python"
+
+# A python3 that fails on every invocation, first on PATH. `command -v python3`
+# still succeeds, so a helper that probes for Python and then uses it is caught
+# here rather than silently working on machines that happen to have it.
+NO_PYTHON_BIN="$TEST_DIR/no-python-bin"
+mkdir -p "$NO_PYTHON_BIN"
+cat > "$NO_PYTHON_BIN/python3" <<'STUB'
+#!/bin/sh
+echo "PYTHON3_WAS_INVOKED" >&2
+exit 127
+STUB
+chmod +x "$NO_PYTHON_BIN/python3"
+
+HELPER_PROBE=$(PATH="$NO_PYTHON_BIN:$PATH" bash -c "
+    set -uo pipefail
+    source '$SCRIPT_DIR/portable-helpers.sh'
+    stamp=\$(portable_epoch_ms)
+    printf '%s|%s|%s|%s|%s' \
+        \"\${stamp//[0-9]/d}\" \
+        \"\$(portable_format_ms 2500)\" \
+        \"\$(portable_to_lower ABC)\" \
+        \"\$(portable_count_lines '$TEST_DIR/three-lines.txt')\" \
+        \"\$(portable_frontmatter_value '$FM_FIXTURE' model)\"
+    if portable_contains_cjk_or_emoji '$TEST_DIR/scan-han.txt'; then
+        printf '|han-flagged'
+    else
+        printf '|han-MISSED'
+    fi
+    if portable_contains_cjk_or_emoji '$TEST_DIR/scan-ascii.txt'; then
+        printf '|ascii-MISFLAGGED'
+    else
+        printf '|ascii-clean'
+    fi
+" 2>&1)
+
+if [[ "$HELPER_PROBE" == *"PYTHON3_WAS_INVOKED"* ]]; then
+    fail "helpers avoid python3" "no python3 invocation" "$HELPER_PROBE"
+else
+    pass "helpers never invoke python3"
+fi
+
+EXPECTED_PROBE="ddddddddddddd|2.5s|abc|3|haiku|han-flagged|ascii-clean"
+if [[ "$HELPER_PROBE" == "$EXPECTED_PROBE" ]]; then
+    pass "every helper still works with python3 unusable"
+else
+    fail "helpers work without python3" "$EXPECTED_PROBE" "$HELPER_PROBE"
+fi
+
+# The shared test infrastructure must not name python3 at all. Individual suites
+# may (the Proof suites legitimately do); this covers only the files every suite
+# inherits.
+PYTHON_REFS=""
+for infra in portable-helpers.sh test-helpers.sh run-all-tests.sh; do
+    if grep -n 'python3' "$SCRIPT_DIR/$infra" | grep -vE '^[0-9]+:[[:space:]]*#' | grep -q .; then
+        PYTHON_REFS="${PYTHON_REFS}${infra} "
+    fi
+done
+if [[ -z "$PYTHON_REFS" ]]; then
+    pass "shared test infrastructure contains no python3 calls"
+else
+    fail "shared test infrastructure is Python-free" "no python3 references" "$PYTHON_REFS"
+fi
+
+# ========================================
 # Static guards
 # ========================================
 
 echo ""
-echo "Section 8: Static guards over tests/"
+echo "Section 9: Static guards over tests/"
 
-if command -v python3 >/dev/null 2>&1; then
-    GUARD_OUT="$TEST_DIR/guard-findings.txt"
-    GUARD_STATUS=0
-    python3 - "$SCRIPT_DIR" > "$GUARD_OUT" 2>&1 <<'PY' || GUARD_STATUS=$?
-import pathlib
-import re
-import sys
+# Implemented in awk, not Python: this suite is the thing that must not quietly
+# acquire a Python dependency (ADR-0003).
+#
+# portable-helpers.sh and this file are exempt because they are where the
+# portable replacements and these rules live, so they necessarily name the
+# non-portable forms in comments, patterns and assertion messages.
+GUARD_OUT="$TEST_DIR/guard-findings.txt"
+find "$SCRIPT_DIR" -name '*.sh' -type f -print0 2>/dev/null \
+    | xargs -0 awk '
+    # Plain `next` rather than the gawk extension `nextfile`, which mawk on
+    # Ubuntu and the BSD awk on macOS do not both provide.
+    FILENAME ~ /(portable-helpers|test-runner-portability)\.sh$/ { next }
 
-root = pathlib.Path(sys.argv[1])
-# These two files are where the portable replacements and these rules live, so
-# they are the ones allowed to name the non-portable forms in comments, fallback
-# branches and assertion messages.
-exempt = {"portable-helpers.sh", "test-runner-portability.sh"}
+    # Skip comment lines: naming a construct in prose is not using it.
+    /^[[:space:]]*#/ { next }
 
-rules = (
-    (
-        "nested-sed",
-        # The outer brace must open an address block ("{ /^key:/{ ... }") so that
-        # "{{PLACEHOLDER}}" text handled by sed does not read as a nested block.
-        re.compile(r"(?<![\w])sed\b[^|#]*\{\s*/[^{}]*\{"),
-        "nested brace block in a sed script; BSD sed rejects it",
-    ),
-    (
-        "gnu-sed-bre",
-        re.compile(r"(?<![\w])sed\b[^|#]*\\[+?|]"),
-        r"GNU-only BRE escape (\+, \? or \|) in a sed script; BSD sed treats it literally",
-    ),
-    (
-        "raw-epoch-ns",
-        re.compile(r"date\s+\+%s%\d*N"),
-        "raw date +%s%N; BSD date has no %N. Use portable_epoch_ms",
-    ),
-    (
-        "bash4-case",
-        re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*(,,|\^\^)\}"),
-        "Bash 4 case-conversion expansion; use portable_to_lower",
-    ),
-    (
-        "grep-pcre",
-        # A real option bundle, so that prose mentioning "grep -P)" or
-        # "grep -P;" in a message string is not flagged.
-        re.compile(r"(?<![\w])grep\s+(?:-[A-Za-z]+\s+)*-[A-Za-z]*P[A-Za-z]*\s"),
-        "grep -P; BSD grep has no PCRE support",
-    ),
-)
+    # BSD sed rejects a nested brace block. The outer brace must open an address
+    # block ("{ /^key:/{ ... }") so that sed handling "{{PLACEHOLDER}}" text is
+    # not mistaken for one.
+    /(^|[^[:alnum:]_])sed[^|#]*\{[[:space:]]*\/[^{}]*\{/ {
+        report("nested-sed", "nested brace block in a sed script; BSD sed rejects it")
+    }
 
-findings = []
-for path in sorted(root.rglob("*.sh")):
-    if path.name in exempt:
-        continue
-    for number, line in enumerate(path.read_text(errors="replace").splitlines(), 1):
-        if line.lstrip().startswith("#"):
-            continue
-        for name, pattern, message in rules:
-            if pattern.search(line):
-                relative = path.relative_to(root.parent)
-                findings.append("%s:%d: %s: %s" % (relative, number, name, message))
+    # \+, \? and \| inside a BRE are GNU extensions; BSD sed treats them
+    # literally and silently produces wrong output.
+    /(^|[^[:alnum:]_])sed[^|#]*\\[+?|]/ {
+        report("gnu-sed-bre", "GNU-only BRE escape in a sed script; BSD sed takes it literally")
+    }
 
-for finding in findings:
-    print(finding)
+    # BSD date has no %N.
+    /date[[:space:]]+\+%s%[0-9]*N/ {
+        report("raw-epoch-ns", "raw date +%s%N; use portable_epoch_ms")
+    }
 
-sys.exit(1 if findings else 0)
-PY
+    # ${var,,} and ${var^^} need Bash 4.
+    /\$\{[A-Za-z_][A-Za-z0-9_]*(,,|\^\^)\}/ {
+        report("bash4-case", "Bash 4 case-conversion expansion; use portable_to_lower")
+    }
 
-    if [[ "$GUARD_STATUS" -eq 0 ]]; then
-        pass "no non-portable shell constructs in tests/"
-    else
-        fail "non-portable shell constructs in tests/" "no findings" "$(cat "$GUARD_OUT")"
-    fi
+    # BSD grep has no PCRE. Require a real option bundle so that prose
+    # mentioning "grep -P)" in a message is not flagged.
+    /(^|[^[:alnum:]_])grep[[:space:]]+(-[A-Za-z]+[[:space:]]+)*-[A-Za-z]*P[A-Za-z]*[[:space:]]/ {
+        report("grep-pcre", "grep -P; BSD grep has no PCRE support")
+    }
+
+    function report(rule, message) {
+        printf "%s:%d: %s: %s\n", FILENAME, FNR, rule, message
+    }
+' > "$GUARD_OUT" 2>&1
+
+if [[ ! -s "$GUARD_OUT" ]]; then
+    pass "no non-portable shell constructs in tests/"
 else
-    skip "static portability guards" "python3 not available"
+    fail "non-portable shell constructs in tests/" "no findings" "$(cat "$GUARD_OUT")"
 fi
 
 print_test_summary "Runner Portability Test Summary"

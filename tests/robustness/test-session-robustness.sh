@@ -76,11 +76,16 @@ RESULT=$(find_active_loop "$TEST_DIR/rlcr")
 END_TIME=$(portable_epoch_ms)
 ELAPSED_MS=$(( END_TIME - START_TIME ))
 
+# Allow for the clock's resolution: under Bash 3.2 with BSD date the only
+# Python-free clock available is whole seconds, so an instant operation reads as
+# either 0ms or 1000ms depending on whether it straddles a second boundary.
+ELAPSED_BUDGET_MS=$(( 1000 + LOOP_PORTABLE_MS_RESOLUTION_MS ))
+
 if [[ "$RESULT" == "$TEST_DIR/rlcr/2026-01-15_10-00-00" ]]; then
-    if [[ $ELAPSED_MS -lt 1000 ]]; then
+    if [[ $ELAPSED_MS -lt $ELAPSED_BUDGET_MS ]]; then
         pass "Handles 15 sessions efficiently (${ELAPSED_MS}ms)"
     else
-        fail "Performance with many sessions" "<1000ms" "${ELAPSED_MS}ms"
+        fail "Performance with many sessions" "<${ELAPSED_BUDGET_MS}ms" "${ELAPSED_MS}ms"
     fi
 else
     fail "Many sessions detection" "$TEST_DIR/rlcr/2026-01-15_10-00-00" "$RESULT"
