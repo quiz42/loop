@@ -320,23 +320,39 @@ portable_contains_cjk_or_emoji() {
 # gtimeout -> timeout -> python3 -> nothing -- either reaches for Python or gives
 # up. ADR-0003 keeps the Bash layer off Python, so tests use this instead.
 #
-# The limit is enforced, not merely requested. Two things are easy to get wrong:
+# The limit is enforced, not merely requested, and enforcement needs two things:
 #
-#   * Sending TERM and then waiting is unbounded, because TERM can be trapped or
-#     ignored. After a short grace period the command is sent KILL, which cannot
-#     be. Worst case is therefore the limit plus LOOP_PORTABLE_KILL_GRACE_MS.
+#   * KILL after a grace period. TERM alone is unbounded because it can be
+#     trapped or ignored, so the worst case would be the command's own lifetime
+#     rather than the limit. Worst case is now the limit plus
+#     LOOP_PORTABLE_KILL_GRACE_MS.
 #
-#   * The command's output goes to temp files rather than straight to the caller,
-#     and is replayed once the command is done. A surviving descendant -- the
-#     `sleep` left behind by `sleep 30 & wait`, say -- would otherwise inherit the
-#     caller's stdout and hold a command substitution open long after the command
-#     itself was killed, so `$(portable_run_with_timeout ...)` would block for as
-#     long as that descendant lived. The trade-off is that output is not streamed
-#     live; every caller here captures it anyway.
+#   * Signalling the process group, not the direct child. `set -m` makes the
+#     command lead its own group, so `kill -- -PID` reaches every descendant,
+#     including any spawned after expiry was noticed. Signalling only the child
+#     and a snapshot of its children leaked grandchildren: the innermost `sleep`
+#     of a bash -> bash -> sleep tree survived, kept running, and could pollute
+#     later tests. This is what GNU timeout does by default -- its --foreground
+#     option is the opt-out, documented as the mode where "children of COMMAND
+#     will not be timed out".
 #
-# The wait loop runs in the caller rather than in a background watchdog for the
-# same reason: a `( sleep N; kill ... ) &` watchdog also inherits the caller's
-# stdout, which once turned a 4-second suite into 112 seconds.
+# stdin, stdout and stderr all stay wired to the caller's, which matters in three
+# ways. Output is not buffered, so a caller combining the streams with 2>&1 sees
+# them interleaved in the real order. stdin is preserved, so the helper is a
+# transparent stand-in for `timeout` rather than one that silently feeds the
+# command /dev/null. And nothing of ours holds the caller's pipe, so a command
+# substitution closes as soon as the tree is gone -- which is only safe because
+# the group kill above is thorough. An earlier version buffered to temp files to
+# work around a leaked descendant holding that pipe; fixing the leak properly made
+# the buffering, and both of its side effects, unnecessary.
+#
+# The wait loop runs in the caller rather than in a background watchdog: a
+# `( sleep N; kill ... ) &` watchdog inherits the caller's stdout too, which once
+# turned a 4-second suite into 112 seconds.
+#
+# Caveat, shared with GNU timeout: because the command runs in a background
+# process group, a command that reads from a terminal gets SIGTTIN rather than the
+# terminal. Callers here always redirect or pipe stdin, so this does not arise.
 #
 # Exit status: the command's own status, or 124 when the timeout fired, matching
 # GNU timeout so callers can tell the two apart.
@@ -348,19 +364,16 @@ portable_run_with_timeout() {
     local seconds="${1:-0}"
     shift
 
-    local out_file err_file state_file
-    out_file=$(mktemp) || return 1
-    err_file=$(mktemp) || { rm -f "$out_file"; return 1; }
-    state_file=$(mktemp) || { rm -f "$out_file" "$err_file"; return 1; }
-
-    # Run the whole thing in a subshell whose own stderr is discarded. Bash reports
-    # a signal-killed job as "Terminated: 15" on the stderr of the shell that owns
-    # it, which would otherwise land in the caller's output on every timeout. The
-    # command's own stderr is captured to err_file, so nothing real is lost.
+    # A subshell keeps `set -m` and the fd juggling local. Its own stderr goes to
+    # /dev/null because Bash writes a "Terminated: 15" job notice there when it
+    # reaps a signalled job, which would otherwise land in the caller's captured
+    # output on every timeout; the command keeps the caller's real stderr on fd 3.
     (
+        exec 3>&2
         exec 2>/dev/null
+        set -m
 
-        "$@" >"$out_file" 2>"$err_file" &
+        "$@" <&0 2>&3 &
         command_pid=$!
 
         # Poll in tenths of a second. Bash reaps background children as they exit,
@@ -378,7 +391,7 @@ portable_run_with_timeout() {
         done
 
         if [ "$timed_out" -eq 1 ]; then
-            _portable_terminate_tree "$command_pid"
+            _portable_terminate_group "$command_pid"
         fi
 
         status=0
@@ -386,50 +399,31 @@ portable_run_with_timeout() {
         if [ "$timed_out" -eq 1 ]; then
             status=124
         fi
-        printf '%s\n' "$status" > "$state_file"
+        exit "$status"
     )
-
-    local status
-    status=$(cat "$state_file" 2>/dev/null)
-    case "$status" in
-        '' | *[!0-9]*) status=1 ;;
-    esac
-
-    cat "$out_file"
-    cat "$err_file" >&2
-    rm -f "$out_file" "$err_file" "$state_file"
-
-    return "$status"
 }
 
-# TERM a process and its direct children, then KILL whatever is still alive after
-# the grace period. Used by portable_run_with_timeout to bound expiry.
-_portable_terminate_tree() {
+# TERM a command's process group, then KILL whatever survived the grace period.
+#
+# The negative PID is the whole point: with job control on the command leads its
+# own group, so one signal reaches the entire tree. The group outlives its leader
+# as long as any member remains, so the KILL still lands on stragglers. Falls back
+# to signalling the single PID when the group signal is refused, which happens if
+# job control was unavailable and no separate group was ever created.
+_portable_terminate_group() {
     local target="$1"
-    local children=""
 
-    # Collect children before the parent dies and reparents them.
-    if command -v pgrep >/dev/null 2>&1; then
-        children=$(pgrep -P "$target" 2>/dev/null || true)
-    fi
-
-    local pid
-    kill -TERM "$target" 2>/dev/null
-    for pid in $children; do
-        kill -TERM "$pid" 2>/dev/null
-    done
+    kill -TERM -"$target" 2>/dev/null || kill -TERM "$target" 2>/dev/null
 
     local grace=$((LOOP_PORTABLE_KILL_GRACE_MS / 100))
+    [ "$grace" -lt 1 ] && grace=1
     local waited=0
     while kill -0 "$target" 2>/dev/null && [ "$waited" -lt "$grace" ]; do
         sleep 0.1
         waited=$((waited + 1))
     done
 
-    kill -KILL "$target" 2>/dev/null
-    for pid in $children; do
-        kill -KILL "$pid" 2>/dev/null
-    done
+    kill -KILL -"$target" 2>/dev/null || kill -KILL "$target" 2>/dev/null
 }
 
 # ========================================

@@ -435,6 +435,63 @@ else
         "stdout=to-stdout stderr=to-stderr" "stdout=$TIMEOUT_OUT stderr=$TIMEOUT_ERR"
 fi
 
+# A nested tree, so the case is a grandchild rather than a direct child. The
+# trailing ":" matters: without it Bash exec-optimises the single command away and
+# the tree collapses to one level, which is how an earlier version of this test
+# passed against an implementation that only signalled direct children.
+#
+# The process group is what makes this work. Signalling the child plus a snapshot
+# of its children left the innermost sleep running.
+TIMEOUT_PIDFILE="$TEST_DIR/nested-worker.pid"
+rm -f "$TIMEOUT_PIDFILE"
+TIMEOUT_START=$(portable_epoch_ms)
+TIMEOUT_STATUS=0
+portable_run_with_timeout 1 bash -c \
+    "bash -c 'sleep 30 & echo \$! > $TIMEOUT_PIDFILE; wait'; :" \
+    >/dev/null 2>&1 || TIMEOUT_STATUS=$?
+TIMEOUT_ELAPSED=$(( $(portable_epoch_ms) - TIMEOUT_START ))
+
+if [[ "$TIMEOUT_STATUS" -eq 124 ]] && [[ "$TIMEOUT_ELAPSED" -lt 15000 ]]; then
+    pass "portable_run_with_timeout bounds a nested process tree (${TIMEOUT_ELAPSED}ms)"
+else
+    fail "portable_run_with_timeout nested tree" \
+        "124 in under 15000 ms" "$TIMEOUT_STATUS in ${TIMEOUT_ELAPSED}ms"
+fi
+
+# Give the group signal a moment to land before checking for survivors.
+sleep 0.3
+TIMEOUT_INNER=$(cat "$TIMEOUT_PIDFILE" 2>/dev/null || true)
+if [[ -z "$TIMEOUT_INNER" ]]; then
+    fail "portable_run_with_timeout nested cleanup" \
+        "the innermost pid to be recorded" "the fixture did not record one"
+elif kill -0 "$TIMEOUT_INNER" 2>/dev/null; then
+    kill -KILL "$TIMEOUT_INNER" 2>/dev/null || true
+    fail "portable_run_with_timeout nested cleanup" \
+        "no surviving descendant" "innermost pid $TIMEOUT_INNER outlived the timeout"
+else
+    pass "portable_run_with_timeout leaves no surviving descendant"
+fi
+
+# stdin must reach the command. A background command in a job-control-off shell is
+# given /dev/null, so this silently read nothing until fd 0 was passed explicitly.
+TIMEOUT_STDIN=$(printf 'stdin-payload' | portable_run_with_timeout 5 cat)
+if [[ "$TIMEOUT_STDIN" == "stdin-payload" ]]; then
+    pass "portable_run_with_timeout preserves stdin"
+else
+    fail "portable_run_with_timeout stdin" "stdin-payload" "[$TIMEOUT_STDIN]"
+fi
+
+# A caller that combines the streams with 2>&1 must see them in the real order.
+# Replaying buffered stdout before buffered stderr turned ABCD into BDAC.
+TIMEOUT_DIRECT=$(bash -c 'printf A >&2; printf B; printf C >&2; printf D' 2>&1)
+TIMEOUT_MERGED=$(portable_run_with_timeout 5 bash -c 'printf A >&2; printf B; printf C >&2; printf D' 2>&1)
+if [[ "$TIMEOUT_MERGED" == "$TIMEOUT_DIRECT" ]]; then
+    pass "portable_run_with_timeout preserves combined-stream order ($TIMEOUT_MERGED)"
+else
+    fail "portable_run_with_timeout combined-stream order" \
+        "$TIMEOUT_DIRECT (as direct execution)" "$TIMEOUT_MERGED"
+fi
+
 # Bash announces a signal-killed job on the owning shell's stderr. That notice
 # must not reach the caller, or every timeout would inject noise into a captured
 # stream.
