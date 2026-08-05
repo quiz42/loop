@@ -102,7 +102,7 @@ echo ""
 # Test 1: Help flag displays usage
 echo "Test 1: Help flag displays usage"
 OUTPUT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" --help 2>&1) || true
-if echo "$OUTPUT" | grep -q "USAGE"; then
+if [[ "$OUTPUT" == *"USAGE"* ]]; then
     pass "Help flag displays usage information"
 else
     fail "Help flag" "USAGE text" "no usage found"
@@ -115,7 +115,7 @@ mkdir -p "$TEST_DIR/repo2"
 init_basic_git_repo "$TEST_DIR/repo2"
 OUTPUT=$(run_rlcr_setup "$TEST_DIR/repo2" 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
-if [[ $EXIT_CODE -ne 0 ]] && echo "$OUTPUT" | grep -qi "no plan file\|plan file"; then
+if [[ $EXIT_CODE -ne 0 ]] && grep -qi "no plan file\|plan file" <<< "$OUTPUT"; then
     pass "Missing plan file shows error"
 else
     fail "Missing plan file" "exit != 0 with error message" "exit=$EXIT_CODE, output=$OUTPUT"
@@ -126,7 +126,7 @@ echo ""
 echo "Test 3: --max with non-numeric value rejected"
 OUTPUT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" --max abc 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
-if [[ $EXIT_CODE -ne 0 ]] && echo "$OUTPUT" | grep -qi "positive integer"; then
+if [[ $EXIT_CODE -ne 0 ]] && grep -qi "positive integer" <<< "$OUTPUT"; then
     pass "--max non-numeric rejected"
 else
     fail "--max validation" "rejection" "exit=$EXIT_CODE"
@@ -145,7 +145,7 @@ mkdir -p "$TEST_DIR/repo4/bin"
 # Note: bash argparse may interpret -5 as a flag, so we use --max=-5 format
 OUTPUT=$(run_rlcr_setup "$TEST_DIR/repo4" plan.md --max=-5 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
-if [[ $EXIT_CODE -ne 0 ]] && echo "$OUTPUT" | grep -qi "positive integer\|unknown option\|invalid"; then
+if [[ $EXIT_CODE -ne 0 ]] && grep -qi "positive integer\|unknown option\|invalid" <<< "$OUTPUT"; then
     pass "--max with negative number rejected (exit=$EXIT_CODE)"
 else
     # Also try separate argument format
@@ -174,7 +174,7 @@ echo ""
 echo "Test 5: --codex-timeout with non-numeric value rejected"
 OUTPUT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" --codex-timeout "invalid" 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
-if [[ $EXIT_CODE -ne 0 ]] && echo "$OUTPUT" | grep -qi "positive integer"; then
+if [[ $EXIT_CODE -ne 0 ]] && grep -qi "positive integer" <<< "$OUTPUT"; then
     pass "--codex-timeout non-numeric rejected"
 else
     fail "--codex-timeout validation" "rejection" "exit=$EXIT_CODE"
@@ -196,7 +196,7 @@ echo ""
 echo "Test 7: Unknown option rejected"
 OUTPUT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" --unknown-option 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
-if [[ $EXIT_CODE -ne 0 ]] && echo "$OUTPUT" | grep -qi "unknown option"; then
+if [[ $EXIT_CODE -ne 0 ]] && grep -qi "unknown option" <<< "$OUTPUT"; then
     pass "Unknown option rejected"
 else
     fail "Unknown option" "rejection" "exit=$EXIT_CODE"
@@ -213,7 +213,7 @@ git -C "$TEST_DIR/repo8" add .gitignore && git -C "$TEST_DIR/repo8" commit -q -m
 
 OUTPUT=$(run_rlcr_setup "$TEST_DIR/repo8" plan.md --plan-file other.md 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
-if [[ $EXIT_CODE -ne 0 ]] && echo "$OUTPUT" | grep -qi "cannot specify both"; then
+if [[ $EXIT_CODE -ne 0 ]] && grep -qi "cannot specify both" <<< "$OUTPUT"; then
     pass "Both positional and --plan-file rejected"
 else
     fail "Duplicate plan file" "rejection" "exit=$EXIT_CODE"
@@ -251,7 +251,7 @@ chmod +x "$TEST_DIR/repo9/bin/codex"
 
 OUTPUT=$(PATH="$TEST_DIR/repo9/bin:$PATH" run_rlcr_setup "$TEST_DIR/repo9" plan.md 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
-if [[ $EXIT_CODE -ne 0 ]] && echo "$OUTPUT" | grep -qi "insufficient content"; then
+if [[ $EXIT_CODE -ne 0 ]] && grep -qi "insufficient content" <<< "$OUTPUT"; then
     pass "Plan with only comments rejected"
 else
     fail "Comment-only plan" "rejection" "exit=$EXIT_CODE"
@@ -277,7 +277,7 @@ chmod +x "$TEST_DIR/repo10/bin/codex"
 
 OUTPUT=$(PATH="$TEST_DIR/repo10/bin:$PATH" run_rlcr_setup "$TEST_DIR/repo10" plan.md 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
-if [[ $EXIT_CODE -ne 0 ]] && echo "$OUTPUT" | grep -qi "too simple"; then
+if [[ $EXIT_CODE -ne 0 ]] && grep -qi "too simple" <<< "$OUTPUT"; then
     pass "Short plan rejected"
 else
     fail "Short plan" "rejection" "exit=$EXIT_CODE"
@@ -300,7 +300,7 @@ chmod +x "$TEST_DIR/repo11/bin/codex"
 
 OUTPUT=$(PATH="$TEST_DIR/repo11/bin:$PATH" run_rlcr_setup "$TEST_DIR/repo11" "path with spaces/plan.md" 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
-if [[ $EXIT_CODE -ne 0 ]] && echo "$OUTPUT" | grep -qi "cannot contain spaces"; then
+if [[ $EXIT_CODE -ne 0 ]] && grep -qi "cannot contain spaces" <<< "$OUTPUT"; then
     pass "Plan with spaces in path rejected"
 else
     fail "Spaces in path" "rejection" "exit=$EXIT_CODE"
@@ -320,7 +320,7 @@ chmod +x "$TEST_DIR/repo12/bin/codex"
 # Try path with semicolon (can't create file, just test argument parsing)
 OUTPUT=$(PATH="$TEST_DIR/repo12/bin:$PATH" run_rlcr_setup "$TEST_DIR/repo12" "plan;.md" 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
-if [[ $EXIT_CODE -ne 0 ]] && echo "$OUTPUT" | grep -qi "metacharacters\|not found"; then
+if [[ $EXIT_CODE -ne 0 ]] && grep -qi "metacharacters\|not found" <<< "$OUTPUT"; then
     pass "Plan with metacharacters rejected"
 else
     fail "Metacharacters" "rejection" "exit=$EXIT_CODE"
@@ -340,7 +340,7 @@ chmod +x "$TEST_DIR/repo13/bin/codex"
 
 OUTPUT=$(PATH="$TEST_DIR/repo13/bin:$PATH" run_rlcr_setup "$TEST_DIR/repo13" "/absolute/path/plan.md" 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
-if [[ $EXIT_CODE -ne 0 ]] && echo "$OUTPUT" | grep -qi "relative path"; then
+if [[ $EXIT_CODE -ne 0 ]] && grep -qi "relative path" <<< "$OUTPUT"; then
     pass "Absolute path rejected"
 else
     fail "Absolute path" "rejection" "exit=$EXIT_CODE"
@@ -374,7 +374,7 @@ cd - > /dev/null
 
 OUTPUT=$(PATH="$TEST_DIR/repo14/bin:$PATH" run_rlcr_setup "$TEST_DIR/repo14" plan.md 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
-if [[ $EXIT_CODE -ne 0 ]] && echo "$OUTPUT" | grep -qi "YAML-unsafe"; then
+if [[ $EXIT_CODE -ne 0 ]] && grep -qi "YAML-unsafe" <<< "$OUTPUT"; then
     pass "YAML-unsafe branch name rejected"
 else
     # If branch couldn't be created with colon, skip
@@ -401,7 +401,7 @@ chmod +x "$TEST_DIR/repo15/bin/codex"
 
 OUTPUT=$(PATH="$TEST_DIR/repo15/bin:$PATH" run_rlcr_setup "$TEST_DIR/repo15" plan.md --codex-model "model;injection" 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
-if [[ $EXIT_CODE -ne 0 ]] && echo "$OUTPUT" | grep -qi "invalid characters"; then
+if [[ $EXIT_CODE -ne 0 ]] && grep -qi "invalid characters" <<< "$OUTPUT"; then
     pass "Codex model with invalid characters rejected"
 else
     fail "Codex model validation" "rejection" "exit=$EXIT_CODE"
@@ -422,7 +422,7 @@ create_minimal_plan "$TEST_DIR/nongit"
 
 OUTPUT=$(run_rlcr_setup "$TEST_DIR/nongit" plan.md 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
-if [[ $EXIT_CODE -ne 0 ]] && echo "$OUTPUT" | grep -qi "git repository"; then
+if [[ $EXIT_CODE -ne 0 ]] && grep -qi "git repository" <<< "$OUTPUT"; then
     pass "Non-git directory rejected"
 else
     fail "Non-git directory" "rejection" "exit=$EXIT_CODE"
@@ -445,7 +445,7 @@ chmod +x "$TEST_DIR/repo16b/bin/codex"
 
 OUTPUT=$(PATH="$TEST_DIR/repo16b/bin:$PATH" run_rlcr_setup "$TEST_DIR/repo16b" plan.md 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
-if [[ $EXIT_CODE -ne 0 ]] && echo "$OUTPUT" | grep -q "Git working tree is not clean" && echo "$OUTPUT" | grep -q '\.loopconfig'; then
+if [[ $EXIT_CODE -ne 0 && "$OUTPUT" == *"Git working tree is not clean"* && "$OUTPUT" == *'.loopconfig'* ]]; then
     pass "Untracked .loopconfig still blocks setup as dirty"
 else
     fail "Untracked .loopconfig blocks setup" "dirty working tree error mentioning .loopconfig" "exit=$EXIT_CODE, output=$OUTPUT"
@@ -464,7 +464,7 @@ create_minimal_plan "$TEST_DIR/repo17"
 
 OUTPUT=$(run_rlcr_setup "$TEST_DIR/repo17" plan.md 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
-if [[ $EXIT_CODE -ne 0 ]] && echo "$OUTPUT" | grep -qi "at least one commit"; then
+if [[ $EXIT_CODE -ne 0 ]] && grep -qi "at least one commit" <<< "$OUTPUT"; then
     pass "Git repo without commits rejected"
 else
     fail "No commits" "rejection" "exit=$EXIT_CODE"
@@ -485,7 +485,7 @@ chmod +x "$TEST_DIR/repo18/bin/codex"
 
 OUTPUT=$(PATH="$TEST_DIR/repo18/bin:$PATH" run_rlcr_setup "$TEST_DIR/repo18" plan.md 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
-if [[ $EXIT_CODE -ne 0 ]] && echo "$OUTPUT" | grep -qi "gitignored\|track-plan-file"; then
+if [[ $EXIT_CODE -ne 0 ]] && grep -qi "gitignored\|track-plan-file" <<< "$OUTPUT"; then
     pass "Tracked plan file without flag rejected"
 else
     fail "Tracked plan without flag" "rejection" "exit=$EXIT_CODE"
@@ -523,7 +523,7 @@ chmod +x "$TEST_DIR/repo24/bin/codex"
 
 OUTPUT=$(PATH="$TEST_DIR/repo24/bin:$PATH" run_rlcr_setup "$TEST_DIR/repo24" plan.md 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
-if [[ $EXIT_CODE -ne 0 ]] && echo "$OUTPUT" | grep -qi "already active"; then
+if [[ $EXIT_CODE -ne 0 ]] && grep -qi "already active" <<< "$OUTPUT"; then
     pass "Active RLCR loop blocks new RLCR loop"
 else
     fail "RLCR mutual exclusion" "rejection" "exit=$EXIT_CODE"
@@ -555,7 +555,7 @@ chmod +x "$TEST_DIR/repo26/bin/codex"
 if [[ -L "$TEST_DIR/repo26/symlink-plan.md" ]]; then
     OUTPUT=$(PATH="$TEST_DIR/repo26/bin:$PATH" run_rlcr_setup "$TEST_DIR/repo26" symlink-plan.md 2>&1) || EXIT_CODE=$?
     EXIT_CODE=${EXIT_CODE:-0}
-    if [[ $EXIT_CODE -ne 0 ]] && echo "$OUTPUT" | grep -qi "symbolic link"; then
+    if [[ $EXIT_CODE -ne 0 ]] && grep -qi "symbolic link" <<< "$OUTPUT"; then
         pass "Plan file symlink rejected"
     else
         fail "Symlink rejection" "rejection" "exit=$EXIT_CODE"
@@ -583,7 +583,7 @@ chmod +x "$TEST_DIR/repo27/bin/codex"
 if [[ -L "$TEST_DIR/repo27/symlink-dir" ]]; then
     OUTPUT=$(PATH="$TEST_DIR/repo27/bin:$PATH" run_rlcr_setup "$TEST_DIR/repo27" symlink-dir/plan.md 2>&1) || EXIT_CODE=$?
     EXIT_CODE=${EXIT_CODE:-0}
-    if [[ $EXIT_CODE -ne 0 ]] && echo "$OUTPUT" | grep -qi "symbolic link"; then
+    if [[ $EXIT_CODE -ne 0 ]] && grep -qi "symbolic link" <<< "$OUTPUT"; then
         pass "Symlink in parent directory rejected"
     else
         fail "Parent symlink rejection" "rejection" "exit=$EXIT_CODE"
@@ -615,7 +615,7 @@ mkdir -p "$TEST_DIR/repo28/bin"
 OUTPUT=$(PATH="$TEST_DIR/repo28/bin:$PATH" run_rlcr_setup "$TEST_DIR/repo28" plan.md 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
 # Should fail at dependency check (not argument parsing) - proves args were valid
-if [[ $EXIT_CODE -ne 0 ]] && echo "$OUTPUT" | grep -qi "codex"; then
+if [[ $EXIT_CODE -ne 0 ]] && grep -qi "codex" <<< "$OUTPUT"; then
     pass "Valid RLCR setup proceeds to dependency check"
 else
     # If codex is actually installed, it might proceed further
@@ -640,7 +640,7 @@ mkdir -p "$TEST_DIR/repo29/bin"
 OUTPUT=$(PATH="$TEST_DIR/repo29/bin:$PATH" run_rlcr_setup "$TEST_DIR/repo29" plan.md --max 10 --codex-timeout 3600 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
 # Should NOT fail at argument parsing - should fail later (dependency check)
-if echo "$OUTPUT" | grep -qi "positive integer"; then
+if grep -qi "positive integer" <<< "$OUTPUT"; then
     fail "Valid numeric args" "accepted" "rejected as invalid"
 else
     pass "Valid numeric arguments accepted (--max 10, --codex-timeout 3600)"
@@ -666,7 +666,7 @@ mkdir -p "$TEST_DIR/repo31/bin"
 OUTPUT=$(PATH="$TEST_DIR/repo31/bin:$PATH" run_rlcr_setup "$TEST_DIR/repo31" plan.md --codex-timeout 0 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
 # Zero should be accepted (not rejected as "positive integer" error)
-if echo "$OUTPUT" | grep -qi "positive integer"; then
+if grep -qi "positive integer" <<< "$OUTPUT"; then
     fail "--codex-timeout 0" "accepted" "rejected as not positive integer"
 else
     pass "--codex-timeout 0 accepted (non-negative integer validation)"
@@ -686,7 +686,7 @@ mkdir -p "$TEST_DIR/repo33/bin"
 OUTPUT=$(PATH="$TEST_DIR/repo33/bin:$PATH" run_rlcr_setup "$TEST_DIR/repo33" plan.md --codex-timeout 999999 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
 # Should NOT fail at timeout validation
-if echo "$OUTPUT" | grep -qi "timeout.*invalid\|positive integer"; then
+if grep -qi "timeout.*invalid\|positive integer" <<< "$OUTPUT"; then
     fail "Large timeout" "accepted" "rejected"
 else
     pass "Very large timeout value accepted (999999)"
@@ -738,7 +738,7 @@ EXIT_CODE=$?
 set -e
 
 # The setup should fail with a timeout-related error message
-if [[ $EXIT_CODE -ne 0 ]] && echo "$OUTPUT" | grep -qi "timeout\|timed out"; then
+if [[ $EXIT_CODE -ne 0 ]] && grep -qi "timeout\|timed out" <<< "$OUTPUT"; then
     pass "Timeout error message shown (exit $EXIT_CODE)"
 else
     # Even without exact message, non-zero exit for timeout mock is acceptable
@@ -779,7 +779,7 @@ mkdir -p "$TEST_DIR/repo36/bin"
 OUTPUT=$(PATH="$TEST_DIR/repo36/bin:$PATH" run_rlcr_setup "$TEST_DIR/repo36" plan.md --full-review-round 5 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
 # Should NOT fail at --full-review-round validation
-if echo "$OUTPUT" | grep -qi "full-review-round.*invalid\|must be at least 2"; then
+if grep -qi "full-review-round.*invalid\|must be at least 2" <<< "$OUTPUT"; then
     fail "--full-review-round 5" "accepted" "rejected"
 else
     pass "--full-review-round 5 accepted"
@@ -798,7 +798,7 @@ mkdir -p "$TEST_DIR/repo37/bin"
 OUTPUT=$(PATH="$TEST_DIR/repo37/bin:$PATH" run_rlcr_setup "$TEST_DIR/repo37" plan.md --full-review-round 2 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
 # Should NOT fail at --full-review-round validation
-if echo "$OUTPUT" | grep -qi "must be at least 2"; then
+if grep -qi "must be at least 2" <<< "$OUTPUT"; then
     fail "--full-review-round 2" "accepted" "rejected"
 else
     pass "--full-review-round 2 (minimum) accepted"
@@ -816,7 +816,7 @@ mkdir -p "$TEST_DIR/repo38/bin"
 
 OUTPUT=$(PATH="$TEST_DIR/repo38/bin:$PATH" run_rlcr_setup "$TEST_DIR/repo38" plan.md --full-review-round 1 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
-if [[ $EXIT_CODE -ne 0 ]] && echo "$OUTPUT" | grep -qi "must be at least 2"; then
+if [[ $EXIT_CODE -ne 0 ]] && grep -qi "must be at least 2" <<< "$OUTPUT"; then
     pass "--full-review-round 1 rejected (must be at least 2)"
 else
     fail "--full-review-round 1" "rejection with 'must be at least 2'" "exit=$EXIT_CODE"
@@ -834,7 +834,7 @@ mkdir -p "$TEST_DIR/repo39/bin"
 
 OUTPUT=$(PATH="$TEST_DIR/repo39/bin:$PATH" run_rlcr_setup "$TEST_DIR/repo39" plan.md --full-review-round abc 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
-if [[ $EXIT_CODE -ne 0 ]] && echo "$OUTPUT" | grep -qi "positive integer"; then
+if [[ $EXIT_CODE -ne 0 ]] && grep -qi "positive integer" <<< "$OUTPUT"; then
     pass "--full-review-round non-numeric rejected"
 else
     fail "--full-review-round non-numeric" "rejection with 'positive integer'" "exit=$EXIT_CODE"
@@ -852,7 +852,7 @@ mkdir -p "$TEST_DIR/repo40/bin"
 
 OUTPUT=$(PATH="$TEST_DIR/repo40/bin:$PATH" run_rlcr_setup "$TEST_DIR/repo40" plan.md --full-review-round 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
-if [[ $EXIT_CODE -ne 0 ]] && echo "$OUTPUT" | grep -qi "requires.*number\|requires.*argument"; then
+if [[ $EXIT_CODE -ne 0 ]] && grep -qi "requires.*number\|requires.*argument" <<< "$OUTPUT"; then
     pass "--full-review-round without value rejected"
 else
     fail "--full-review-round without value" "rejection" "exit=$EXIT_CODE"
@@ -875,7 +875,7 @@ mkdir -p "$TEST_DIR/repo41/bin"
 OUTPUT=$(PATH="$TEST_DIR/repo41/bin:$PATH" run_rlcr_setup "$TEST_DIR/repo41" --skip-impl 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
 # Should NOT fail at "No plan file provided" - skip-impl makes it optional
-if echo "$OUTPUT" | grep -qi "No plan file provided"; then
+if grep -qi "No plan file provided" <<< "$OUTPUT"; then
     fail "--skip-impl without plan" "accepted" "rejected for missing plan"
 else
     # May fail later at codex check, which is fine
@@ -999,11 +999,11 @@ chmod +x "$TEST_DIR/repo45/bin/codex"
 OUTPUT=$(PATH="$TEST_DIR/repo45/bin:$PATH" run_rlcr_setup "$TEST_DIR/repo45" plan.md --skip-impl 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
 # Should work - skip-impl with plan file is valid
-if echo "$OUTPUT" | grep -qi "SKIP-IMPL MODE"; then
+if grep -qi "SKIP-IMPL MODE" <<< "$OUTPUT"; then
     pass "--skip-impl with plan file works"
 else
     # May fail at codex but should at least get past args
-    if echo "$OUTPUT" | grep -qi "error"; then
+    if grep -qi "error" <<< "$OUTPUT"; then
         fail "--skip-impl with plan" "accepted" "error occurred"
     else
         pass "--skip-impl with plan file works"
@@ -1075,7 +1075,7 @@ chmod +x "$TEST_DIR/repo46/bin/jq"
 # Hide system codex by making the only codex on PATH our test bin dir
 OUTPUT=$(PATH="$TEST_DIR/repo46/bin" run_rlcr_setup "$TEST_DIR/repo46" plan.md 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
-if [[ $EXIT_CODE -ne 0 ]] && echo "$OUTPUT" | grep -qi "Missing required dependencies" && echo "$OUTPUT" | grep -q "codex"; then
+if [[ $EXIT_CODE -ne 0 ]] && grep -qi "Missing required dependencies" <<< "$OUTPUT" && [[ "$OUTPUT" == *"codex"* ]]; then
     pass "Missing codex detected in dependency check"
 else
     if command -v codex &>/dev/null; then
@@ -1105,7 +1105,7 @@ chmod +x "$TEST_DIR/repo47/bin/codex"
 # Use a restricted PATH with required runtime tools but no jq
 OUTPUT=$(PATH="$TEST_DIR/repo47/bin" run_rlcr_setup "$TEST_DIR/repo47" plan.md 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
-if [[ $EXIT_CODE -ne 0 ]] && echo "$OUTPUT" | grep -qi "Missing required dependencies" && echo "$OUTPUT" | grep -q "jq"; then
+if [[ $EXIT_CODE -ne 0 ]] && grep -qi "Missing required dependencies" <<< "$OUTPUT" && [[ "$OUTPUT" == *"jq"* ]]; then
     pass "Missing jq detected in dependency check"
 else
     if command -v jq &>/dev/null && [[ "$(command -v jq)" == /usr/bin/jq || "$(command -v jq)" == /bin/jq ]]; then
@@ -1146,7 +1146,7 @@ done
 
 OUTPUT=$(PATH="$TEST_DIR/repo48/bin" run_rlcr_setup "$TEST_DIR/repo48" plan.md 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
-if [[ $EXIT_CODE -ne 0 ]] && echo "$OUTPUT" | grep -q "codex" && echo "$OUTPUT" | grep -q "jq"; then
+if [[ $EXIT_CODE -ne 0 && "$OUTPUT" == *"codex"* && "$OUTPUT" == *"jq"* ]]; then
     pass "Multiple missing dependencies listed in single error"
 else
     # If both tools happen to be in our restricted bin, skip
@@ -1178,7 +1178,7 @@ chmod +x "$TEST_DIR/repo49/bin/jq"
 OUTPUT=$(PATH="$TEST_DIR/repo49/bin:$PATH" run_rlcr_setup "$TEST_DIR/repo49" plan.md 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
 # Should NOT fail at dependency check - should proceed further
-if echo "$OUTPUT" | grep -qi "Missing required dependencies"; then
+if grep -qi "Missing required dependencies" <<< "$OUTPUT"; then
     fail "All deps present" "no dependency error" "dependency error shown"
 else
     pass "All dependencies present - proceeds past dependency check"

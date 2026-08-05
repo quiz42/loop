@@ -90,17 +90,17 @@ test_path_validation() {
 
     # Check for specific path/content validation errors
     # These patterns match error messages from setup-rlcr-loop.sh
-    if echo "$result" | grep -qE "(Plan file (path|must|cannot|not found|not readable)|Plan is too simple|Plan file has insufficient content|symbolic link|directory not found)"; then
+    if grep -qE "(Plan file (path|must|cannot|not found|not readable)|Plan is too simple|Plan file has insufficient content|symbolic link|directory not found)" <<< "$result"; then
         return 1  # Path/content validation failed
     fi
 
     # Check for codex not available - this means all validations passed
-    if echo "$result" | grep -q "requires codex"; then
+    if [[ "$result" == *"requires codex"* ]]; then
         return 0
     fi
 
     # Check for gitignore error (plan file tracking) - path validation passed
-    if echo "$result" | grep -q "must be gitignored"; then
+    if [[ "$result" == *"must be gitignored"* ]]; then
         return 0
     fi
 

@@ -1102,7 +1102,7 @@ else
     fail "validate-refine-plan-io: --help exits 7" "7" "$VALIDATOR_EXIT_CODE"
 fi
 
-if echo "$VALIDATOR_OUTPUT" | grep -q -- "--discussion"; then
+if [[ "$VALIDATOR_OUTPUT" == *"--discussion"* ]]; then
     pass "validate-refine-plan-io: usage output includes --discussion"
 else
     fail "validate-refine-plan-io: usage output includes --discussion" "--discussion" "missing"
@@ -1171,13 +1171,13 @@ else
     fail "validate-refine-plan-io: unterminated CMT blocks exit 3" "3" "$VALIDATOR_EXIT_CODE"
 fi
 
-if echo "$VALIDATOR_OUTPUT" | grep -q "missing end marker"; then
+if [[ "$VALIDATOR_OUTPUT" == *"missing end marker"* ]]; then
     pass "validate-refine-plan-io: unterminated CMT blocks report missing ENDCMT"
 else
     fail "validate-refine-plan-io: unterminated CMT blocks report missing ENDCMT" "missing end marker" "$VALIDATOR_OUTPUT"
 fi
 
-if echo "$VALIDATOR_OUTPUT" | grep -q 'context: "CMT: this block never closes"'; then
+if [[ "$VALIDATOR_OUTPUT" == *'context: "CMT: this block never closes"'* ]]; then
     pass "validate-refine-plan-io: unterminated CMT blocks include the opening-line context excerpt"
 else
     fail "validate-refine-plan-io: unterminated CMT blocks include the opening-line context excerpt" 'context: "CMT: this block never closes"' "$VALIDATOR_OUTPUT"
@@ -1192,7 +1192,7 @@ else
     fail "validate-refine-plan-io: nested CMT blocks exit 3" "3" "$VALIDATOR_EXIT_CODE"
 fi
 
-if echo "$VALIDATOR_OUTPUT" | grep -q "nested comment block"; then
+if [[ "$VALIDATOR_OUTPUT" == *"nested comment block"* ]]; then
     pass "validate-refine-plan-io: nested CMT blocks report a parse error"
 else
     fail "validate-refine-plan-io: nested CMT blocks report a parse error" "nested comment block" "$VALIDATOR_OUTPUT"
@@ -1244,7 +1244,7 @@ else
     fail "validate-refine-plan-io: non-writable output directory exits 5" "5" "$VALIDATOR_EXIT_CODE"
 fi
 
-if echo "$VALIDATOR_OUTPUT" | grep -q "VALIDATION_ERROR: OUTPUT_DIR_NOT_WRITABLE"; then
+if [[ "$VALIDATOR_OUTPUT" == *"VALIDATION_ERROR: OUTPUT_DIR_NOT_WRITABLE"* ]]; then
     pass "validate-refine-plan-io: non-writable output directory reports the specific validation error"
 else
     fail "validate-refine-plan-io: non-writable output directory reports the specific validation error" "VALIDATION_ERROR: OUTPUT_DIR_NOT_WRITABLE" "$VALIDATOR_OUTPUT"
@@ -1265,7 +1265,7 @@ else
     fail "validate-refine-plan-io: non-writable input directory in in-place mode exits 5" "5" "$VALIDATOR_EXIT_CODE"
 fi
 
-if echo "$VALIDATOR_OUTPUT" | grep -q "VALIDATION_ERROR: INPUT_DIR_NOT_WRITABLE"; then
+if [[ "$VALIDATOR_OUTPUT" == *"VALIDATION_ERROR: INPUT_DIR_NOT_WRITABLE"* ]]; then
     pass "validate-refine-plan-io: non-writable input directory reports the specific in-place validation error"
 else
     fail "validate-refine-plan-io: non-writable input directory reports the specific in-place validation error" "VALIDATION_ERROR: INPUT_DIR_NOT_WRITABLE" "$VALIDATOR_OUTPUT"
@@ -1308,7 +1308,7 @@ else
     fail "validate-refine-plan-io: auto-creates missing QA directory" "Directory created" "Directory missing"
 fi
 
-if echo "$VALIDATOR_OUTPUT" | grep -q "Mode: in-place (atomic write with temp file)"; then
+if [[ "$VALIDATOR_OUTPUT" == *"Mode: in-place (atomic write with temp file)"* ]]; then
     pass "validate-refine-plan-io: reports in-place mode"
 else
     fail "validate-refine-plan-io: reports in-place mode" "Mode: in-place (atomic write with temp file)" "missing"
@@ -1324,7 +1324,7 @@ else
     fail "validate-refine-plan-io: mixed valid, ignored, and empty markers still pass with a valid block" "0" "$VALIDATOR_EXIT_CODE"
 fi
 
-if echo "$VALIDATOR_OUTPUT" | grep -Eq 'Input file: .+ \([0-9]+ lines, 1 comment blocks\)'; then
+if grep -Eq 'Input file: .+ \([0-9]+ lines, 1 comment blocks\)' <<< "$VALIDATOR_OUTPUT"; then
     pass "validate-refine-plan-io: success output reports only valid non-empty CMT blocks"
 else
     fail "validate-refine-plan-io: success output reports only valid non-empty CMT blocks" "1 comment blocks" "$VALIDATOR_OUTPUT"
@@ -1340,13 +1340,13 @@ else
     fail "validate-refine-plan-io: valid new-file invocation exits 0" "0" "$VALIDATOR_EXIT_CODE"
 fi
 
-if echo "$VALIDATOR_OUTPUT" | grep -q "Mode: new file"; then
+if [[ "$VALIDATOR_OUTPUT" == *"Mode: new file"* ]]; then
     pass "validate-refine-plan-io: reports new-file mode"
 else
     fail "validate-refine-plan-io: reports new-file mode" "Mode: new file" "missing"
 fi
 
-if echo "$VALIDATOR_OUTPUT" | grep -q "Output target: $(realpath -m "$NEW_FILE_DIR/refined-plan.md")"; then
+if [[ "$VALIDATOR_OUTPUT" == *"Output target: $(realpath -m "$NEW_FILE_DIR/refined-plan.md")"* ]]; then
     pass "validate-refine-plan-io: reports the resolved output target"
 else
     fail "validate-refine-plan-io: reports the resolved output target" "$(realpath -m "$NEW_FILE_DIR/refined-plan.md")" "$VALIDATOR_OUTPUT"

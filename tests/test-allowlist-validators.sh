@@ -191,7 +191,7 @@ set +e
 RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-write-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 2 ]] && echo "$RESULT" | grep -qi "todos"; then
+if [[ $EXIT_CODE -eq 2 ]] && grep -qi "todos" <<< "$RESULT"; then
     pass "Write validator blocks round-3-todos.md"
 else
     fail "Write validator round-3-todos.md" "exit 2 with todos error" "exit $EXIT_CODE, output: $RESULT"
@@ -204,7 +204,7 @@ set +e
 RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-write-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 2 ]] && echo "$RESULT" | grep -qi "round"; then
+if [[ $EXIT_CODE -eq 2 ]] && grep -qi "round" <<< "$RESULT"; then
     pass "Write validator blocks round-2-summary.md"
 else
     fail "Write validator round-2-summary.md" "exit 2 with round error" "exit $EXIT_CODE, output: $RESULT"
@@ -217,7 +217,7 @@ set +e
 RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-write-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 2 ]] && echo "$RESULT" | grep -qi "round"; then
+if [[ $EXIT_CODE -eq 2 ]] && grep -qi "round" <<< "$RESULT"; then
     pass "Write validator blocks round-3-contract.md"
 else
     fail "Write validator round-3-contract.md" "exit 2 with round error" "exit $EXIT_CODE, output: $RESULT"
@@ -273,7 +273,7 @@ set +e
 RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-edit-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 2 ]] && echo "$RESULT" | grep -qi "round"; then
+if [[ $EXIT_CODE -eq 2 ]] && grep -qi "round" <<< "$RESULT"; then
     pass "Edit validator blocks round-0-contract.md"
 else
     fail "Edit validator round-0-contract.md" "exit 2 with round error" "exit $EXIT_CODE, output: $RESULT"
@@ -286,7 +286,7 @@ set +e
 RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-edit-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 2 ]] && echo "$RESULT" | grep -qi "todos"; then
+if [[ $EXIT_CODE -eq 2 ]] && grep -qi "todos" <<< "$RESULT"; then
     pass "Edit validator blocks round-4-todos.md"
 else
     fail "Edit validator round-4-todos.md" "exit 2 with todos error" "exit $EXIT_CODE, output: $RESULT"
@@ -342,7 +342,7 @@ set +e
 RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-read-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 2 ]] && echo "$RESULT" | grep -qi "todos"; then
+if [[ $EXIT_CODE -eq 2 ]] && grep -qi "todos" <<< "$RESULT"; then
     pass "Read validator blocks round-3-todos.md"
 else
     fail "Read validator round-3-todos.md" "exit 2 with todos error" "exit $EXIT_CODE, output: $RESULT"
@@ -355,7 +355,7 @@ set +e
 RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-read-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 2 ]] && echo "$RESULT" | grep -qi "round"; then
+if [[ $EXIT_CODE -eq 2 ]] && grep -qi "round" <<< "$RESULT"; then
     pass "Read validator blocks round-3-summary.md"
 else
     fail "Read validator round-3-summary.md" "exit 2 with round error" "exit $EXIT_CODE, output: $RESULT"
@@ -368,7 +368,7 @@ set +e
 RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-read-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 2 ]] && echo "$RESULT" | grep -qi "round"; then
+if [[ $EXIT_CODE -eq 2 ]] && grep -qi "round" <<< "$RESULT"; then
     pass "Read validator blocks round-3-contract.md"
 else
     fail "Read validator round-3-contract.md" "exit 2 with round error" "exit $EXIT_CODE, output: $RESULT"
@@ -411,7 +411,7 @@ set +e
 RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-bash-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 2 ]] && echo "$RESULT" | grep -qi "contract"; then
+if [[ $EXIT_CODE -eq 2 ]] && grep -qi "contract" <<< "$RESULT"; then
     pass "Bash validator blocks round-5-contract.md"
 else
     fail "Bash validator round-5-contract.md" "exit 2 with contract error" "exit $EXIT_CODE, output: $RESULT"
@@ -424,7 +424,7 @@ set +e
 RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-bash-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 2 ]] && echo "$RESULT" | grep -qi "todos"; then
+if [[ $EXIT_CODE -eq 2 ]] && grep -qi "todos" <<< "$RESULT"; then
     pass "Bash validator blocks round-1-todos.md in wrong directory"
 else
     fail "Bash validator wrong dir round-1-todos.md" "exit 2 with todos error" "exit $EXIT_CODE, output: $RESULT"
@@ -437,7 +437,7 @@ set +e
 RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-bash-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 2 ]] && echo "$RESULT" | grep -qi "todos"; then
+if [[ $EXIT_CODE -eq 2 ]] && grep -qi "todos" <<< "$RESULT"; then
     pass "Bash validator blocks round-3-todos.md"
 else
     fail "Bash validator round-3-todos.md" "exit 2 with todos error" "exit $EXIT_CODE, output: $RESULT"
@@ -450,7 +450,7 @@ set +e
 RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-bash-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 2 ]] && echo "$RESULT" | grep -qi "todos"; then
+if [[ $EXIT_CODE -eq 2 ]] && grep -qi "todos" <<< "$RESULT"; then
     pass "Bash validator blocks generic round-1-todos.md"
 else
     fail "Bash validator generic round-1-todos.md" "exit 2 with todos error" "exit $EXIT_CODE, output: $RESULT"
@@ -465,7 +465,7 @@ set +e
 RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-bash-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 2 ]] && echo "$RESULT" | grep -qi "todos"; then
+if [[ $EXIT_CODE -eq 2 ]] && grep -qi "todos" <<< "$RESULT"; then
     pass "Bash validator blocks round-1-todos.md in old loop directory"
 else
     fail "Bash validator old loop round-1-todos.md" "exit 2 with todos error" "exit $EXIT_CODE, output: $RESULT"
@@ -480,7 +480,7 @@ set +e
 RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-bash-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 2 ]] && echo "$RESULT" | grep -qi "todos"; then
+if [[ $EXIT_CODE -eq 2 ]] && grep -qi "todos" <<< "$RESULT"; then
     pass "Bash validator blocks same-basename different-root"
 else
     fail "Bash validator same-basename different-root" "exit 2 with todos error" "exit $EXIT_CODE, output: $RESULT"
@@ -502,7 +502,7 @@ assert_hook_wrapper_blocked() {
     EXIT_CODE=$?
     set -e
 
-    if [[ $EXIT_CODE -eq 2 ]] && echo "$RESULT" | grep -qi "direct execution"; then
+    if [[ $EXIT_CODE -eq 2 ]] && grep -qi "direct execution" <<< "$RESULT"; then
         pass "$test_name"
     else
         fail "$test_name" "exit 2 with direct execution block" "exit $EXIT_CODE, output: $RESULT, command: $command"

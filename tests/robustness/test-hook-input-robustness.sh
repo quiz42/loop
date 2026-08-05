@@ -284,7 +284,7 @@ ANSI_LOG="$TEST_DIR/ansi.log"
 printf '\033[31mRed text\033[0m\n\033[32mGreen text\033[0m\n' > "$ANSI_LOG"
 # Strip ANSI and check content
 STRIPPED=$(sed 's/\x1b\[[0-9;]*m//g' "$ANSI_LOG")
-if echo "$STRIPPED" | grep -q "Red text"; then
+if [[ "$STRIPPED" == *"Red text"* ]]; then
     pass "ANSI codes can be stripped from logs"
 else
     fail "ANSI stripping" "Red text" "$STRIPPED"
@@ -479,7 +479,7 @@ OUTPUT=$("$MONITOR_TEST_DIR/run_monitor.sh" "$MONITOR_TEST_DIR/project" "$PROJEC
 set -e
 
 # Monitor returns 1 when no active session is found - this is expected graceful behavior
-if echo "$OUTPUT" | grep -qE "EXIT_CODE:[01]"; then
+if grep -qE "EXIT_CODE:[01]" <<< "$OUTPUT"; then
     pass "Monitor exits gracefully when no session"
 else
     fail "Monitor no session" "EXIT_CODE:0 or 1" "$(echo "$OUTPUT" | tail -1)"

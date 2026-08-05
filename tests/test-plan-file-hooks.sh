@@ -187,7 +187,7 @@ RESULT=$(echo '{}' | "$PROJECT_ROOT/hooks/loop-plan-file-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
 # v1.5.0+ requires review_started and base_branch - validator rejects malformed state
-if echo "$RESULT" | grep -qi "malformed\|blocking"; then
+if grep -qi "malformed\|blocking" <<< "$RESULT"; then
     pass "Hook blocks on malformed state (missing v1.5.0 fields)"
 else
     fail "Hook blocking malformed state" "malformed state error" "$RESULT"
@@ -208,7 +208,7 @@ RESULT=$(echo '{}' | "$PROJECT_ROOT/hooks/loop-plan-file-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
 # v1.5.0+ requires start_branch, review_started, and base_branch - validator rejects malformed state
-if echo "$RESULT" | grep -qi "malformed\|blocking"; then
+if grep -qi "malformed\|blocking" <<< "$RESULT"; then
     pass "Hook blocks on malformed state (missing start_branch and v1.5.0 fields)"
 else
     fail "Hook blocking malformed state" "malformed state error" "$RESULT"
@@ -235,7 +235,7 @@ set +e
 RESULT=$(echo '{}' | "$PROJECT_ROOT/hooks/loop-plan-file-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 0 ]] && echo "$RESULT" | grep -q "branch"; then
+if [[ $EXIT_CODE -eq 0 && "$RESULT" == *"branch"* ]]; then
     pass "Hook blocks on branch change"
 else
     fail "Hook blocking branch change" "block with branch error" "$RESULT"
@@ -256,7 +256,7 @@ set +e
 RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-write-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 2 ]] && echo "$RESULT" | grep -qi "plan"; then
+if [[ $EXIT_CODE -eq 2 ]] && grep -qi "plan" <<< "$RESULT"; then
     pass "Write validator blocks plan.md backup"
 else
     fail "Write validator blocking plan.md" "exit 2 with plan error" "exit $EXIT_CODE, output: $RESULT"
@@ -273,7 +273,7 @@ set +e
 RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-edit-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 2 ]] && echo "$RESULT" | grep -qi "plan"; then
+if [[ $EXIT_CODE -eq 2 ]] && grep -qi "plan" <<< "$RESULT"; then
     pass "Edit validator blocks plan.md backup"
 else
     fail "Edit validator blocking plan.md" "exit 2 with plan error" "exit $EXIT_CODE, output: $RESULT"
@@ -290,7 +290,7 @@ set +e
 RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-bash-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 2 ]] && echo "$RESULT" | grep -qi "plan"; then
+if [[ $EXIT_CODE -eq 2 ]] && grep -qi "plan" <<< "$RESULT"; then
     pass "Bash validator blocks plan.md modification"
 else
     fail "Bash validator blocking plan.md" "exit 2 with plan error" "exit $EXIT_CODE, output: $RESULT"
@@ -303,7 +303,7 @@ set +e
 RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-bash-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 2 ]] && echo "$RESULT" | grep -qi "plan"; then
+if [[ $EXIT_CODE -eq 2 ]] && grep -qi "plan" <<< "$RESULT"; then
     pass "Bash validator blocks rm on plan.md"
 else
     fail "Bash validator blocking rm" "exit 2 with plan error" "exit $EXIT_CODE, output: $RESULT"
@@ -317,7 +317,7 @@ set +e
 RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-bash-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 2 ]] && echo "$RESULT" | grep -qi "plan"; then
+if [[ $EXIT_CODE -eq 2 ]] && grep -qi "plan" <<< "$RESULT"; then
     pass "Bash validator blocks direct .loop/rlcr/plan.md"
 else
     fail "Bash validator direct plan.md" "exit 2 with plan error" "exit $EXIT_CODE, output: $RESULT"
@@ -334,7 +334,7 @@ set +e
 RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-bash-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 2 ]] && echo "$RESULT" | grep -qi "plan"; then
+if [[ $EXIT_CODE -eq 2 ]] && grep -qi "plan" <<< "$RESULT"; then
     pass "Bash validator blocks command substitution bypass"
 else
     fail "Command substitution bypass" "exit 2 with plan error" "exit $EXIT_CODE, output: $RESULT"
@@ -347,7 +347,7 @@ set +e
 RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-bash-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 2 ]] && echo "$RESULT" | grep -qi "plan"; then
+if [[ $EXIT_CODE -eq 2 ]] && grep -qi "plan" <<< "$RESULT"; then
     pass "Bash validator blocks glob expansion bypass"
 else
     fail "Glob expansion bypass" "exit 2 with plan error" "exit $EXIT_CODE, output: $RESULT"
@@ -360,7 +360,7 @@ set +e
 RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-bash-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 2 ]] && echo "$RESULT" | grep -qi "plan"; then
+if [[ $EXIT_CODE -eq 2 ]] && grep -qi "plan" <<< "$RESULT"; then
     pass "Bash validator blocks brace expansion bypass"
 else
     fail "Brace expansion bypass" "exit 2 with plan error" "exit $EXIT_CODE, output: $RESULT"
@@ -373,7 +373,7 @@ set +e
 RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-bash-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 2 ]] && echo "$RESULT" | grep -qi "plan"; then
+if [[ $EXIT_CODE -eq 2 ]] && grep -qi "plan" <<< "$RESULT"; then
     pass "Bash validator blocks piped command bypass"
 else
     fail "Piped command bypass" "exit 2 with plan error" "exit $EXIT_CODE, output: $RESULT"
@@ -386,7 +386,7 @@ set +e
 RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-bash-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 2 ]] && echo "$RESULT" | grep -qi "plan"; then
+if [[ $EXIT_CODE -eq 2 ]] && grep -qi "plan" <<< "$RESULT"; then
     pass "Bash validator blocks backtick substitution bypass"
 else
     fail "Backtick substitution bypass" "exit 2 with plan error" "exit $EXIT_CODE, output: $RESULT"
@@ -441,7 +441,7 @@ RESULT=$(echo '{}' | "$PROJECT_ROOT/hooks/loop-plan-file-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
 # Should block due to branch mismatch (current is main, state says different-branch)
-if [[ $EXIT_CODE -eq 0 ]] && echo "$RESULT" | grep -q "branch"; then
+if [[ $EXIT_CODE -eq 0 && "$RESULT" == *"branch"* ]]; then
     pass "Hook detects branch mismatch with quoted start_branch"
 else
     fail "Branch mismatch detection with quotes" "block with branch error" "exit $EXIT_CODE, output: $RESULT"
@@ -486,7 +486,7 @@ RESULT=$(echo '{}' | "$PROJECT_ROOT/hooks/loop-codex-stop-hook.sh" 2>&1)
 EXIT_CODE=$?
 set -e
 # Should NOT fail on YAML parsing - if it fails, should be for other reasons (codex missing, etc)
-if ! echo "$RESULT" | grep -qi "yaml\|parse error\|invalid.*field"; then
+if ! grep -qi "yaml\|parse error\|invalid.*field" <<< "$RESULT"; then
     pass "Stop hook parses quoted plan_file and start_branch"
 else
     fail "Stop hook YAML parsing" "no YAML parse errors" "output: $RESULT"
@@ -518,7 +518,7 @@ set +e
 RESULT=$(echo '{}' | "$PROJECT_ROOT/hooks/loop-codex-stop-hook.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if echo "$RESULT" | grep -q '"decision"' && echo "$RESULT" | grep -qi "contract"; then
+if [[ "$RESULT" == *'"decision"'* ]] && grep -qi "contract" <<< "$RESULT"; then
     pass "Stop hook blocks when round contract is missing"
 else
     fail "Stop hook missing round contract" "block with contract error" "exit $EXIT_CODE, output: $RESULT"
@@ -598,7 +598,7 @@ RESULT=$(echo '{}' | "$PROJECT_ROOT/hooks/loop-codex-stop-hook.sh" 2>&1)
 EXIT_CODE=$?
 set -e
 # The hook should output JSON with "block" decision and mention plan file modified
-if echo "$RESULT" | grep -q '"decision"' && echo "$RESULT" | grep -qi "plan.*modified"; then
+if [[ "$RESULT" == *'"decision"'* ]] && grep -qi "plan.*modified" <<< "$RESULT"; then
     pass "Stop hook blocks when plan file is modified"
 else
     fail "Stop hook plan modification detection" "block with plan modified error" "exit $EXIT_CODE, output: $RESULT"
@@ -632,7 +632,7 @@ set +e
 RESULT=$(echo '{}' | "$PROJECT_ROOT/hooks/loop-codex-stop-hook.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if echo "$RESULT" | grep -q '"decision"' && echo "$RESULT" | grep -qi "plan.*deleted"; then
+if [[ "$RESULT" == *'"decision"'* ]] && grep -qi "plan.*deleted" <<< "$RESULT"; then
     pass "Stop hook blocks when plan file is deleted"
 else
     fail "Stop hook plan deletion detection" "block with plan deleted error" "exit $EXIT_CODE, output: $RESULT"
@@ -651,7 +651,7 @@ set +e
 RESULT=$(echo '{}' | "$PROJECT_ROOT/hooks/loop-codex-stop-hook.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if echo "$RESULT" | grep -q '"decision"' && echo "$RESULT" | grep -qi "backup.*not found\|plan.*backup"; then
+if [[ "$RESULT" == *'"decision"'* ]] && grep -qi "backup.*not found\|plan.*backup" <<< "$RESULT"; then
     pass "Stop hook blocks when plan backup is missing"
 else
     fail "Stop hook plan backup detection" "block with backup missing error" "exit $EXIT_CODE, output: $RESULT"
@@ -723,7 +723,7 @@ RESULT=$(echo '{}' | "$PROJECT_ROOT/hooks/loop-codex-stop-hook.sh" 2>&1)
 EXIT_CODE=$?
 set -e
 # Should detect modification via git status
-if echo "$RESULT" | grep -q '"decision"' && echo "$RESULT" | grep -qi "plan.*modif\|uncommitted"; then
+if [[ "$RESULT" == *'"decision"'* ]] && grep -qi "plan.*modif\|uncommitted" <<< "$RESULT"; then
     pass "Stop hook detects tracked plan file modifications"
 else
     fail "Stop hook tracked file detection" "block with modification error" "exit $EXIT_CODE, output: $RESULT"
@@ -747,7 +747,7 @@ RESULT=$(echo '{}' | "$PROJECT_ROOT/hooks/loop-codex-stop-hook.sh" 2>&1)
 EXIT_CODE=$?
 set -e
 # Should return JSON with block decision, not silently exit
-if echo "$RESULT" | grep -q '"decision".*"block"' && echo "$RESULT" | grep -qi "schema\|missing.*field\|plan_tracked"; then
+if grep -q '"decision".*"block"' <<< "$RESULT" && grep -qi "schema\|missing.*field\|plan_tracked" <<< "$RESULT"; then
     pass "Stop hook returns JSON block for outdated schema"
 else
     fail "Stop hook schema blocking" "JSON block response" "exit $EXIT_CODE, output: $RESULT"
@@ -827,7 +827,7 @@ else
     EXIT_CODE=$?
     set -e
     # Should detect modification via content diff (not git status)
-    if echo "$RESULT" | grep -q '"decision"' && echo "$RESULT" | grep -qi "plan.*modif"; then
+    if [[ "$RESULT" == *'"decision"'* ]] && grep -qi "plan.*modif" <<< "$RESULT"; then
         pass "Stop hook blocks tracked file with committed changes"
     else
         fail "Stop hook committed file detection" "block with modification error" "exit $EXIT_CODE, output: $RESULT"
@@ -905,9 +905,9 @@ EXIT_CODE=$?
 set -e
 # Should report Ultimate Goal missing-item line but NOT AC or Active Tasks missing-item lines
 # The exact format is: **<Section>**: Still contains placeholder text
-if echo "$RESULT" | grep -qF '**Ultimate Goal**: Still contains placeholder text' && \
-   ! echo "$RESULT" | grep -qF '**Acceptance Criteria**: Still contains placeholder text' && \
-   ! echo "$RESULT" | grep -qF '**Active Tasks**: Still contains placeholder text'; then
+if [[ "$RESULT" == *'**Ultimate Goal**: Still contains placeholder text'* ]] && \
+   [[ "$RESULT" != *'**Acceptance Criteria**: Still contains placeholder text'* ]] && \
+   [[ "$RESULT" != *'**Active Tasks**: Still contains placeholder text'* ]]; then
     pass "Stop hook only reports Ultimate Goal placeholder"
 else
     fail "Section-specific Ultimate Goal" "only **Ultimate Goal**: Still contains placeholder text" "output: $RESULT"
@@ -977,9 +977,9 @@ EXIT_CODE=$?
 set -e
 # Should report Acceptance Criteria missing-item line but NOT Goal or Active Tasks missing-item lines
 # The exact format is: **<Section>**: Still contains placeholder text
-if echo "$RESULT" | grep -qF '**Acceptance Criteria**: Still contains placeholder text' && \
-   ! echo "$RESULT" | grep -qF '**Ultimate Goal**: Still contains placeholder text' && \
-   ! echo "$RESULT" | grep -qF '**Active Tasks**: Still contains placeholder text'; then
+if [[ "$RESULT" == *'**Acceptance Criteria**: Still contains placeholder text'* ]] && \
+   [[ "$RESULT" != *'**Ultimate Goal**: Still contains placeholder text'* ]] && \
+   [[ "$RESULT" != *'**Active Tasks**: Still contains placeholder text'* ]]; then
     pass "Stop hook only reports Acceptance Criteria placeholder"
 else
     fail "Section-specific Acceptance Criteria" "only **Acceptance Criteria**: Still contains placeholder text" "output: $RESULT"
@@ -1047,9 +1047,9 @@ EXIT_CODE=$?
 set -e
 # Should report Active Tasks missing-item line but NOT Goal or AC missing-item lines
 # The exact format is: **<Section>**: Still contains placeholder text
-if echo "$RESULT" | grep -qF '**Active Tasks**: Still contains placeholder text' && \
-   ! echo "$RESULT" | grep -qF '**Ultimate Goal**: Still contains placeholder text' && \
-   ! echo "$RESULT" | grep -qF '**Acceptance Criteria**: Still contains placeholder text'; then
+if [[ "$RESULT" == *'**Active Tasks**: Still contains placeholder text'* ]] && \
+   [[ "$RESULT" != *'**Ultimate Goal**: Still contains placeholder text'* ]] && \
+   [[ "$RESULT" != *'**Acceptance Criteria**: Still contains placeholder text'* ]]; then
     pass "Stop hook only reports Active Tasks placeholder"
 else
     fail "Section-specific Active Tasks" "only **Active Tasks**: Still contains placeholder text" "output: $RESULT"
@@ -1117,9 +1117,9 @@ EXIT_CODE=$?
 set -e
 # Should report all three missing-item lines
 # The exact format is: **<Section>**: Still contains placeholder text
-if echo "$RESULT" | grep -qF '**Ultimate Goal**: Still contains placeholder text' && \
-   echo "$RESULT" | grep -qF '**Acceptance Criteria**: Still contains placeholder text' && \
-   echo "$RESULT" | grep -qF '**Active Tasks**: Still contains placeholder text'; then
+if [[ "$RESULT" == *'**Ultimate Goal**: Still contains placeholder text'* ]] && \
+   [[ "$RESULT" == *'**Acceptance Criteria**: Still contains placeholder text'* ]] && \
+   [[ "$RESULT" == *'**Active Tasks**: Still contains placeholder text'* ]]; then
     pass "Stop hook reports all three placeholders when all missing"
 else
     fail "All placeholders reported" "all three **<Section>**: Still contains placeholder text lines" "output: $RESULT"

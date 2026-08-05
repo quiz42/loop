@@ -369,7 +369,7 @@ CANCEL_SCRIPT="$SCRIPT_DIR/../scripts/cancel-rlcr-loop.sh"
 cd "$TEST_DIR/project"
 CANCEL_OUTPUT=$(CLAUDE_PROJECT_DIR="$TEST_DIR/project" bash "$CANCEL_SCRIPT" 2>&1) || true
 
-if echo "$CANCEL_OUTPUT" | grep -q "CANCELLED"; then
+if [[ "$CANCEL_OUTPUT" == *"CANCELLED"* ]]; then
     pass "cancel script works regardless of session_id"
 else
     fail "cancel script works regardless of session_id" "CANCELLED in output" "$CANCEL_OUTPUT"
@@ -433,7 +433,7 @@ EOF
 cd "$TEST_DIR/project"
 CANCEL_OUTPUT=$(CLAUDE_PROJECT_DIR="$TEST_DIR/project" bash "$CANCEL_SCRIPT" 2>&1) || true
 
-if echo "$CANCEL_OUTPUT" | grep -q "NO_LOOP"; then
+if [[ "$CANCEL_OUTPUT" == *"NO_LOOP"* ]]; then
     pass "cancel script reports no active loop when newest dir is completed"
 else
     fail "cancel script reports no active loop when newest dir is completed" "NO_LOOP in output" "$CANCEL_OUTPUT"

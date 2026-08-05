@@ -179,7 +179,7 @@ echo "Test 12: Variable value with newlines preserved"
 TEMPLATE="Content: {{VAR}}"
 VALUE=$'line1\nline2\nline3'
 RESULT=$(render_template "$TEMPLATE" "VAR=$VALUE" 2>/dev/null) || true
-if echo "$RESULT" | grep -q "line1"; then
+if [[ "$RESULT" == *"line1"* ]]; then
     pass "Newlines in value preserved"
 else
     fail "Newlines in value" "contains line1" "$RESULT"
@@ -211,7 +211,7 @@ echo "Test 14: Template with BOM handled"
 # Create template with UTF-8 BOM
 printf '\xEF\xBB\xBFHello {{NAME}}!' > "$TEST_DIR/bom.md"
 RESULT=$(load_and_render_safe "$TEST_DIR" "bom.md" "fallback" "NAME=World" 2>/dev/null) || true
-if echo "$RESULT" | grep -q "Hello"; then
+if [[ "$RESULT" == *"Hello"* ]]; then
     pass "BOM in template handled"
 else
     fail "BOM handling" "contains Hello" "$RESULT"

@@ -197,7 +197,7 @@ set +e
 RESULT=$(end_loop "$END_LOOP_TEST_DIR" "$END_LOOP_TEST_DIR/state.md" "invalid_reason" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -ne 0 ]] && echo "$RESULT" | grep -q "Invalid end_loop reason"; then
+if [[ $EXIT_CODE -ne 0 && "$RESULT" == *"Invalid end_loop reason"* ]]; then
     pass "end_loop rejects invalid reason"
 else
     fail "end_loop invalid reason" "exit 1 with invalid reason error" "exit $EXIT_CODE: $RESULT"
@@ -236,7 +236,7 @@ set +e
 RESULT=$(end_loop "$END_LOOP_TEST_DIR" "$END_LOOP_TEST_DIR/state.md" "complete" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -ne 0 ]] && echo "$RESULT" | grep -q "State file not found"; then
+if [[ $EXIT_CODE -ne 0 && "$RESULT" == *"State file not found"* ]]; then
     pass "end_loop handles missing state file"
 else
     fail "end_loop missing state file" "exit 1 with not found warning" "exit $EXIT_CODE: $RESULT"

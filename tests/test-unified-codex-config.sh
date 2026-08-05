@@ -528,7 +528,7 @@ STUB_EOF
         bash "$STOP_HOOK" 2>&1 >/dev/null) || true
 
     # Assert: hook reported the invalid effort error (now "codex effort" not "reviewer effort")
-    if echo "$hook_stderr" | grep -q "Invalid codex effort"; then
+    if [[ "$hook_stderr" == *"Invalid codex effort"* ]]; then
         pass "stop-hook behavioral: rejects 'superhigh' effort with error message"
     else
         fail "stop-hook behavioral: rejects 'superhigh' effort with error message" "contains 'Invalid codex effort'" "$hook_stderr"
@@ -624,7 +624,7 @@ PLAN_EOF
     fi
 
     # Verify output does NOT mention "Reviewer Model" or "Reviewer Effort"
-    if echo "$output" | grep -q 'Reviewer Model\|Reviewer Effort'; then
+    if grep -q 'Reviewer Model\|Reviewer Effort' <<< "$output"; then
         fail "setup execution: output does not mention Reviewer Model/Effort"
     else
         pass "setup execution: output does not mention Reviewer Model/Effort"
@@ -738,13 +738,13 @@ MOCK_EOF
         portable_run_with_timeout 30 bash "$ASK_CODEX" "test question" 2>&1 >/dev/null) || true
 
     # Stderr should report config-backed model and effort
-    if echo "$ask_stderr" | grep -q 'model=o3-mini'; then
+    if [[ "$ask_stderr" == *'model=o3-mini'* ]]; then
         pass "ask-codex runtime: config-backed model reported in stderr (o3-mini)"
     else
         fail "ask-codex runtime: config-backed model reported in stderr (o3-mini)" "contains 'model=o3-mini'" "$ask_stderr"
     fi
 
-    if echo "$ask_stderr" | grep -q 'effort=low'; then
+    if [[ "$ask_stderr" == *'effort=low'* ]]; then
         pass "ask-codex runtime: config-backed effort reported in stderr (low)"
     else
         fail "ask-codex runtime: config-backed effort reported in stderr (low)" "contains 'effort=low'" "$ask_stderr"
@@ -757,13 +757,13 @@ MOCK_EOF
         PATH="$MOCK_BIN:$PATH" \
         portable_run_with_timeout 30 bash "$ASK_CODEX" --codex-model override-model:xhigh "test question" 2>&1 >/dev/null) || true
 
-    if echo "$override_stderr" | grep -q 'model=override-model'; then
+    if [[ "$override_stderr" == *'model=override-model'* ]]; then
         pass "ask-codex runtime: --codex-model override reported in stderr (override-model)"
     else
         fail "ask-codex runtime: --codex-model override reported in stderr (override-model)" "contains 'model=override-model'" "$override_stderr"
     fi
 
-    if echo "$override_stderr" | grep -q 'effort=xhigh'; then
+    if [[ "$override_stderr" == *'effort=xhigh'* ]]; then
         pass "ask-codex runtime: --codex-model override effort in stderr (xhigh)"
     else
         fail "ask-codex runtime: --codex-model override effort in stderr (xhigh)" "contains 'effort=xhigh'" "$override_stderr"

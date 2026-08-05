@@ -407,7 +407,7 @@ set +e
 RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-write-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 2 ]] && echo "$RESULT" | grep -qi "finalize"; then
+if [[ $EXIT_CODE -eq 2 ]] && grep -qi "finalize" <<< "$RESULT"; then
     pass "Write validator blocks finalize-state.md"
 else
     fail "Write validator finalize-state.md" "exit 2 with finalize error" "exit $EXIT_CODE, output: $RESULT"
@@ -419,7 +419,7 @@ set +e
 RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-write-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 2 ]] && echo "$RESULT" | grep -qi "contract"; then
+if [[ $EXIT_CODE -eq 2 ]] && grep -qi "contract" <<< "$RESULT"; then
     pass "Write validator blocks finalize-phase round contract"
 else
     fail "Write validator finalize-phase contract" "exit 2 with contract error" "exit $EXIT_CODE, output: $RESULT"
@@ -431,7 +431,7 @@ set +e
 RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-edit-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 2 ]] && echo "$RESULT" | grep -qi "finalize"; then
+if [[ $EXIT_CODE -eq 2 ]] && grep -qi "finalize" <<< "$RESULT"; then
     pass "Edit validator blocks finalize-state.md"
 else
     fail "Edit validator finalize-state.md" "exit 2 with finalize error" "exit $EXIT_CODE, output: $RESULT"
@@ -443,7 +443,7 @@ set +e
 RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-edit-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 2 ]] && echo "$RESULT" | grep -qi "contract"; then
+if [[ $EXIT_CODE -eq 2 ]] && grep -qi "contract" <<< "$RESULT"; then
     pass "Edit validator blocks finalize-phase round contract"
 else
     fail "Edit validator finalize-phase contract" "exit 2 with contract error" "exit $EXIT_CODE, output: $RESULT"
@@ -455,7 +455,7 @@ set +e
 RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-bash-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 2 ]] && echo "$RESULT" | grep -qi "finalize"; then
+if [[ $EXIT_CODE -eq 2 ]] && grep -qi "finalize" <<< "$RESULT"; then
     pass "Bash validator blocks finalize-state.md modification"
 else
     fail "Bash validator finalize-state.md" "exit 2 with finalize error" "exit $EXIT_CODE, output: $RESULT"
@@ -467,7 +467,7 @@ set +e
 RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-bash-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 2 ]] && echo "$RESULT" | grep -qi "finalize"; then
+if [[ $EXIT_CODE -eq 2 ]] && grep -qi "finalize" <<< "$RESULT"; then
     pass "Bash validator blocks mv FROM finalize-state.md"
 else
     fail "Bash validator mv FROM finalize-state.md" "exit 2 with finalize error" "exit $EXIT_CODE, output: $RESULT"
@@ -479,7 +479,7 @@ set +e
 RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-bash-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 2 ]] && echo "$RESULT" | grep -qi "finalize"; then
+if [[ $EXIT_CODE -eq 2 ]] && grep -qi "finalize" <<< "$RESULT"; then
     pass "Bash validator blocks cp FROM finalize-state.md"
 else
     fail "Bash validator cp FROM finalize-state.md" "exit 2 with finalize error" "exit $EXIT_CODE, output: $RESULT"
@@ -508,7 +508,7 @@ RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-codex-stop-hook.sh" 2>&1
 EXIT_CODE=$?
 set -e
 # Check if it blocks with missing summary message
-if echo "$RESULT" | grep -q '"decision".*block' && echo "$RESULT" | grep -qi "summary"; then
+if grep -q '"decision".*block' <<< "$RESULT" && grep -qi "summary" <<< "$RESULT"; then
     pass "Finalize phase blocks exit when summary missing"
 else
     fail "Finalize phase missing summary check" "block with summary error" "exit $EXIT_CODE, output: $RESULT"
@@ -535,7 +535,7 @@ set +e
 RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-codex-stop-hook.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if echo "$RESULT" | grep -q '"decision".*block' && echo "$RESULT" | grep -qi "uncommitted\|git\|clean"; then
+if grep -q '"decision".*block' <<< "$RESULT" && grep -qi "uncommitted\|git\|clean" <<< "$RESULT"; then
     pass "Finalize phase blocks exit when git not clean"
 else
     fail "Finalize phase git clean check" "block with git error" "exit $EXIT_CODE, output: $RESULT"
@@ -555,7 +555,7 @@ RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-codex-stop-hook.sh" 2>&1
 EXIT_CODE=$?
 set -e
 # Should allow exit (exit 0, no block decision)
-if [[ $EXIT_CODE -eq 0 ]] && ! echo "$RESULT" | grep -q '"decision".*block'; then
+if [[ $EXIT_CODE -eq 0 ]] && ! grep -q '"decision".*block' <<< "$RESULT"; then
     # Also verify state file renamed to complete-state.md
     if [[ -f "$LOOP_DIR/complete-state.md" ]] && [[ ! -f "$LOOP_DIR/finalize-state.md" ]]; then
         pass "Finalize phase completes and renames to complete-state.md"
@@ -601,9 +601,9 @@ RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-codex-stop-hook.sh" 2>&1
 EXIT_CODE=$?
 set -e
 # Should block with Finalize phase prompt and create finalize-state.md
-if echo "$RESULT" | grep -q '"decision".*block' && [[ -f "$LOOP_DIR/finalize-state.md" ]] && [[ ! -f "$LOOP_DIR/state.md" ]]; then
+if grep -q '"decision".*block' <<< "$RESULT" && [[ -f "$LOOP_DIR/finalize-state.md" ]] && [[ ! -f "$LOOP_DIR/state.md" ]]; then
     # Also check the prompt mentions code-simplifier
-    if echo "$RESULT" | grep -qi "simplif"; then
+    if grep -qi "simplif" <<< "$RESULT"; then
         pass "COMPLETE triggers Finalize Phase (state.md -> finalize-state.md, block with Finalize prompt)"
     else
         fail "COMPLETE Finalize prompt" "prompt mentioning simplification" "output: $RESULT"
@@ -674,7 +674,7 @@ set -e
 
 # Should block (not allow exit) and NOT create finalize-state.md or complete-state.md
 # state.md should still exist (or review_started should be true)
-if echo "$RESULT" | grep -q '"decision".*block'; then
+if grep -q '"decision".*block' <<< "$RESULT"; then
     # Check that we did NOT transition to finalize
     if [[ ! -f "$LOOP_DIR/finalize-state.md" ]] && [[ ! -f "$LOOP_DIR/complete-state.md" ]]; then
         pass "COMPLETE with codex review failure blocks exit"
@@ -687,7 +687,7 @@ fi
 
 # T-NEG-8b: Verify block message mentions review failure
 echo "T-NEG-8b: Block message indicates review failure"
-if echo "$RESULT" | grep -qi "review.*fail\|codex.*fail\|retry"; then
+if grep -qi "review.*fail\|codex.*fail\|retry" <<< "$RESULT"; then
     pass "Block message indicates review failure"
 else
     fail "Review failure message" "message mentioning review failure/retry" "output does not indicate failure"
@@ -734,7 +734,7 @@ EXIT_CODE=$?
 set -e
 
 # Should block (not allow exit) and NOT create finalize-state.md or complete-state.md
-if echo "$RESULT" | grep -q '"decision".*block'; then
+if grep -q '"decision".*block' <<< "$RESULT"; then
     # Check that we did NOT transition to finalize
     if [[ ! -f "$LOOP_DIR/finalize-state.md" ]] && [[ ! -f "$LOOP_DIR/complete-state.md" ]]; then
         pass "COMPLETE with empty codex review output blocks exit"
@@ -778,7 +778,7 @@ fi
 
 # T-NEG-9c: Verify block message mentions empty output or retry
 echo "T-NEG-9c: Block message indicates empty output or need for retry"
-if echo "$RESULT" | grep -qi "empty\|no.*output\|retry\|fail"; then
+if grep -qi "empty\|no.*output\|retry\|fail" <<< "$RESULT"; then
     pass "Block message indicates empty output or retry needed"
 else
     fail "Empty output message" "message mentioning empty output/retry" "output does not indicate empty/retry"
@@ -827,7 +827,7 @@ RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-codex-stop-hook.sh" 2>&1
 EXIT_CODE=$?
 set -e
 # Should block with incomplete todos message
-if echo "$RESULT" | grep -q '"decision".*block' && echo "$RESULT" | grep -qi "todo\|task"; then
+if grep -q '"decision".*block' <<< "$RESULT" && grep -qi "todo\|task" <<< "$RESULT"; then
     pass "Finalize phase blocks exit when todos incomplete"
 else
     fail "Finalize phase incomplete todos check" "block with todos error" "exit $EXIT_CODE, output: $RESULT"
@@ -885,7 +885,7 @@ set -e
 # 1. Should block (not allow exit)
 # 2. state.md should still exist (not renamed to finalize-state.md or complete-state.md)
 # 3. Should produce feedback for next round (either in output or via round file)
-if echo "$RESULT" | grep -q '"decision".*block' && [[ -f "$LOOP_DIR/state.md" ]] && [[ ! -f "$LOOP_DIR/finalize-state.md" ]] && [[ ! -f "$LOOP_DIR/complete-state.md" ]]; then
+if grep -q '"decision".*block' <<< "$RESULT" && [[ -f "$LOOP_DIR/state.md" ]] && [[ ! -f "$LOOP_DIR/finalize-state.md" ]] && [[ ! -f "$LOOP_DIR/complete-state.md" ]]; then
     pass "Normal round blocks with feedback, keeps state.md intact (not renamed)"
 else
     fail "Normal round behavior" "block with state.md intact" "exit $EXIT_CODE, files: $(ls $LOOP_DIR/*state*.md 2>/dev/null || echo 'none'), output: $RESULT"
@@ -910,7 +910,7 @@ fi
 # T-POS-5d: Verify review feedback content is included in block output
 # The mock Codex outputs "Issue 1: Fix the bug" - this should appear in the reason
 echo "T-POS-5d: Block output contains Codex review feedback"
-if echo "$RESULT" | grep -q "Issue 1"; then
+if [[ "$RESULT" == *"Issue 1"* ]]; then
     pass "Block output contains Codex review feedback"
 else
     fail "Review feedback in output" "output contains 'Issue 1' from Codex review" "output does not contain expected feedback"
@@ -955,7 +955,7 @@ RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-codex-stop-hook.sh" 2>&1
 EXIT_CODE=$?
 set -e
 
-if echo "$RESULT" | grep -q '"decision".*block' && [[ -f "$LOOP_DIR/round-4-prompt.md" ]]; then
+if grep -q '"decision".*block' <<< "$RESULT" && [[ -f "$LOOP_DIR/round-4-prompt.md" ]]; then
     pass "Drift recovery round blocks exit and creates next prompt"
 else
     fail "Drift recovery prompt creation" "block with round-4 prompt" "exit $EXIT_CODE, output: $RESULT"
@@ -1003,7 +1003,7 @@ RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-codex-stop-hook.sh" 2>&1
 EXIT_CODE=$?
 set -e
 
-if echo "$RESULT" | grep -q '"decision".*block' && echo "$RESULT" | grep -qi "verdict"; then
+if grep -q '"decision".*block' <<< "$RESULT" && grep -qi "verdict" <<< "$RESULT"; then
     pass "Missing Mainline Progress Verdict blocks exit"
 else
     fail "Missing Mainline Progress Verdict" "block with verdict error" "exit $EXIT_CODE, output: $RESULT"
@@ -1054,7 +1054,7 @@ RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-codex-stop-hook.sh" 2>&1
 EXIT_CODE=$?
 set -e
 
-if [[ -f "$LOOP_DIR/stop-state.md" ]] && echo "$RESULT" | grep -qi "drift"; then
+if [[ -f "$LOOP_DIR/stop-state.md" ]] && grep -qi "drift" <<< "$RESULT"; then
     pass "Third stalled/regressed round stops the loop with drift message"
 else
     fail "Drift circuit breaker" "stop-state.md and drift message" "exit $EXIT_CODE, files: $(ls "$LOOP_DIR"/*state*.md 2>/dev/null || echo 'none'), output: $RESULT"
@@ -1111,7 +1111,7 @@ set +e
 RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-read-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 2 ]] && echo "$RESULT" | grep -qi "contract"; then
+if [[ $EXIT_CODE -eq 2 ]] && grep -qi "contract" <<< "$RESULT"; then
     pass "Read validator blocks finalize-phase round contract"
 else
     fail "Read validator finalize-phase contract" "exit 2 with contract error" "exit $EXIT_CODE, output: $RESULT"

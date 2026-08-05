@@ -64,7 +64,7 @@ echo "Test 3: Standard-sized template (1KB)"
 } > "$TEST_DIR/standard.md"
 
 RESULT=$(load_and_render "$TEST_DIR" "standard.md" "VAR=test_value")
-if echo "$RESULT" | grep -q "Variable: test_value"; then
+if [[ "$RESULT" == *"Variable: test_value"* ]]; then
     SIZE=$(echo "$RESULT" | wc -c)
     pass "Processes 1KB template correctly ($SIZE bytes)"
 else
@@ -144,7 +144,7 @@ START=$(portable_epoch_ms)
 RESULT=$(render_template "$TEMPLATE" "${VARS[@]}")
 END=$(portable_epoch_ms)
 ELAPSED_MS=$(( END - START ))
-if echo "$RESULT" | grep -q "Var50: value50"; then
+if [[ "$RESULT" == *"Var50: value50"* ]]; then
     pass "Handles 50 variable substitutions (${ELAPSED_MS}ms)"
 else
     fail "50 variables" "contains Var50: value50" "missing"
@@ -198,7 +198,7 @@ echo "Test 11: Newlines in value"
 TEMPLATE="Multi: {{MULTI}}"
 MULTILINE_VAL=$'Line1\nLine2\nLine3'
 RESULT=$(render_template "$TEMPLATE" "MULTI=$MULTILINE_VAL")
-if echo "$RESULT" | grep -q "Line1" && echo "$RESULT" | grep -q "Line3"; then
+if [[ "$RESULT" == *"Line1"* ]] && [[ "$RESULT" == *"Line3"* ]]; then
     pass "Handles newlines in value"
 else
     fail "Newlines" "Multi: Line1\\nLine2\\nLine3" "$RESULT"
