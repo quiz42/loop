@@ -320,39 +320,50 @@ portable_contains_cjk_or_emoji() {
 # gtimeout -> timeout -> python3 -> nothing -- either reaches for Python or gives
 # up. ADR-0003 keeps the Bash layer off Python, so tests use this instead.
 #
-# The limit is enforced, not merely requested, and enforcement needs two things:
+# WHAT IS GUARANTEED
 #
-#   * KILL after a grace period. TERM alone is unbounded because it can be
-#     trapped or ignored, so the worst case would be the command's own lifetime
-#     rather than the limit. Worst case is now the limit plus
-#     LOOP_PORTABLE_KILL_GRACE_MS.
+#   * The helper itself always returns within the limit plus
+#     LOOP_PORTABLE_KILL_GRACE_MS, with status 124 on expiry. TERM alone would not
+#     achieve this because it can be trapped or ignored, so KILL follows the grace
+#     period.
 #
-#   * Signalling the process group, not the direct child. `set -m` makes the
-#     command lead its own group, so `kill -- -PID` reaches every descendant,
-#     including any spawned after expiry was noticed. Signalling only the child
-#     and a snapshot of its children leaked grandchildren: the innermost `sleep`
-#     of a bash -> bash -> sleep tree survived, kept running, and could pollute
-#     later tests. This is what GNU timeout does by default -- its --foreground
-#     option is the opt-out, documented as the mode where "children of COMMAND
-#     will not be timed out".
+#   * Expiry terminates the command, its process group, and every process still
+#     descended from it -- both are needed. `set -m` puts the command in its own
+#     group so `kill -- -PID` catches processes spawned after expiry was noticed;
+#     the descendant walk catches processes that left that group, because a child
+#     running its own `set -m` gets a new process group but keeps its parent. Only
+#     signalling the group let the inner `sleep` of `bash -c 'set -m; sleep 30 &
+#     wait'` survive, and a caller capturing through $( ) then blocked for the
+#     descendant's full lifetime -- 31 seconds under a 1 second limit.
 #
-# stdin, stdout and stderr all stay wired to the caller's, which matters in three
-# ways. Output is not buffered, so a caller combining the streams with 2>&1 sees
-# them interleaved in the real order. stdin is preserved, so the helper is a
-# transparent stand-in for `timeout` rather than one that silently feeds the
-# command /dev/null. And nothing of ours holds the caller's pipe, so a command
-# substitution closes as soon as the tree is gone -- which is only safe because
-# the group kill above is thorough. An earlier version buffered to temp files to
-# work around a leaked descendant holding that pipe; fixing the leak properly made
-# the buffering, and both of its side effects, unnecessary.
+# WHAT IS NOT GUARANTEED
+#
+#   * A process that detaches from the tree entirely -- double-forking, or calling
+#     setsid -- is beyond reach, because after reparenting there is no link left to
+#     follow. If such a process holds the caller's stdout, a command substitution
+#     stays open until it exits, whatever this helper returns. GNU timeout has the
+#     same limitation; supervising deliberate daemons needs cgroups or job objects,
+#     not a shell.
+#
+# The command inherits the caller's stdin, stdout and stderr unchanged, so output
+# interleaving under 2>&1 is real, piped stdin arrives, a closed stderr stays
+# closed, and no auxiliary descriptor is reserved. An earlier version routed the
+# command's stderr through fd 3 so the subshell's own stderr could be silenced,
+# which broke a caller whose stderr was closed and clobbered a caller's fd 3.
+#
+# Job control makes Bash announce jobs on the owning shell's stderr, which would
+# land in a captured stream. Redirecting a single builtin does not help, because
+# Bash 3.2 reports a finished job at whichever command boundary it notices, so the
+# job is disowned as soon as it starts and its exit status is passed back through a
+# small status file instead of `wait`. Only the status goes through that file.
 #
 # The wait loop runs in the caller rather than in a background watchdog: a
 # `( sleep N; kill ... ) &` watchdog inherits the caller's stdout too, which once
 # turned a 4-second suite into 112 seconds.
 #
-# Caveat, shared with GNU timeout: because the command runs in a background
-# process group, a command that reads from a terminal gets SIGTTIN rather than the
-# terminal. Callers here always redirect or pipe stdin, so this does not arise.
+# Caveat, shared with GNU timeout: the command runs in a background process group,
+# so one that reads from a terminal gets SIGTTIN rather than the terminal. Callers
+# here always redirect or pipe stdin.
 #
 # Exit status: the command's own status, or 124 when the timeout fired, matching
 # GNU timeout so callers can tell the two apart.
@@ -364,17 +375,26 @@ portable_run_with_timeout() {
     local seconds="${1:-0}"
     shift
 
-    # A subshell keeps `set -m` and the fd juggling local. Its own stderr goes to
-    # /dev/null because Bash writes a "Terminated: 15" job notice there when it
-    # reaps a signalled job, which would otherwise land in the caller's captured
-    # output on every timeout; the command keeps the caller's real stderr on fd 3.
+    # A subshell keeps `set -m` local. No fd juggling: the command gets the
+    # caller's descriptors as they are.
     (
-        exec 3>&2
-        exec 2>/dev/null
         set -m
 
-        "$@" <&0 2>&3 &
+        # The job is removed from the job table immediately, because Bash 3.2
+        # emits "[1]+ Done" at whichever command boundary it happens to notice the
+        # exit -- somewhere inside the poll loop, not reliably at `wait` -- so
+        # redirecting any single builtin does not suppress it. Without a job to
+        # wait on, the exit status comes from a status file. Only the status is
+        # written there; the command's own output still goes straight to the
+        # caller, so stream ordering and stdin are unaffected.
+        status_file=$(mktemp) || exit 1
+        # The <&0 goes on the group, not on the command inside it: Bash gives a
+        # background command /dev/null for stdin unless it is redirected
+        # explicitly, and redirecting inside the group would only re-duplicate that
+        # /dev/null.
+        { "$@"; printf '%s\n' "$?" > "$status_file"; } <&0 &
         command_pid=$!
+        disown %1 2>/dev/null || disown "$command_pid" 2>/dev/null || true
 
         # Poll in tenths of a second. Bash reaps background children as they exit,
         # so kill -0 stops succeeding promptly rather than lingering on a zombie.
@@ -391,29 +411,67 @@ portable_run_with_timeout() {
         done
 
         if [ "$timed_out" -eq 1 ]; then
-            _portable_terminate_group "$command_pid"
+            # Snapshot the tree first: killing a parent reparents its children and
+            # loses the chain that identifies them.
+            descendants=$(_portable_descendants "$command_pid")
+            _portable_terminate_tree "$command_pid" "$descendants"
+            rm -f "$status_file"
+            exit 124
         fi
 
-        status=0
-        wait "$command_pid" || status=$?
-        if [ "$timed_out" -eq 1 ]; then
-            status=124
-        fi
+        # The wrapper writes the status before it exits, so by the time kill -0
+        # fails the file is complete.
+        status=$(cat "$status_file" 2>/dev/null)
+        rm -f "$status_file"
+        case "$status" in
+            '' | *[!0-9]*) status=1 ;;
+        esac
         exit "$status"
     )
 }
 
-# TERM a command's process group, then KILL whatever survived the grace period.
+# Print every process still descended from a pid, breadth first, space separated.
+# Prints nothing when pgrep is unavailable, in which case the caller falls back to
+# signalling the process group alone.
+_portable_descendants() {
+    local root="$1"
+    command -v pgrep >/dev/null 2>&1 || return 0
+
+    local queue="$root"
+    local found=""
+    local current children
+    while [ -n "$queue" ]; do
+        current="${queue%% *}"
+        case "$queue" in
+            *' '*) queue="${queue#* }" ;;
+            *) queue="" ;;
+        esac
+        children=$(pgrep -P "$current" 2>/dev/null | tr '\n' ' ')
+        if [ -n "$children" ]; then
+            found="$found $children"
+            queue="$queue $children"
+        fi
+    done
+
+    printf '%s' "$found"
+}
+
+# TERM a command's process group and any listed descendants, then KILL whatever
+# survived the grace period.
 #
-# The negative PID is the whole point: with job control on the command leads its
-# own group, so one signal reaches the entire tree. The group outlives its leader
-# as long as any member remains, so the KILL still lands on stragglers. Falls back
-# to signalling the single PID when the group signal is refused, which happens if
-# job control was unavailable and no separate group was ever created.
-_portable_terminate_group() {
+# The negative PID reaches the whole group, which the leader's own children join
+# automatically. The explicit list covers processes that changed group -- a child
+# running `set -m` gets its own group but is still a descendant -- and is collected
+# before anything is signalled, while the parent links still exist.
+_portable_terminate_tree() {
     local target="$1"
+    local descendants="${2:-}"
+    local pid
 
     kill -TERM -"$target" 2>/dev/null || kill -TERM "$target" 2>/dev/null
+    for pid in $descendants; do
+        kill -TERM "$pid" 2>/dev/null || true
+    done
 
     local grace=$((LOOP_PORTABLE_KILL_GRACE_MS / 100))
     [ "$grace" -lt 1 ] && grace=1
@@ -424,6 +482,9 @@ _portable_terminate_group() {
     done
 
     kill -KILL -"$target" 2>/dev/null || kill -KILL "$target" 2>/dev/null
+    for pid in $descendants; do
+        kill -KILL "$pid" 2>/dev/null || true
+    done
 }
 
 # ========================================

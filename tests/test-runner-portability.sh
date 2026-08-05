@@ -492,6 +492,62 @@ else
         "$TIMEOUT_DIRECT (as direct execution)" "$TIMEOUT_MERGED"
 fi
 
+# A descendant that starts its own job control gets a new process group and so
+# escapes the group signal, but it is still a child, which is what the descendant
+# walk is for. Signalling only the group let this survive and hold the command
+# substitution open for the descendant's whole lifetime: 31 seconds under a
+# one-second limit.
+TIMEOUT_PIDFILE="$TEST_DIR/escaped-worker.pid"
+rm -f "$TIMEOUT_PIDFILE"
+TIMEOUT_START=$(portable_epoch_ms)
+TIMEOUT_STATUS=0
+TIMEOUT_OUTPUT=$(portable_run_with_timeout 1 bash -c \
+    "set -m; sleep 30 & echo \$! > $TIMEOUT_PIDFILE; wait") || TIMEOUT_STATUS=$?
+TIMEOUT_ELAPSED=$(( $(portable_epoch_ms) - TIMEOUT_START ))
+
+if [[ "$TIMEOUT_STATUS" -eq 124 ]] && [[ "$TIMEOUT_ELAPSED" -lt 15000 ]]; then
+    pass "portable_run_with_timeout bounds a group-escaping descendant (${TIMEOUT_ELAPSED}ms)"
+else
+    fail "portable_run_with_timeout group-escaping descendant" \
+        "124 in under 15000 ms" "$TIMEOUT_STATUS in ${TIMEOUT_ELAPSED}ms"
+fi
+
+sleep 0.3
+TIMEOUT_ESCAPEE=$(cat "$TIMEOUT_PIDFILE" 2>/dev/null || true)
+if [[ -z "$TIMEOUT_ESCAPEE" ]]; then
+    fail "portable_run_with_timeout escapee cleanup" \
+        "the escapee pid to be recorded" "the fixture did not record one"
+elif kill -0 "$TIMEOUT_ESCAPEE" 2>/dev/null; then
+    kill -KILL "$TIMEOUT_ESCAPEE" 2>/dev/null || true
+    fail "portable_run_with_timeout escapee cleanup" \
+        "no survivor outside the process group" "pid $TIMEOUT_ESCAPEE outlived the timeout"
+else
+    pass "portable_run_with_timeout kills a descendant that left its process group"
+fi
+
+# A transparent stand-in for `timeout` must not reserve caller-owned descriptors.
+# Routing the command's stderr through fd 3 broke both of these.
+TIMEOUT_STATUS=0
+TIMEOUT_CLOSED=$(portable_run_with_timeout 5 sh -c 'printf OK' 2>&-) || TIMEOUT_STATUS=$?
+if [[ "$TIMEOUT_STATUS" -eq 0 && "$TIMEOUT_CLOSED" == "OK" ]]; then
+    pass "portable_run_with_timeout works with the caller's stderr closed"
+else
+    fail "portable_run_with_timeout closed stderr" "status 0 and OK" \
+        "status $TIMEOUT_STATUS and [$TIMEOUT_CLOSED]"
+fi
+
+printf 'fd3-payload' > "$TEST_DIR/fd3.txt"
+TIMEOUT_STATUS=0
+exec 3<"$TEST_DIR/fd3.txt"
+TIMEOUT_FD3=$(portable_run_with_timeout 5 bash -c 'cat <&3') || TIMEOUT_STATUS=$?
+exec 3<&-
+if [[ "$TIMEOUT_STATUS" -eq 0 && "$TIMEOUT_FD3" == "fd3-payload" ]]; then
+    pass "portable_run_with_timeout leaves the caller's fd 3 alone"
+else
+    fail "portable_run_with_timeout fd 3" "status 0 and fd3-payload" \
+        "status $TIMEOUT_STATUS and [$TIMEOUT_FD3]"
+fi
+
 # Bash announces a signal-killed job on the owning shell's stderr. That notice
 # must not reach the caller, or every timeout would inject noise into a captured
 # stream.
