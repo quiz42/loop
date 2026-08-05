@@ -322,28 +322,39 @@ portable_contains_cjk_or_emoji() {
 #
 # WHAT IS GUARANTEED
 #
-#   * The helper itself always returns within the limit plus
-#     LOOP_PORTABLE_KILL_GRACE_MS, with status 124 on expiry. TERM alone would not
-#     achieve this because it can be trapped or ignored, so KILL follows the grace
-#     period.
+#   * The function always returns within the limit plus
+#     LOOP_PORTABLE_KILL_GRACE_MS, with status 124 on expiry. This holds no matter
+#     what the command spawns, because the wait loop and the kill are the
+#     function's own; TERM alone would not, since it can be trapped or ignored, so
+#     KILL follows the grace period.
 #
-#   * Expiry terminates the command, its process group, and every process still
-#     descended from it -- both are needed. `set -m` puts the command in its own
-#     group so `kill -- -PID` catches processes spawned after expiry was noticed;
-#     the descendant walk catches processes that left that group, because a child
-#     running its own `set -m` gets a new process group but keeps its parent. Only
-#     signalling the group let the inner `sleep` of `bash -c 'set -m; sleep 30 &
-#     wait'` survive, and a caller capturing through $( ) then blocked for the
-#     descendant's full lifetime -- 31 seconds under a 1 second limit.
+#   * The exit status is the command's own, or 124 on expiry, regardless of the
+#     caller's `set -e` (the wrapper runs with errexit off; see `set +e` below).
 #
-# WHAT IS NOT GUARANTEED
+#   * At expiry the command, its process group, and every descendant that exists
+#     at that moment are signalled. `set -m` puts the command in its own group so
+#     `kill -- -PID` catches later arrivals into that group; the pre-signal
+#     descendant walk catches descendants that already left the group (a child
+#     that ran its own `set -m`). Signalling only the group left such a child
+#     alive.
 #
-#   * A process that detaches from the tree entirely -- double-forking, or calling
-#     setsid -- is beyond reach, because after reparenting there is no link left to
-#     follow. If such a process holds the caller's stdout, a command substitution
-#     stays open until it exits, whatever this helper returns. GNU timeout has the
-#     same limitation; supervising deliberate daemons needs cgroups or job objects,
-#     not a shell.
+# WHAT IS NOT GUARANTEED, and why a stronger promise is not possible in shell
+#
+#   * A process that leaves the tracked tree *after* the snapshot cannot be
+#     reached. Two ways to do that: a TERM handler that starts its own process
+#     group (`trap 'set -m; sleep & wait' TERM`), or a double-fork / setsid
+#     daemon. In both cases the group leader dies to the signal and the survivor
+#     is reparented to init, so no parent link remains for `pgrep -P` to follow --
+#     re-snapshotting after the grace period does not help, as the anchor is
+#     already gone. GNU timeout has the same limitation; closing it needs cgroups
+#     or job objects, not a shell, which is out of scope for a test helper (see
+#     issue #20).
+#
+#   * The consequence is scoped to output capture: if such an escapee inherited
+#     the caller's stdout, a command substitution `out=$(portable_run_with_timeout
+#     ...)` around the call stays open until the escapee exits, even though the
+#     function itself already returned 124. A non-capturing call is unaffected.
+#     No call site in this repo runs a command that does this.
 #
 # The command inherits the caller's stdin, stdout and stderr unchanged, so output
 # interleaving under 2>&1 is real, piped stdin arrives, a closed stderr stays
@@ -379,6 +390,13 @@ portable_run_with_timeout() {
     # caller's descriptors as they are.
     (
         set -m
+        # Disable errexit inside the wrapper regardless of the caller's setting.
+        # The helper does its own explicit status handling, so an inherited
+        # `set -e` must not abort the status-file write when the command exits
+        # non-zero -- that would turn a real exit 7 into an empty file, reported
+        # as 1. The command runs in its own process, so its own errexit is
+        # unaffected.
+        set +e
 
         # The job is removed from the job table immediately, because Bash 3.2
         # emits "[1]+ Done" at whichever command boundary it happens to notice the
