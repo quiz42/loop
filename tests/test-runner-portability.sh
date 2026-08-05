@@ -957,6 +957,17 @@ find "$SCRIPT_DIR" -name '*.sh' -type f -print0 2>/dev/null \
         report("grep-pcre", "grep -P; BSD grep has no PCRE support")
     }
 
+    # `echo`/`printf` writing a variable, piped into `grep -q`, races under
+    # pipefail: grep exits on the match and closes the pipe, the still-writing
+    # builtin takes SIGPIPE, the pipeline reports 141, and a matching assertion
+    # reads as false (issue #22). Match only echo/printf directly feeding a grep
+    # bundle that carries a `q`, so a real command piped into grep -q (head, sed,
+    # git, another grep) is not flagged. Use `[[ "$var" == *lit* ]]` for a literal
+    # substring, or feed grep with a here-string: `grep ... <<< "$var"`.
+    /(^|[^[:alnum:]_])(echo|printf)[^|#]*\|[[:space:]]*grep[[:space:]]*(-[A-Za-z]+[[:space:]]+)*-[A-Za-z]*q[A-Za-z]*([[:space:]]|$)/ {
+        report("pipefail-grep-q", "echo/printf piped into grep -q races under pipefail; use [[ == *lit* ]] or a here-string")
+    }
+
     function report(rule, message) {
         printf "%s:%d: %s: %s\n", FILENAME, FNR, rule, message
     }
