@@ -558,40 +558,58 @@ else
     fail "portable_run_with_timeout job notice" "(nothing on stderr)" "$TIMEOUT_NOISE"
 fi
 
-# The status is the command's own even when the caller runs under errexit. The
-# wrapper does its own status handling with errexit off, so an inherited set -e
-# cannot turn a real non-zero exit into a spurious 1. A timeout under errexit is
-# still a non-zero result, so guard the call as any errexit caller must.
-TIMEOUT_ERREXIT=$(
-    set -e
-    rc=0
-    portable_run_with_timeout 5 bash -c 'exit 7' || rc=$?
-    printf '%s' "$rc"
-)
-if [[ "$TIMEOUT_ERREXIT" == "7" ]]; then
-    pass "portable_run_with_timeout preserves the exit status under caller set -e"
+# The status is the command's own even when the caller runs under errexit.
+#
+# This must be exercised in a separate shell that runs the call UNGUARDED under
+# `set -e`. Wrapping the call in `|| rc=$?` (the obvious form) puts it in Bash's
+# errexit-ignored conditional context, so the assertion would pass even without
+# the `set +e` inside the helper -- a vacuous test. An external child does not
+# inherit that OR-list exception, so running the call bare there genuinely
+# depends on the helper writing the true status. Without the helper's `set +e`,
+# the inherited errexit empties the status file and both cases return 1.
+#
+# The outer capture stays guarded; it is the inner child that must be unguarded.
+run_status_under_errexit() {
+    local child_status=0
+    bash -c "set -e; source '$SCRIPT_DIR/portable-helpers.sh'; $1" \
+        >/dev/null 2>&1 || child_status=$?
+    printf '%s' "$child_status"
+}
+
+ERREXIT_EXIT=$(run_status_under_errexit "portable_run_with_timeout 5 bash -c 'exit 7'")
+if [[ "$ERREXIT_EXIT" == "7" ]]; then
+    pass "portable_run_with_timeout returns the command status under an unguarded set -e caller"
 else
-    fail "portable_run_with_timeout status under set -e" "7" "$TIMEOUT_ERREXIT"
+    fail "portable_run_with_timeout status under set -e" "7" "$ERREXIT_EXIT"
+fi
+
+ERREXIT_TIMEOUT=$(run_status_under_errexit "portable_run_with_timeout 1 sleep 5")
+if [[ "$ERREXIT_TIMEOUT" == "124" ]]; then
+    pass "portable_run_with_timeout returns 124 under an unguarded set -e caller"
+else
+    fail "portable_run_with_timeout timeout status under set -e" "124" "$ERREXIT_TIMEOUT"
 fi
 
 # The bound is on the function, not on output capture. A command that respawns
 # into a new process group from a TERM handler escapes the kill -- its group
 # leader dies to the signal and the survivor is reparented, so no link remains to
 # follow, exactly as for a setsid daemon and exactly as GNU timeout behaves. The
-# function still returns within the limit plus grace; only a $( ) capture around
-# the call would stay open while such an escapee holds the pipe. Assert the
-# guaranteed part -- the function's own bound -- and leave the documented capture
-# limitation to the header. A non-capturing call is used here deliberately.
+# function still returns within the limit plus grace; a caller whose stdout is a
+# pipe (a $( ) capture or a pipeline) would stay open while such an escapee holds
+# it. Assert the guaranteed part -- the function's own bound -- and leave the
+# documented pipe caveat to the header. A non-capturing call is used here.
 #
-# The handler records the escapee's own pid so this test can reap exactly it, not
-# a global `pkill` that would hit other suites' sleeps in the parallel runner.
+# The handler records the escapee's own pid, into a path passed as an argument
+# rather than interpolated into the generated script, so this test can reap
+# exactly that pid instead of a global `pkill` that would hit other suites'
+# sleeps in the parallel runner.
 TIMEOUT_ESCAPEE_PID="$TEST_DIR/term-escapee.pid"
 rm -f "$TIMEOUT_ESCAPEE_PID"
 TIMEOUT_START=$(portable_epoch_ms)
 TIMEOUT_STATUS=0
 portable_run_with_timeout 1 \
-    bash -c "trap 'set -m; sleep 30 & echo \$! > $TIMEOUT_ESCAPEE_PID; wait' TERM
-             while :; do sleep 1; done" \
+    bash -c 'trap "set -m; sleep 30 & echo \$! > \"\$1\"; wait" TERM
+             while :; do sleep 1; done' _ "$TIMEOUT_ESCAPEE_PID" \
     >/dev/null 2>&1 || TIMEOUT_STATUS=$?
 TIMEOUT_ELAPSED=$(( $(portable_epoch_ms) - TIMEOUT_START ))
 if [[ "$TIMEOUT_STATUS" -eq 124 ]] && [[ "$TIMEOUT_ELAPSED" -lt 15000 ]]; then
@@ -600,9 +618,25 @@ else
     fail "portable_run_with_timeout TERM-handler bound" \
         "124 in under 15000 ms" "$TIMEOUT_STATUS in ${TIMEOUT_ELAPSED}ms"
 fi
-# Reap the escapee the header documents as unreachable, by its recorded pid only.
+
+# The fixture only proves anything if the handler actually ran and spawned the
+# escapee; assert that before reaping it, so a handler that silently failed to
+# fire cannot let the bound assertion pass vacuously.
 TIMEOUT_ESCAPEE=$(cat "$TIMEOUT_ESCAPEE_PID" 2>/dev/null || true)
-[[ -n "$TIMEOUT_ESCAPEE" ]] && kill -KILL "$TIMEOUT_ESCAPEE" 2>/dev/null || true
+if [[ -n "$TIMEOUT_ESCAPEE" ]] && kill -0 "$TIMEOUT_ESCAPEE" 2>/dev/null; then
+    pass "the TERM-handler escapee was actually created (and outlives the group kill)"
+    kill -KILL "$TIMEOUT_ESCAPEE" 2>/dev/null || true
+    # Give the kill a moment, then confirm the targeted reap removed exactly it.
+    sleep 0.2
+    if kill -0 "$TIMEOUT_ESCAPEE" 2>/dev/null; then
+        fail "targeted escapee cleanup" "escapee $TIMEOUT_ESCAPEE gone" "still alive"
+    else
+        pass "targeted cleanup removed the escapee by its recorded pid"
+    fi
+else
+    fail "the TERM-handler escapee was actually created" \
+        "a live pid in $TIMEOUT_ESCAPEE_PID" "[$TIMEOUT_ESCAPEE]"
+fi
 
 # ========================================
 # Temp directories

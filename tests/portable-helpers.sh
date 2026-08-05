@@ -350,11 +350,13 @@ portable_contains_cjk_or_emoji() {
 #     or job objects, not a shell, which is out of scope for a test helper (see
 #     issue #20).
 #
-#   * The consequence is scoped to output capture: if such an escapee inherited
-#     the caller's stdout, a command substitution `out=$(portable_run_with_timeout
-#     ...)` around the call stays open until the escapee exits, even though the
-#     function itself already returned 124. A non-capturing call is unaffected.
-#     No call site in this repo runs a command that does this.
+#   * The consequence is scoped to output liveness: if such an escapee inherited
+#     the caller's stdout and that stdout is a pipe, the pipe stays open until the
+#     escapee exits, even though the function itself already returned 124. This
+#     covers both a command substitution `out=$(portable_run_with_timeout ...)`
+#     and a pipeline `portable_run_with_timeout ... | consumer` -- they have the
+#     same liveness property. A call whose stdout is a terminal or a regular file
+#     is unaffected. No call site in this repo runs a command that does this.
 #
 # The command inherits the caller's stdin, stdout and stderr unchanged, so output
 # interleaving under 2>&1 is real, piped stdin arrives, a closed stderr stays
@@ -394,8 +396,12 @@ portable_run_with_timeout() {
         # The helper does its own explicit status handling, so an inherited
         # `set -e` must not abort the status-file write when the command exits
         # non-zero -- that would turn a real exit 7 into an empty file, reported
-        # as 1. The command runs in its own process, so its own errexit is
-        # unaffected.
+        # as 1.
+        #
+        # This helper is for external commands (`bash ...`, a script, a binary),
+        # which run as their own process and keep their own errexit. A Bash
+        # function or builtin passed as "$@" would run in THIS subshell after the
+        # `set +e` and so would not see its own errexit -- do not pass one.
         set +e
 
         # The job is removed from the job table immediately, because Bash 3.2
