@@ -22,6 +22,9 @@ SKILLS_DIR="$PROJECT_ROOT/skills"
 DOCS_DIR="$PROJECT_ROOT/docs"
 CLAUDE_PLUGIN_DIR="$PROJECT_ROOT/.claude-plugin"
 
+# shellcheck source=tests/portable-helpers.sh
+source "$SCRIPT_DIR/portable-helpers.sh"
+
 REFINE_PLAN_CMD="$COMMANDS_DIR/refine-plan.md"
 REFINE_PLAN_QA_TEMPLATE="$PROMPT_TEMPLATE_DIR/refine-plan-qa-template.md"
 VALIDATE_SCRIPT="$SCRIPTS_DIR/validate-refine-plan-io.sh"
@@ -117,7 +120,9 @@ assert_equals() {
 frontmatter_value() {
     local file="$1"
     local key="$2"
-    sed -n "/^---$/,/^---$/{ /^${key}:[[:space:]]*/{ s/^${key}:[[:space:]]*//p; q; } }" "$file"
+    # portable_frontmatter_value replaces a nested-brace sed expression that
+    # BSD sed rejects outright.
+    portable_frontmatter_value "$file" "$key"
 }
 
 json_first_string_value() {
@@ -139,7 +144,9 @@ trim_string() {
 }
 
 collapse_whitespace() {
-    printf '%s' "$1" | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//'
+    # tr -s squeezes runs of whitespace. The previous "sed 's/[[:space:]]\+//'"
+    # relied on the GNU BRE "\+" extension, which BSD sed treats literally.
+    printf '%s' "$1" | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//'
 }
 
 VALIDATOR_OUTPUT=""
@@ -530,17 +537,20 @@ scan_reference_comments() {
 }
 
 comment_matches_question() {
-    local text="${1,,}"
+    local text
+    text="$(portable_to_lower "$1")"
     [[ "$text" == *"why"* || "$text" == *"how"* || "$text" == *"what"* || "$text" == *"explain"* || "$text" == *"clarify"* || "$text" == *"unclear"* ]]
 }
 
 comment_matches_change_request() {
-    local text="${1,,}"
+    local text
+    text="$(portable_to_lower "$1")"
     [[ "$text" == *"add"* || "$text" == *"remove"* || "$text" == *"delete"* || "$text" == *"rewrite"* || "$text" == *"restore"* || "$text" == *"rename"* || "$text" == *"split"* || "$text" == *"merge"* || "$text" == *"modify"* ]]
 }
 
 comment_matches_research_request() {
-    local text="${1,,}"
+    local text
+    text="$(portable_to_lower "$1")"
     [[ "$text" == *"investigate"* || "$text" == *"compare"* || "$text" == *"confirm"* || "$text" == *"current behavior"* || "$text" == *"gather evidence"* || "$text" == *"before deciding"* ]]
 }
 
@@ -561,7 +571,7 @@ normalize_alt_language() {
     local raw
     local lower
     raw="$(trim_string "$1")"
-    lower="${raw,,}"
+    lower="$(portable_to_lower "$raw")"
 
     case "$lower" in
         chinese|zh) echo "Chinese|zh|variant" ;;

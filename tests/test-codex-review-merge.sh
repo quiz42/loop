@@ -74,7 +74,7 @@ OUTPUT=$(detect_review_issues 1 2>/dev/null)
 RESULT=$?
 set -e
 
-if [[ $RESULT -eq 0 ]] && echo "$OUTPUT" | grep -q '\[P1\]' && echo "$OUTPUT" | grep -q '\[P2\]'; then
+if [[ $RESULT -eq 0 && "$OUTPUT" == *'[P1]'* && "$OUTPUT" == *'[P2]'* ]]; then
     pass "Issues detected with [P?] in first 10 chars"
 else
     fail "Issues in first 10 chars" "return 0, output contains [P1] and [P2]" "return $RESULT, output: $OUTPUT"
@@ -190,7 +190,7 @@ OUTPUT=$(detect_review_issues 6 2>/dev/null)
 RESULT=$?
 set -e
 
-if [[ $RESULT -eq 0 ]] && echo "$OUTPUT" | grep -q '\[P1\]'; then
+if [[ $RESULT -eq 0 && "$OUTPUT" == *'[P1]'* ]]; then
     pass "[P?] found late in long log"
 else
     fail "[P?] late in long log" "return 0, output contains [P1]" "return $RESULT, output: $OUTPUT"
@@ -248,7 +248,7 @@ RESULT=$?
 set -e
 
 # Should extract from [P0] line to the end, including [P2] and final line
-if [[ $RESULT -eq 0 ]] && echo "$OUTPUT" | grep -q '\[P0\]' && echo "$OUTPUT" | grep -q '\[P2\]' && echo "$OUTPUT" | grep -q "Final debug"; then
+if [[ $RESULT -eq 0 && "$OUTPUT" == *'[P0]'* && "$OUTPUT" == *'[P2]'* && "$OUTPUT" == *"Final debug"* ]]; then
     pass "Extraction from first [P?] to end works"
 else
     fail "Multi-issue extraction" "return 0, contains [P0], [P2], and final line" "return $RESULT, output: $OUTPUT"
@@ -271,7 +271,7 @@ OUTPUT=$(detect_review_issues 9 2>/dev/null)
 RESULT=$?
 set -e
 
-if [[ $RESULT -eq 0 ]] && echo "$OUTPUT" | grep -q '\[P3\]'; then
+if [[ $RESULT -eq 0 && "$OUTPUT" == *'[P3]'* ]]; then
     pass "[P?] at position 0 detected"
 else
     fail "[P?] at position 0" "return 0, output contains [P3]" "return $RESULT, output: $OUTPUT"
@@ -296,7 +296,7 @@ RESULT=$?
 set -e
 
 # "- [P1]" - the [P1] starts at position 2, which is within first 10 chars
-if [[ $RESULT -eq 0 ]] && echo "$OUTPUT" | grep -q '\[P1\]'; then
+if [[ $RESULT -eq 0 && "$OUTPUT" == *'[P1]'* ]]; then
     pass "[P?] with dash prefix detected"
 else
     fail "[P?] with dash prefix" "return 0, output contains [P1]" "return $RESULT, output: $OUTPUT"
@@ -347,7 +347,7 @@ OUTPUT=$(detect_review_issues 12 2>/dev/null)
 RESULT=$?
 set -e
 
-if [[ $RESULT -eq 0 ]] && echo "$OUTPUT" | grep -q '\[P1\]'; then
+if [[ $RESULT -eq 0 && "$OUTPUT" == *'[P1]'* ]]; then
     pass "Exactly 50 lines handled correctly"
 else
     fail "Exactly 50 lines" "return 0, output contains [P1]" "return $RESULT, output: $OUTPUT"

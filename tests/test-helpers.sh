@@ -5,6 +5,13 @@
 # Usage: source "$SCRIPT_DIR/test-helpers.sh" (from tests/)
 # Usage: source "$SCRIPT_DIR/../test-helpers.sh" (from tests/robustness/)
 #
+# Sourcing this file also pulls in portable-helpers.sh, so every suite that uses
+# these helpers gets the cross-platform (GNU vs BSD) primitives for free.
+#
+
+TEST_HELPERS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=tests/portable-helpers.sh
+source "$TEST_HELPERS_DIR/portable-helpers.sh"
 
 # ========================================
 # Colors
@@ -83,9 +90,14 @@ print_test_summary() {
 
 # Create a temporary test directory with automatic cleanup
 # Sets TEST_DIR variable
+#
+# The path is fully resolved: on macOS mktemp -d returns /var/folders/...,
+# a symlink to /private/var/folders/..., and hooks canonicalize the paths they
+# inspect. Without resolving here, exact path comparisons against hook output
+# never match.
 setup_test_dir() {
-    TEST_DIR=$(mktemp -d)
-    trap "rm -rf $TEST_DIR" EXIT
+    TEST_DIR=$(portable_mktemp_dir)
+    trap 'rm -rf "$TEST_DIR"' EXIT
 }
 
 # Create a mock git repository in a directory

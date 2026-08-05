@@ -37,9 +37,15 @@ pass() { echo -e "${GREEN}PASS${NC}: $1"; TESTS_PASSED=$((TESTS_PASSED + 1)); }
 fail() { echo -e "${RED}FAIL${NC}: $1"; echo "  Expected: $2"; echo "  Got: $3"; TESTS_FAILED=$((TESTS_FAILED + 1)); }
 skip() { echo -e "${YELLOW}SKIP${NC}: $1 - $2"; TESTS_SKIPPED=$((TESTS_SKIPPED + 1)); }
 
-# Setup test environment
-TEST_DIR=$(mktemp -d)
-trap "rm -rf $TEST_DIR" EXIT
+# shellcheck source=tests/portable-helpers.sh
+source "$SCRIPT_DIR/portable-helpers.sh"
+
+# Setup test environment.
+# The path must be fully resolved: this suite recomputes the hook's sanitized
+# cache directory from TEST_DIR, and on macOS mktemp -d hands back the
+# /var/folders symlink form while the hook sees /private/var/folders.
+TEST_DIR=$(portable_mktemp_dir)
+trap 'rm -rf "$TEST_DIR"' EXIT
 
 # Set up isolated cache directory to avoid permission issues in sandboxed environments
 export XDG_CACHE_HOME="$TEST_DIR/.cache"

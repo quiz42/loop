@@ -155,7 +155,7 @@ result=$(CLAUDE_PROJECT_DIR="$TEST_DIR" XDG_CONFIG_HOME="$TEST_DIR/no-user" \
     --paths "scripts/bitlesson-select.sh" \
     --bitlesson-file "$TEST_DIR/.loop/bitlesson.md" 2>/dev/null) || exit_code=$?
 
-if [[ $exit_code -eq 0 ]] && echo "$result" | grep -q "LESSON_IDS:"; then
+if [[ $exit_code -eq 0 && "$result" == *"LESSON_IDS:"* ]]; then
     pass "Codex branch: gpt-* model routes to codex (produces LESSON_IDS output)"
 else
     fail "Codex branch: gpt-* model routes to codex" "LESSON_IDS: in output (exit 0)" "exit=$exit_code, output=$result"
@@ -219,7 +219,7 @@ result=$(CLAUDE_PROJECT_DIR="$TEST_DIR" XDG_CONFIG_HOME="$TEST_DIR/no-user" \
     --paths "scripts/bitlesson-select.sh" \
     --bitlesson-file "$TEST_DIR/.loop/bitlesson.md" 2>/dev/null) || exit_code=$?
 
-if [[ $exit_code -eq 0 ]] && echo "$result" | grep -q "LESSON_IDS:"; then
+if [[ $exit_code -eq 0 && "$result" == *"LESSON_IDS:"* ]]; then
     pass "Claude branch: haiku model routes to claude (produces LESSON_IDS output)"
 else
     fail "Claude branch: haiku model routes to claude" "LESSON_IDS: in output (exit 0)" "exit=$exit_code, output=$result"
@@ -248,7 +248,7 @@ result=$(CLAUDE_PROJECT_DIR="$TEST_DIR" XDG_CONFIG_HOME="$TEST_DIR/no-user" \
     --paths "scripts/bitlesson-select.sh" \
     --bitlesson-file "$TEST_DIR/.loop/bitlesson.md" 2>/dev/null) || exit_code=$?
 
-if [[ $exit_code -eq 0 ]] && echo "$result" | grep -q "LESSON_IDS:"; then
+if [[ $exit_code -eq 0 && "$result" == *"LESSON_IDS:"* ]]; then
     pass "Claude branch: sonnet model routes to claude (produces LESSON_IDS output)"
 else
     fail "Claude branch: sonnet model routes to claude" "LESSON_IDS: in output (exit 0)" "exit=$exit_code, output=$result"
@@ -277,7 +277,7 @@ result=$(CLAUDE_PROJECT_DIR="$TEST_DIR" XDG_CONFIG_HOME="$TEST_DIR/no-user" \
     --paths "scripts/bitlesson-select.sh" \
     --bitlesson-file "$TEST_DIR/.loop/bitlesson.md" 2>/dev/null) || exit_code=$?
 
-if [[ $exit_code -eq 0 ]] && echo "$result" | grep -q "LESSON_IDS:"; then
+if [[ $exit_code -eq 0 && "$result" == *"LESSON_IDS:"* ]]; then
     pass "Claude branch: OPUS (uppercase) model routes to claude (case-insensitive match)"
 else
     fail "Claude branch: OPUS (uppercase) model routes to claude" "LESSON_IDS: in output (exit 0)" "exit=$exit_code, output=$result"
@@ -303,7 +303,8 @@ stderr_out=$(CLAUDE_PROJECT_DIR="$TEST_DIR" XDG_CONFIG_HOME="$TEST_DIR/no-user" 
     --paths "scripts/bitlesson-select.sh" \
     --bitlesson-file "$TEST_DIR/.loop/bitlesson.md" 2>&1 >/dev/null) || exit_code=$?
 
-if [[ $exit_code -ne 0 ]] && echo "$stderr_out" | grep -qiE "unknown|error"; then
+stderr_lower=$(portable_to_lower "$stderr_out")
+if [[ $exit_code -ne 0 && ( "$stderr_lower" == *unknown* || "$stderr_lower" == *error* ) ]]; then
     pass "Unknown model: exits non-zero with clear error message"
 else
     fail "Unknown model: exits non-zero with clear error message" "non-zero exit + error message" "exit=$exit_code, stderr=$stderr_out"
@@ -339,7 +340,8 @@ stderr_out=$(CLAUDE_PROJECT_DIR="$TEST_DIR" XDG_CONFIG_HOME="$TEST_DIR/no-user" 
     --paths "scripts/bitlesson-select.sh" \
     --bitlesson-file "$TEST_DIR/.loop/bitlesson.md" 2>&1 >/dev/null) || exit_code=$?
 
-if [[ $exit_code -ne 0 ]] && echo "$stderr_out" | grep -qi "codex"; then
+stderr_lower=$(portable_to_lower "$stderr_out")
+if [[ $exit_code -ne 0 && "$stderr_lower" == *codex* ]]; then
     pass "Codex branch: missing codex binary exits non-zero with informative error"
 else
     fail "Codex branch: missing codex binary exits non-zero with informative error" "non-zero exit + 'codex' in stderr" "exit=$exit_code, stderr=$stderr_out"
@@ -376,7 +378,7 @@ stdout_out=$(CLAUDE_PROJECT_DIR="$TEST_DIR" XDG_CONFIG_HOME="$TEST_DIR/no-user" 
     --paths "scripts/bitlesson-select.sh" \
     --bitlesson-file "$TEST_DIR/.loop/bitlesson.md" 2>/dev/null) || exit_code=$?
 
-if [[ $exit_code -eq 0 ]] && echo "$stdout_out" | grep -q "LESSON_IDS: NONE"; then
+if [[ $exit_code -eq 0 ]] && [[ "$stdout_out" == *"LESSON_IDS: NONE"* ]]; then
     pass "Claude model falls back to codex when claude binary is missing"
 else
     fail "Claude model falls back to codex when claude binary is missing" "exit=0 + LESSON_IDS in stdout" "exit=$exit_code, stdout=$stdout_out"
@@ -406,7 +408,7 @@ stdout_out=$(CLAUDE_PROJECT_DIR="$TEST_DIR" XDG_CONFIG_HOME="$TEST_DIR/no-user" 
     --paths "plans/plan.md" \
     --bitlesson-file "$TEST_DIR/bitlesson.md" 2>/dev/null) || exit_code=$?
 
-if [[ $exit_code -eq 0 ]] && echo "$stdout_out" | grep -q "mock codex"; then
+if [[ $exit_code -eq 0 && "$stdout_out" == *"mock codex"* ]]; then
     pass "codex-only provider mode forces codex routing"
 else
     fail "codex-only provider mode forces codex routing" "exit=0 + mock codex rationale" "exit=$exit_code, stdout=$stdout_out"
@@ -430,7 +432,7 @@ stdout_out=$(CLAUDE_PROJECT_DIR="$TEST_DIR" XDG_CONFIG_HOME="$TEST_DIR/no-user" 
     --paths "README.md" \
     --bitlesson-file "$TEST_DIR/.loop/bitlesson.md" 2>/dev/null) || exit_code=$?
 
-if [[ $exit_code -eq 0 ]] && echo "$stdout_out" | grep -q "LESSON_IDS: NONE" && echo "$stdout_out" | grep -q "no recorded lessons"; then
+if [[ $exit_code -eq 0 ]] && [[ "$stdout_out" == *"LESSON_IDS: NONE"* ]] && [[ "$stdout_out" == *"no recorded lessons"* ]]; then
     pass "Placeholder BitLesson file returns NONE without invoking a model"
 else
     fail "Placeholder BitLesson file returns NONE without invoking a model" "exit=0 + NONE rationale" "exit=$exit_code, stdout=$stdout_out"
@@ -478,14 +480,18 @@ stdout_out=$(TEST_CAPTURE_ARGS="$CAPTURE_ARGS" CLAUDE_PROJECT_DIR="$TEST_DIR" XD
 
 captured_args="$(cat "$CAPTURE_ARGS")"
 
-if [[ $exit_code -eq 0 ]] \
-    && echo "$stdout_out" | grep -q "BL-20260315-tracker-drift" \
-    && echo "$captured_args" | grep -q -- '--disable' \
-    && echo "$captured_args" | grep -q -- 'codex_hooks' \
-    && echo "$captured_args" | grep -q -- '--skip-git-repo-check' \
-    && echo "$captured_args" | grep -q -- '--ephemeral' \
-    && echo "$captured_args" | grep -q -- 'read-only' \
-    && ! echo "$captured_args" | grep -q -- '--full-auto'; then
+# Pattern matching, not `echo ... | grep -q`: under pipefail every one of these
+# pipes reports 141 if grep -q exits before the builtin echo has finished
+# writing, so a matching condition can still read as false. With seven of them
+# in one chain this failed intermittently in the full parallel run.
+if [[ $exit_code -eq 0 \
+    && "$stdout_out" == *"BL-20260315-tracker-drift"* \
+    && "$captured_args" == *"--disable"* \
+    && "$captured_args" == *"codex_hooks"* \
+    && "$captured_args" == *"--skip-git-repo-check"* \
+    && "$captured_args" == *"--ephemeral"* \
+    && "$captured_args" == *"read-only"* \
+    && "$captured_args" != *"--full-auto"* ]]; then
     pass "Codex selector runs as a direct helper without hooks or full-auto"
 else
     fail "Codex selector runs as a direct helper without hooks or full-auto" \

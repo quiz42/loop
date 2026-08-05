@@ -17,10 +17,12 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
 NC='\033[0m'
 
 TESTS_PASSED=0
 TESTS_FAILED=0
+TESTS_SKIPPED=0
 
 pass() {
     echo -e "${GREEN}PASS${NC}: $1"
@@ -31,6 +33,35 @@ fail() {
     echo -e "${RED}FAIL${NC}: $1"
     echo "  Details: $2"
     TESTS_FAILED=$((TESTS_FAILED + 1))
+}
+
+skip() {
+    echo -e "${YELLOW}SKIP${NC}: $1"
+    echo "  Reason: $2"
+    TESTS_SKIPPED=$((TESTS_SKIPPED + 1))
+}
+
+# Can a child process trap SIGINT at all here?
+#
+# A signal ignored on entry to a shell cannot be trapped, and the ignore is
+# inherited across exec. run-all-tests.sh enables job control so that its suites
+# keep a trappable SIGINT, but that cannot help if the runner itself was started
+# from a context that had already ignored it -- launching the runner with `&`, for
+# instance. Probe rather than assume, so Test 6 skips in that case instead of
+# reporting a monitor defect that is not there.
+sigint_is_deliverable() {
+    local probe="$TEST_BASE/sigint-probe.sh"
+    cat > "$probe" <<'PROBE'
+#!/usr/bin/env bash
+handled=false
+trap 'handled=true' INT
+kill -INT $$
+if [ "$handled" = true ]; then
+    echo "DELIVERABLE"
+fi
+PROBE
+    chmod +x "$probe"
+    "$probe" 2>/dev/null | grep -q "DELIVERABLE"
 }
 
 echo "========================================"
@@ -372,12 +403,21 @@ fi
 TESTSCRIPT
 
 chmod +x test_sigint_bash.sh
-output=$(./test_sigint_bash.sh 2>&1)
-
-if echo "$output" | grep -q "CLEANUP_BY_SIGINT"; then
-    pass "SIGINT triggers _cleanup in bash"
+# run-all-tests.sh enables job control, so this suite keeps a trappable SIGINT
+# even though it is launched asynchronously. Without that, Bash would have set
+# SIGINT to SIG_IGN here and macOS would pass the ignore on to the child, making
+# the assertion below fail for a reason unrelated to the monitor.
+if ! sigint_is_deliverable; then
+    skip "SIGINT triggers _cleanup in bash" \
+        "this environment starts the suite with SIGINT ignored, so no child can trap it"
 else
-    fail "SIGINT in bash" "Cleanup not triggered"
+    output=$(./test_sigint_bash.sh 2>&1)
+
+    if echo "$output" | grep -q "CLEANUP_BY_SIGINT"; then
+        pass "SIGINT triggers _cleanup in bash"
+    else
+        fail "SIGINT in bash" "Cleanup not triggered"
+    fi
 fi
 
 # ========================================
@@ -498,6 +538,9 @@ echo "Test Summary"
 echo "========================================"
 echo -e "Passed: ${GREEN}$TESTS_PASSED${NC}"
 echo -e "Failed: ${RED}$TESTS_FAILED${NC}"
+if [[ $TESTS_SKIPPED -gt 0 ]]; then
+    echo -e "Skipped: ${YELLOW}$TESTS_SKIPPED${NC}"
+fi
 
 if [[ $TESTS_FAILED -eq 0 ]]; then
     echo ""

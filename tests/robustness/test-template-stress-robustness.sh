@@ -83,10 +83,10 @@ echo ""
 echo "Test 4: Large variable value (10KB string)"
 LARGE_VALUE=$(printf 'x%.0s' {1..10240})
 TEMPLATE="Content: {{LARGE}}"
-START=$(date +%s%N)
+START=$(portable_epoch_ms)
 RESULT=$(render_template "$TEMPLATE" "LARGE=$LARGE_VALUE")
-END=$(date +%s%N)
-ELAPSED_MS=$(( (END - START) / 1000000 ))
+END=$(portable_epoch_ms)
+ELAPSED_MS=$(( END - START ))
 if [[ "${#RESULT}" -gt 10000 ]]; then
     pass "Handles 10KB value (${ELAPSED_MS}ms, ${#RESULT} chars)"
 else
@@ -98,10 +98,10 @@ echo ""
 echo "Test 5: Very large variable value (100KB string)"
 VERY_LARGE_VALUE=$(printf 'y%.0s' {1..102400})
 TEMPLATE="Content: {{VERYLARGE}}"
-START=$(date +%s%N)
+START=$(portable_epoch_ms)
 RESULT=$(render_template "$TEMPLATE" "VERYLARGE=$VERY_LARGE_VALUE")
-END=$(date +%s%N)
-ELAPSED_MS=$(( (END - START) / 1000000 ))
+END=$(portable_epoch_ms)
+ELAPSED_MS=$(( END - START ))
 if [[ "${#RESULT}" -gt 100000 ]]; then
     pass "Handles 100KB value (${ELAPSED_MS}ms)"
 else
@@ -119,10 +119,10 @@ echo "Test 6: Large template file (100KB)"
     done
 } > "$TEST_DIR/large.md"
 SIZE_BEFORE=$(wc -c < "$TEST_DIR/large.md")
-START=$(date +%s%N)
+START=$(portable_epoch_ms)
 RESULT=$(load_and_render "$TEST_DIR" "large.md" "VAR=test_value")
-END=$(date +%s%N)
-ELAPSED_MS=$(( (END - START) / 1000000 ))
+END=$(portable_epoch_ms)
+ELAPSED_MS=$(( END - START ))
 # Check if result contains the substituted variable
 RESULT_SIZE=${#RESULT}
 if [[ $RESULT_SIZE -gt 100000 ]] && [[ "$RESULT" == *"Variable: test_value"* ]]; then
@@ -140,10 +140,10 @@ for i in $(seq 1 50); do
     TEMPLATE="${TEMPLATE}Var$i: {{VAR$i}}\n"
     VARS+=("VAR$i=value$i")
 done
-START=$(date +%s%N)
+START=$(portable_epoch_ms)
 RESULT=$(render_template "$TEMPLATE" "${VARS[@]}")
-END=$(date +%s%N)
-ELAPSED_MS=$(( (END - START) / 1000000 ))
+END=$(portable_epoch_ms)
+ELAPSED_MS=$(( END - START ))
 if echo "$RESULT" | grep -q "Var50: value50"; then
     pass "Handles 50 variable substitutions (${ELAPSED_MS}ms)"
 else

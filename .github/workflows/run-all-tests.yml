@@ -8,7 +8,11 @@ on:
 
 jobs:
   run-all-tests:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -18,13 +22,39 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install dependencies
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y zsh jq
 
-      - name: Run all tests
+      # The macOS image ships Bash 3.2, which has no associative arrays, plus
+      # jq and /bin/zsh. Provision a current Bash so both the runner and the
+      # suites' "#!/usr/bin/env bash" shebangs resolve to it. This is the
+      # explicit provisioning the runner requires; without it the runner
+      # refuses to start rather than reporting a false pass.
+      #
+      # Only bash is exposed, via a directory of its own. Prepending the whole
+      # Homebrew prefix would also shadow the Python pinned above with
+      # Homebrew's current Python, so the two matrix legs would silently stop
+      # testing the same interpreter.
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install bash
+          mkdir -p "$RUNNER_TEMP/bash5-bin"
+          ln -sf "$(brew --prefix)/bin/bash" "$RUNNER_TEMP/bash5-bin/bash"
+          echo "$RUNNER_TEMP/bash5-bin" >> "$GITHUB_PATH"
+
+      - name: Report interpreter
         run: |
           chmod +x tests/run-all-tests.sh
-          ./tests/run-all-tests.sh
+          command -v bash
+          bash --version | head -1
+          command -v python3
+          python3 --version
+          LOOP_TEST_RUNNER_CHECK_ONLY=1 ./tests/run-all-tests.sh
+
+      - name: Run all tests
+        run: ./tests/run-all-tests.sh
 
   proof-contract-python:
     runs-on: ubuntu-latest
