@@ -919,64 +919,118 @@ echo "Section 10: Static guards over tests/"
 # portable replacements and these rules live, so they necessarily name the
 # non-portable forms in comments, patterns and assertion messages.
 GUARD_OUT="$TEST_DIR/guard-findings.txt"
-find "$SCRIPT_DIR" -name '*.sh' -type f -print0 2>/dev/null \
-    | xargs -0 awk '
-    # Plain `next` rather than the gawk extension `nextfile`, which mawk on
-    # Ubuntu and the BSD awk on macOS do not both provide.
-    FILENAME ~ /(portable-helpers|test-runner-portability)\.sh$/ { next }
+GUARD_PROG="$TEST_DIR/portability-guard.awk"
 
-    # Skip comment lines: naming a construct in prose is not using it.
-    /^[[:space:]]*#/ { next }
+# The guard program lives in its own file so the same matcher both scans the
+# tree and is exercised against fixtures below. A single-quoted heredoc keeps
+# every backslash, dollar, and quote in the program literal.
+cat > "$GUARD_PROG" <<'GUARD_AWK'
+# Plain `next` rather than the gawk extension `nextfile`, which mawk on
+# Ubuntu and the BSD awk on macOS do not both provide.
+FILENAME ~ /(portable-helpers|test-runner-portability)\.sh$/ { next }
 
-    # BSD sed rejects a nested brace block. The outer brace must open an address
-    # block ("{ /^key:/{ ... }") so that sed handling "{{PLACEHOLDER}}" text is
-    # not mistaken for one.
-    /(^|[^[:alnum:]_])sed[^|#]*\{[[:space:]]*\/[^{}]*\{/ {
-        report("nested-sed", "nested brace block in a sed script; BSD sed rejects it")
-    }
+# Skip comment lines: naming a construct in prose is not using it.
+/^[[:space:]]*#/ { next }
 
-    # \+, \? and \| inside a BRE are GNU extensions; BSD sed treats them
-    # literally and silently produces wrong output.
-    /(^|[^[:alnum:]_])sed[^|#]*\\[+?|]/ {
-        report("gnu-sed-bre", "GNU-only BRE escape in a sed script; BSD sed takes it literally")
-    }
+# BSD sed rejects a nested brace block. The outer brace must open an address
+# block ("{ /^key:/{ ... }") so that sed handling "{{PLACEHOLDER}}" text is
+# not mistaken for one.
+/(^|[^[:alnum:]_])sed[^|#]*\{[[:space:]]*\/[^{}]*\{/ {
+    report("nested-sed", "nested brace block in a sed script; BSD sed rejects it")
+}
 
-    # BSD date has no %N.
-    /date[[:space:]]+\+%s%[0-9]*N/ {
-        report("raw-epoch-ns", "raw date +%s%N; use portable_epoch_ms")
-    }
+# \+, \? and \| inside a BRE are GNU extensions; BSD sed treats them
+# literally and silently produces wrong output.
+/(^|[^[:alnum:]_])sed[^|#]*\\[+?|]/ {
+    report("gnu-sed-bre", "GNU-only BRE escape in a sed script; BSD sed takes it literally")
+}
 
-    # ${var,,} and ${var^^} need Bash 4.
-    /\$\{[A-Za-z_][A-Za-z0-9_]*(,,|\^\^)\}/ {
-        report("bash4-case", "Bash 4 case-conversion expansion; use portable_to_lower")
-    }
+# BSD date has no %N.
+/date[[:space:]]+\+%s%[0-9]*N/ {
+    report("raw-epoch-ns", "raw date +%s%N; use portable_epoch_ms")
+}
 
-    # BSD grep has no PCRE. Require a real option bundle so that prose
-    # mentioning "grep -P)" in a message is not flagged.
-    /(^|[^[:alnum:]_])grep[[:space:]]+(-[A-Za-z]+[[:space:]]+)*-[A-Za-z]*P[A-Za-z]*[[:space:]]/ {
-        report("grep-pcre", "grep -P; BSD grep has no PCRE support")
-    }
+# ${var,,} and ${var^^} need Bash 4.
+/\$\{[A-Za-z_][A-Za-z0-9_]*(,,|\^\^)\}/ {
+    report("bash4-case", "Bash 4 case-conversion expansion; use portable_to_lower")
+}
 
-    # `echo`/`printf` writing a variable, piped into `grep -q`, races under
-    # pipefail: grep exits on the match and closes the pipe, the still-writing
-    # builtin takes SIGPIPE, the pipeline reports 141, and a matching assertion
-    # reads as false (issue #22). Match only echo/printf directly feeding a grep
-    # bundle that carries a `q`, so a real command piped into grep -q (head, sed,
-    # git, another grep) is not flagged. Use `[[ "$var" == *lit* ]]` for a literal
-    # substring, or feed grep with a here-string: `grep ... <<< "$var"`.
-    /(^|[^[:alnum:]_])(echo|printf)[^|#]*\|[[:space:]]*grep[[:space:]]*(-[A-Za-z]+[[:space:]]+)*-[A-Za-z]*q[A-Za-z]*([[:space:]]|$)/ {
+# BSD grep has no PCRE. Require a real option bundle so that prose
+# mentioning "grep -P)" in a message is not flagged.
+/(^|[^[:alnum:]_])grep[[:space:]]+(-[A-Za-z]+[[:space:]]+)*-[A-Za-z]*P[A-Za-z]*[[:space:]]/ {
+    report("grep-pcre", "grep -P; BSD grep has no PCRE support")
+}
+
+# `echo`/`printf` writing a variable, piped into a `grep` that carries a `q`
+# option, races under pipefail: grep exits on the match and closes the pipe,
+# the still-writing builtin takes SIGPIPE, the pipeline reports 141, and a
+# matching assertion reads as false (issue #22). The `q` is recognised in any
+# valid position -- a leading bundle (grep -q, grep -iq), after an -e/-f option
+# or a positional pattern (grep -e X -q, grep X -q), or the long form
+# (--quiet/--silent). Quoted strings are blanked first so a `q` named inside a
+# pattern or filename literal is not read as the flag, and only echo/printf
+# feeding grep counts, so a real command piped into grep -q (head, sed, git,
+# another grep) is not flagged. Use `[[ "$var" == *lit* ]]` for a literal
+# substring, or feed grep with a here-string: `grep ... <<< "$var"`.
+{
+    probe = $0
+    gsub(/"[^"]*"/, "@", probe)
+    gsub(/'[^']*'/, "@", probe)
+    if (probe ~ /(^|[^[:alnum:]_])(echo|printf)[^|#]*\|[[:space:]]*grep([[:space:]]+[^|&;#]*)?[[:space:]](-[A-Za-z]*q[A-Za-z]*|--quiet|--silent)([^A-Za-z0-9_-]|$)/) {
         report("pipefail-grep-q", "echo/printf piped into grep -q races under pipefail; use [[ == *lit* ]] or a here-string")
     }
+}
 
-    function report(rule, message) {
-        printf "%s:%d: %s: %s\n", FILENAME, FNR, rule, message
-    }
-' > "$GUARD_OUT" 2>&1
+function report(rule, message) {
+    printf "%s:%d: %s: %s\n", FILENAME, FNR, rule, message
+}
+GUARD_AWK
+
+find "$SCRIPT_DIR" -name '*.sh' -type f -print0 2>/dev/null \
+    | xargs -0 awk -f "$GUARD_PROG" > "$GUARD_OUT" 2>&1
 
 if [[ ! -s "$GUARD_OUT" ]]; then
     pass "no non-portable shell constructs in tests/"
 else
     fail "non-portable shell constructs in tests/" "no findings" "$(cat "$GUARD_OUT")"
+fi
+
+# Positive coverage for the pipefail grep -q guard. This file and
+# portable-helpers.sh are exempt from the scan above (they necessarily name the
+# forbidden forms), so the rule's own detection is asserted here against
+# fixtures. The guard must catch `-q` in every valid position -- including after
+# the pattern, which a matcher anchored on the leading option bundle misses --
+# and must not fire on safe forms (a here-string, a real-command pipeline,
+# grep -c, or a `q` that only appears inside a quoted literal).
+GUARD_POS="$TEST_DIR/guard-grep-q-positive.sh"
+cat > "$GUARD_POS" <<'GUARD_POS_EOF'
+echo "$OUTPUT" | grep -q "leading"
+echo "$OUTPUT" | grep -qi "leading-bundle"
+echo "$OUTPUT" | grep -e "^1$" -q
+echo "$OUTPUT" | grep "positional" -q
+printf '%s' "$OUTPUT" | grep --quiet "long-form"
+if [[ $rc -eq 0 ]] && echo "$OUTPUT" | grep -q "chained"; then :; fi
+GUARD_POS_EOF
+
+GUARD_NEG="$TEST_DIR/guard-grep-q-negative.sh"
+cat > "$GUARD_NEG" <<'GUARD_NEG_EOF'
+grep -q "herestring" <<< "$OUTPUT"
+head -1 "$file" | grep -q "^---$"
+git rev-parse 2>/dev/null | grep -q ":"
+echo "$OUTPUT" | grep -c "count-not-quiet"
+echo "$OUTPUT" | grep "mentions -q inside a literal"
+[[ "$OUTPUT" == *"literal"* ]]
+GUARD_NEG_EOF
+
+awk -f "$GUARD_PROG" "$GUARD_POS" > "$TEST_DIR/guard-pos-out.txt" 2>&1
+awk -f "$GUARD_PROG" "$GUARD_NEG" > "$TEST_DIR/guard-neg-out.txt" 2>&1
+GUARD_POS_HITS=$(grep -c 'pipefail-grep-q' "$TEST_DIR/guard-pos-out.txt" || true)
+GUARD_NEG_HITS=$(grep -c 'pipefail-grep-q' "$TEST_DIR/guard-neg-out.txt" || true)
+if [[ "$GUARD_POS_HITS" -eq 6 && "$GUARD_NEG_HITS" -eq 0 ]]; then
+    pass "pipefail grep -q guard flags every racy ordering and no safe form"
+else
+    fail "pipefail grep -q guard coverage" "6 positive hits and 0 negative hits" \
+        "positives=$GUARD_POS_HITS negatives=$GUARD_NEG_HITS"
 fi
 
 print_test_summary "Runner Portability Test Summary"
