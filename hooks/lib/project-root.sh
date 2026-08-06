@@ -52,6 +52,134 @@ resolve_project_root() {
     printf '%s\n' "${canonical:-$root}"
 }
 
+# _portable_resolved_dir
+#
+# Prints the fully symlink-resolved path of an existing directory, using
+# shell builtins alone. `cd -P` resolves every component including the
+# leaf, so this matches `realpath` for directories on hosts where realpath
+# is not installed. Returns 1 when the argument is not a directory or the
+# cd fails, so callers can chain it after their realpath attempt.
+#
+# CDPATH is cleared because a `cd` that consults it prints the resolved
+# directory on stdout and may land somewhere else entirely.
+#
+_portable_resolved_dir() {
+    local dir="$1"
+    [[ -d "$dir" ]] || return 1
+    ( CDPATH= cd -P -- "$dir" 2>/dev/null && pwd -P ) || return 1
+}
+
+# portable_abs_path
+#
+# Prints the absolute, symlink-resolved form of a path whose trailing
+# components need not exist yet -- what GNU `realpath -m` does. BSD realpath
+# has no -m and fails outright on a missing component, so callers that used
+# `realpath -m ... || echo "$input"` silently reported the raw, often
+# relative, input on macOS while reporting an absolute path on Linux.
+#
+# Method: an existing path is handed to the system resolver so the result is
+# byte-identical to what `realpath -m` returns today on Linux. Otherwise the
+# longest existing prefix is resolved and the not-yet-existing tail is
+# reattached with `.` and `..` folded away lexically -- which is also how
+# realpath -m treats a tail it cannot stat.
+#
+# Two deliberate differences from `realpath -m`, both of which behave the same
+# way on Linux and macOS -- which is the property callers here need:
+#
+#   * A dangling symlink inside the path is left as written rather than
+#     followed to its missing target: `cd -P` cannot enter it, and chasing it
+#     by hand would mean a readlink loop with cycle detection for a path that
+#     fails the caller's directory check either way.
+#   * On a host with no usable realpath at all, a leaf that is a symlink to a
+#     file stays unresolved, since `cd -P` only resolves directories. Every
+#     platform Loop's CI targets ships realpath (macOS 13+, coreutils Linux),
+#     so this is the fallback's fallback.
+#
+# Empty input prints nothing and returns 0.
+#
+# Usage: abs=$(portable_abs_path "$maybe_relative_and_missing")
+portable_abs_path() {
+    # Not named `path`: zsh ties that name to the PATH array, so `local path=`
+    # replaces PATH for the body of the function and every external command
+    # the function runs stops resolving. project-root.sh is sourced by
+    # scripts/loop.sh, which zsh users source.
+    local target_path="$1"
+    if [[ -z "$target_path" ]]; then
+        return 0
+    fi
+
+    local resolved=""
+    if resolved=$(realpath "$target_path" 2>/dev/null) && [[ -n "$resolved" ]]; then
+        printf '%s\n' "$resolved"
+        return 0
+    fi
+
+    case "$target_path" in
+        /*) ;;
+        *) target_path="$(pwd -P)/$target_path" ;;
+    esac
+
+    # Peel components off the right until an existing directory remains --
+    # `cd -P` is the builtin-only resolver and it only accepts directories, so
+    # an existing file's own name belongs in the tail alongside the components
+    # that do not exist yet.
+    local head="$target_path" tail=""
+    while [[ ! -d "$head" && "$head" != "/" ]]; do
+        tail="${head##*/}${tail:+/}${tail}"
+        head="${head%/*}"
+        if [[ -z "$head" ]]; then
+            head="/"
+        fi
+    done
+
+    local head_real=""
+    if ! { head_real=$(realpath "$head" 2>/dev/null) && [[ -n "$head_real" ]]; }; then
+        head_real=$(_portable_resolved_dir "$head") || head_real=""
+    fi
+    if [[ -z "$head_real" ]]; then
+        head_real="$head"
+    fi
+
+    # Fold "." and ".." out of the tail. ".." past the start of the tail walks
+    # up out of the resolved prefix instead.
+    local folded="" rest="$tail" component
+    while [[ -n "$rest" ]]; do
+        component="${rest%%/*}"
+        if [[ "$component" == "$rest" ]]; then
+            rest=""
+        else
+            rest="${rest#*/}"
+        fi
+        case "$component" in
+            '' | '.')
+                ;;
+            '..')
+                if [[ -n "$folded" ]]; then
+                    if [[ "$folded" == */* ]]; then
+                        folded="${folded%/*}"
+                    else
+                        folded=""
+                    fi
+                else
+                    head_real="${head_real%/*}"
+                    if [[ -z "$head_real" ]]; then
+                        head_real="/"
+                    fi
+                fi
+                ;;
+            *)
+                folded="${folded:+$folded/}$component"
+                ;;
+        esac
+    done
+
+    if [[ -z "$folded" ]]; then
+        printf '%s\n' "$head_real"
+    else
+        printf '%s/%s\n' "${head_real%/}" "$folded"
+    fi
+}
+
 # canonicalize_path_prefix
 #
 # Resolves symlinks ONLY in the parent directory and reattaches the
@@ -70,29 +198,31 @@ resolve_project_root() {
 # Empty input prints nothing and returns 0.
 #
 canonicalize_path_prefix() {
-    local path="$1"
-    if [[ -z "$path" ]]; then
+    # See portable_abs_path for why this is not called `path`.
+    local target_path="$1"
+    if [[ -z "$target_path" ]]; then
         return 0
     fi
 
     local parent base parent_real
-    parent=$(dirname -- "$path")
-    base=$(basename -- "$path")
+    parent=$(dirname -- "$target_path")
+    base=$(basename -- "$target_path")
 
     if parent_real=$(realpath "$parent" 2>/dev/null) && [[ -n "$parent_real" ]]; then
         printf '%s/%s\n' "${parent_real%/}" "$base"
         return 0
     fi
 
-    if command -v python3 >/dev/null 2>&1; then
-        parent_real=$(python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$parent" 2>/dev/null || true)
-        if [[ -n "$parent_real" ]]; then
-            printf '%s/%s\n' "${parent_real%/}" "$base"
-            return 0
-        fi
+    # No realpath on this host: `cd -P` resolves the parent with builtins
+    # alone. This replaced a python3 -c os.path.realpath fallback, which put
+    # a Python dependency in the hook layer that ADR-0003 reserves for the
+    # Proof layer.
+    if parent_real=$(_portable_resolved_dir "$parent") && [[ -n "$parent_real" ]]; then
+        printf '%s/%s\n' "${parent_real%/}" "$base"
+        return 0
     fi
 
-    printf '%s\n' "$path"
+    printf '%s\n' "$target_path"
 }
 
 # canonicalize_path
@@ -100,8 +230,10 @@ canonicalize_path_prefix() {
 # Prints the realpath of the input path. If the path itself does not
 # exist yet (common for write validation before the file is created),
 # canonicalizes the parent directory and reattaches the basename.
-# If realpath is unavailable and python3 is missing, prints the input
-# path verbatim.
+# If realpath is unavailable, `cd -P` resolves the directory instead; if
+# neither can resolve it, prints the input path verbatim. Note that on a
+# host with no realpath a leaf that is itself a symlink to a file is left
+# unresolved, because `cd -P` can only resolve directories.
 #
 # SECURITY NOTE: This helper dereferences symlinks at the leaf when
 # the leaf exists. Do NOT use it to authorize a user-supplied path
@@ -111,34 +243,38 @@ canonicalize_path_prefix() {
 # Empty input prints nothing and returns 0.
 #
 canonicalize_path() {
-    local path="$1"
-    if [[ -z "$path" ]]; then
+    # See portable_abs_path for why this is not called `path`.
+    local target_path="$1"
+    if [[ -z "$target_path" ]]; then
         return 0
     fi
 
     local canonical=""
 
-    if canonical=$(realpath "$path" 2>/dev/null) && [[ -n "$canonical" ]]; then
+    if canonical=$(realpath "$target_path" 2>/dev/null) && [[ -n "$canonical" ]]; then
+        printf '%s\n' "$canonical"
+        return 0
+    fi
+    if canonical=$(_portable_resolved_dir "$target_path") && [[ -n "$canonical" ]]; then
         printf '%s\n' "$canonical"
         return 0
     fi
 
     # Path does not exist: canonicalize parent, reattach basename.
     local parent base
-    parent=$(dirname -- "$path")
-    base=$(basename -- "$path")
+    parent=$(dirname -- "$target_path")
+    base=$(basename -- "$target_path")
     if canonical=$(realpath "$parent" 2>/dev/null) && [[ -n "$canonical" ]]; then
         printf '%s/%s\n' "${canonical%/}" "$base"
         return 0
     fi
 
-    if command -v python3 >/dev/null 2>&1; then
-        canonical=$(python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$path" 2>/dev/null || true)
-        if [[ -n "$canonical" ]]; then
-            printf '%s\n' "$canonical"
-            return 0
-        fi
+    # Builtin-only fallback, replacing a python3 -c os.path.realpath call:
+    # ADR-0003 keeps the hook layer independent of Python.
+    if canonical=$(_portable_resolved_dir "$parent") && [[ -n "$canonical" ]]; then
+        printf '%s/%s\n' "${canonical%/}" "$base"
+        return 0
     fi
 
-    printf '%s\n' "$path"
+    printf '%s\n' "$target_path"
 }

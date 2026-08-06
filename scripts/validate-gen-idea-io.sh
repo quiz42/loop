@@ -13,6 +13,12 @@
 
 set -e
 
+VALIDATOR_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+
+# portable_abs_path: absolute-path normalization that tolerates a not-yet-
+# created output file, replacing GNU-only `realpath -m`.
+source "$VALIDATOR_SCRIPT_DIR/../hooks/lib/project-root.sh"
+
 usage() {
     echo "Usage: $0 <idea-text-or-path> [--n <int>] [--output <path>]"
     echo ""
@@ -148,7 +154,7 @@ if [[ -z "$OUTPUT_FILE" ]]; then
     DEFAULT_OUTPUT=true
 fi
 
-OUTPUT_FILE="$(realpath -m "$OUTPUT_FILE" 2>/dev/null || echo "$OUTPUT_FILE")"
+OUTPUT_FILE="$(portable_abs_path "$OUTPUT_FILE")"
 OUTPUT_DIR="$(dirname "$OUTPUT_FILE")"
 
 if [[ "$DEFAULT_OUTPUT" == true ]]; then

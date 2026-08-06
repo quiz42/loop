@@ -13,6 +13,12 @@
 
 set -e
 
+VALIDATOR_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+
+# portable_abs_path: absolute-path normalization that tolerates a not-yet-
+# created output file, replacing GNU-only `realpath -m`.
+source "$VALIDATOR_SCRIPT_DIR/../hooks/lib/project-root.sh"
+
 usage() {
     echo "Usage: $0 --input <path/to/draft.md> --output <path/to/plan.md> [--auto-start-rlcr-if-converged] [--discussion|--direct]"
     echo ""
@@ -96,8 +102,8 @@ if [[ "$GEN_PLAN_MODE_DIRECT" == "true" && "$AUTO_START_RLCR_IF_CONVERGED" == "t
 fi
 
 # Get absolute paths
-INPUT_FILE=$(realpath -m "$INPUT_FILE" 2>/dev/null || echo "$INPUT_FILE")
-OUTPUT_FILE=$(realpath -m "$OUTPUT_FILE" 2>/dev/null || echo "$OUTPUT_FILE")
+INPUT_FILE=$(portable_abs_path "$INPUT_FILE")
+OUTPUT_FILE=$(portable_abs_path "$OUTPUT_FILE")
 OUTPUT_DIR=$(dirname "$OUTPUT_FILE")
 
 echo "=== gen-plan IO Validation ==="

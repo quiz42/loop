@@ -1346,10 +1346,18 @@ else
     fail "validate-refine-plan-io: reports new-file mode" "Mode: new file" "missing"
 fi
 
-if [[ "$VALIDATOR_OUTPUT" == *"Output target: $(realpath -m "$NEW_FILE_DIR/refined-plan.md")"* ]]; then
+# Build the expectation with `cd -P` + pwd, not with the same call the
+# validator makes. Both sides used to be `realpath -m`, which BSD realpath
+# rejects, so on macOS both degraded to the raw relative path together and the
+# assertion passed while proving nothing. An independently derived absolute
+# path fails loudly instead.
+EXPECTED_OUTPUT_TARGET="$(cd "$NEW_FILE_DIR" && pwd -P)/refined-plan.md"
+if [[ "$EXPECTED_OUTPUT_TARGET" != /* ]]; then
+    fail "validate-refine-plan-io: expectation is an absolute path" "a path starting with /" "$EXPECTED_OUTPUT_TARGET"
+elif [[ "$VALIDATOR_OUTPUT" == *"Output target: $EXPECTED_OUTPUT_TARGET"* ]]; then
     pass "validate-refine-plan-io: reports the resolved output target"
 else
-    fail "validate-refine-plan-io: reports the resolved output target" "$(realpath -m "$NEW_FILE_DIR/refined-plan.md")" "$VALIDATOR_OUTPUT"
+    fail "validate-refine-plan-io: reports the resolved output target" "$EXPECTED_OUTPUT_TARGET" "$VALIDATOR_OUTPUT"
 fi
 
 # ========================================

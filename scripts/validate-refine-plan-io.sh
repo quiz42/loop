@@ -13,6 +13,12 @@
 
 set -e
 
+VALIDATOR_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+
+# portable_abs_path: absolute-path normalization that tolerates a not-yet-
+# created output file, replacing GNU-only `realpath -m`.
+source "$VALIDATOR_SCRIPT_DIR/../hooks/lib/project-root.sh"
+
 scan_cmt_blocks() {
     local input_file="$1"
 
@@ -559,8 +565,8 @@ if [[ -z "$OUTPUT_FILE" ]]; then
 fi
 
 # Get absolute paths
-INPUT_FILE=$(realpath -m "$INPUT_FILE" 2>/dev/null || echo "$INPUT_FILE")
-OUTPUT_FILE=$(realpath -m "$OUTPUT_FILE" 2>/dev/null || echo "$OUTPUT_FILE")
+INPUT_FILE=$(portable_abs_path "$INPUT_FILE")
+OUTPUT_FILE=$(portable_abs_path "$OUTPUT_FILE")
 INPUT_DIR=$(dirname "$INPUT_FILE")
 OUTPUT_DIR=$(dirname "$OUTPUT_FILE")
 
