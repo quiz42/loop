@@ -342,7 +342,7 @@ def _plan_evolution_events(goal_tracker: Optional[str]) -> List[Dict[str, Any]]:
 
 def _parse_completed_and_deferred(
     goal_tracker: Optional[str], known_ac_ids: Sequence[str]
-) -> Tuple[set, List[Dict[str, str]], List[str]]:
+) -> Tuple[set, List[Dict[str, Any]], List[str]]:
     """Resolve completed/deferred table references against known stable AC IDs."""
     if not goal_tracker:
         return set(), [], []
@@ -375,6 +375,14 @@ def _parse_completed_and_deferred(
 
     deferred_rows = _parse_table_rows(_first_heading_section(goal_tracker, "Explicitly Deferred"))
     deferred: List[Dict[str, str]] = []
+    # "Deferred Since" names the round the deferral happened in. It is captured
+    # so the verdict can require a matching Plan Evolution Log row before
+    # accepting the deferral: a row that cites no round cites no replan.
+    since_column: Optional[int] = None
+    if deferred_rows:
+        header = [cell.strip().lower() for cell in deferred_rows[0]]
+        if "deferred since" in header:
+            since_column = header.index("deferred since")
     for row in deferred_rows:
         if not row or row[0].lower() in ("task", "ac"):
             continue
@@ -394,11 +402,24 @@ def _parse_completed_and_deferred(
                 + ", ".join(unknown)
                 + "."
             )
+        since_round: Optional[int] = None
+        if since_column is not None and since_column < len(row):
+            since_match = re.fullmatch(
+                r"(?:round\s+)?([0-9]+)", row[since_column].strip(), re.IGNORECASE
+            )
+            if since_match is not None:
+                since_round = int(since_match.group(1))
         # The row's source evidence is the goal tracker itself.  Keep a stable
         # human-readable anchor rather than trying to parse free-form prose.
         for identifier in identifiers:
             if identifier in known:
-                deferred.append({"ac_id": identifier, "detail": " | ".join(row)})
+                entry: Dict[str, Any] = {
+                    "ac_id": identifier,
+                    "detail": " | ".join(row),
+                }
+                if since_round is not None:
+                    entry["since_round"] = since_round
+                deferred.append(entry)
     return completed, deferred, problems
 
 
@@ -1077,12 +1098,61 @@ _FINDING_MARKER = re.compile(
 _FINDING_MARKER_ATTEMPT = re.compile(
     r"^.{0,9}?(?P<marker>\[P[^\]]*\])", re.MULTILINE
 )
+# A bare severity marker anywhere in a cell. Goal Tracker tables put the marker
+# mid-cell rather than at the start of a line, so the line-anchored patterns
+# above do not apply.
+_FINDING_MARKER_TOKEN = re.compile(r"\[P(?P<severity>[0-9])\]")
 
 
 def _finding_key(severity: str, summary: str) -> str:
     """Return a stable internal key without exposing review prose in the Bundle."""
     normalized = re.sub(r"\s+", " ", summary.strip().lower())
     return f"{severity}:{normalized}"
+
+
+def _waiver_targets(goal_tracker: Optional[str]) -> List[Tuple[str, int]]:
+    """Return (severity, round) pairs the Goal Tracker explicitly queued.
+
+    A waiver is a section move plus a ``[P0-9]`` marker, both structured
+    signals ADR-0002 admits. The row is identified by its severity marker and
+    its ``Discovered Round`` column, never by its prose: a tracker row
+    summarizes an issue in the author's own words ("only replaced literal
+    spaces") while the review result names it differently ("Implement full slug
+    normalization"), so matching on summary text would either never fire or
+    require exactly the fuzzy matching the ADR rules out.
+
+    Only the ``Queued Side Issues`` table is read. ``Explicitly Deferred``
+    records deferred acceptance criteria, not findings, and is handled by the
+    per-AC deferral path.
+    """
+    if not goal_tracker:
+        return []
+    section = _first_heading_section(goal_tracker, "Queued Side Issues")
+    if not section:
+        return []
+    rows = _parse_table_rows(section)
+    if not rows:
+        return []
+    header = [cell.strip().lower() for cell in rows[0]]
+    if "discovered round" not in header:
+        return []
+    round_column = header.index("discovered round")
+    targets: List[Tuple[str, int]] = []
+    for row in rows[1:]:
+        if round_column >= len(row):
+            continue
+        round_match = re.fullmatch(
+            r"(?:round\s+)?([0-9]+)", row[round_column].strip(), re.IGNORECASE
+        )
+        if round_match is None:
+            continue
+        found_round = int(round_match.group(1))
+        for cell in row:
+            for marker in _FINDING_MARKER_TOKEN.finditer(cell):
+                target = (f"P{marker.group('severity')}", found_round)
+                if target not in targets:
+                    targets.append(target)
+    return targets
 
 
 def _append_unique(values: List[str], value: str) -> None:
@@ -1198,6 +1268,16 @@ def _derive_findings(
                 if key not in current:
                     finding["status"] = "resolved"
                     _append_unique(finding["evidence_refs"], item["id"])
+                    # Record which round closed it and which review said so.
+                    # Both are already known here and were previously dropped,
+                    # which left the Explorer rendering "not linked" for every
+                    # resolved finding. They are structural facts -- the marker
+                    # is absent from this round's review result -- so recording
+                    # them stays inside ADR-0002. The fix landed in the work of
+                    # this round, and this round's review is the re-review that
+                    # confirms it; neither is inferred from review prose.
+                    finding["fix_round"] = round_index
+                    finding["re_review_ref"] = item["id"]
             next_active: Dict[str, Dict[str, Any]] = {}
             for key, (severity, ac_refs) in current.items():
                 finding = active.get(key)
@@ -1226,6 +1306,43 @@ def _derive_findings(
                         _append_unique(finding["ac_refs"], ac_id)
                 next_active[key] = finding
             active = next_active
+
+    # A finding the Goal Tracker explicitly queued is waived rather than left
+    # open. Only a still-open finding can be waived: a waiver cannot overturn a
+    # resolved finding, and it must not paper over one whose lifecycle this
+    # profile could not verify. The tracker has to be retained under the active
+    # profile, or the waiver is not profile-verifiable.
+    tracker_item = evidence_by_path.get("goal-tracker.md")
+    if tracker_item and tracker_item.get("status") == "included":
+        for severity, found_round in _waiver_targets(run.goal_tracker_text):
+            matches = [
+                finding
+                for finding in findings
+                if finding["severity"] == severity
+                and finding["found_round"] == found_round
+                and finding["status"] == "open"
+            ]
+            # Exactly one, or none. A waiver removes a blocker, so an ambiguous
+            # row -- two open P2s from the same round -- must not silently
+            # clear both when the tracker only accounted for one.
+            if len(matches) != 1:
+                if len(matches) > 1:
+                    warnings.append(
+                        {
+                            "reason": "unparseable-artifact",
+                            "target": "goal-tracker.md",
+                            "detail": "Queued Side Issues row for "
+                            + severity
+                            + " in round "
+                            + str(found_round)
+                            + " matches more than one open finding; no waiver applied.",
+                        }
+                    )
+                continue
+            finding = matches[0]
+            finding["status"] = "waived"
+            finding["waived_ref"] = tracker_item["id"]
+            _append_unique(finding["evidence_refs"], tracker_item["id"])
 
     return findings, warnings, parseable
 
@@ -1538,7 +1655,25 @@ class BundleCompiler:
                     _append_unique(target[ac_id], identifier)
         per_ac: List[Dict[str, Any]] = []
         deferred_output: List[Dict[str, str]] = []
-        deferred_ac_ids = {item["ac_id"] for item in run.deferred}
+        # A deferral is only accepted when the Goal Tracker also carries the
+        # Plan Evolution Log row it implies: the Explicitly Deferred row names
+        # the round it happened in, and that round must appear in the log. A
+        # deferral nobody replanned is an AC quietly dropped from the required
+        # set, which is the one way this deriver could manufacture a green
+        # result out of nothing (D5).
+        replan_rounds = {
+            event.get("round")
+            for event in run.events
+            if event.get("kind") in ("plan_evolution", "replan")
+        }
+        deferred_ac_ids = {
+            item["ac_id"]
+            for item in run.deferred
+            if item.get("since_round") in replan_rounds
+        }
+        uncited_deferrals = {
+            item["ac_id"] for item in run.deferred
+        } - deferred_ac_ids
         for criterion in projected_criteria:
             ac_id = criterion["id"]
             completed = ac_id in run.completed_ac_ids
@@ -1564,6 +1699,15 @@ class BundleCompiler:
                 else:
                     status = "unverifiable"
                     reason = "Deferral evidence is unavailable in this verification profile."
+            elif ac_id in uncited_deferrals:
+                # Deliberately not "deferred": it stays in the required set, so
+                # an uncited deferral costs the Run its accept rather than
+                # silently shrinking what had to be delivered.
+                status = "unverifiable"
+                reason = (
+                    "Deferral cites no Plan Evolution Log round, so it was not "
+                    "accepted as a deferral."
+                )
             elif ac_id in unverifiable_finding_refs:
                 status = "unverifiable"
                 reason = "A finding associated with this criterion could not be verified."

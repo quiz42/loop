@@ -17,6 +17,12 @@ Verify that acceptance-criterion labels remain stable when one label is absent.
 
 ## MUTABLE SECTION
 
+#### Plan Evolution Log
+
+| Round | Change | Reason | Impact on AC |
+|-------|--------|--------|--------------|
+| 0 | Deferred the fifth criterion to a follow-up Run | Synthetic replan | AC5 leaves the required set |
+
 ### Completed and Verified
 
 | AC | Task | Completed Round | Verified Round | Evidence |
