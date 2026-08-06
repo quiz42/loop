@@ -54,7 +54,9 @@ extract_plan_goal_content() {
     local plan_path="$1"
     local goal_section=""
 
-    goal_section=$({ sed -n '/^##[[:space:]]*[Gg]oal\|^##[[:space:]]*[Oo]bjective\|^##[[:space:]]*[Pp]urpose/,/^##/p' "$plan_path" 2>/dev/null || true; } | head -20 | tail -n +2 | head -10)
+    # sed -E with a real alternation group: \| is a GNU BRE extension that BSD
+    # sed matches literally, which returned an empty Goal section on macOS.
+    goal_section=$({ sed -nE '/^##[[:space:]]*([Gg]oal|[Oo]bjective|[Pp]urpose)/,/^##/p' "$plan_path" 2>/dev/null || true; } | head -20 | tail -n +2 | head -10)
     if [[ -n "$goal_section" ]]; then
         printf '%s\n' "$goal_section"
         return
@@ -81,7 +83,8 @@ extract_plan_goal_content() {
 
 extract_plan_ac_content() {
     local plan_path="$1"
-    { sed -n '/^##[[:space:]]*[Aa]cceptance\|^##[[:space:]]*[Cc]riteria\|^##[[:space:]]*[Rr]equirements/,/^##/p' "$plan_path" 2>/dev/null || true; } | head -30 | tail -n +2 | head -25
+    # sed -E for the same reason as extract_plan_goal_content above.
+    { sed -nE '/^##[[:space:]]*([Aa]cceptance|[Cc]riteria|[Rr]equirements)/,/^##/p' "$plan_path" 2>/dev/null || true; } | head -30 | tail -n +2 | head -25
 }
 
 show_help() {
