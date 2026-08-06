@@ -285,6 +285,82 @@ else
         "$SHELL_PASSTHROUGH / exit $SHELL_PASSTHROUGH_EXIT"
 fi
 
+# Test 16d: a trapped TERM must get the documented grace period before KILL.
+# The grace loop used to wait on the brace-group wrapper shell, which has no
+# trap and dies instantly, so KILL followed TERM immediately and a command
+# cleaning up on TERM was cut off mid-handler. GNU timeout gives the handler
+# the full period; the marker pair is what distinguishes the two.
+echo ""
+echo "Test 16d: A trapped TERM runs its handler before KILL"
+TERM_VICTIM_DIR="$(mktemp -d)"
+TERM_VICTIM="$TERM_VICTIM_DIR/term-victim.sh"
+cat > "$TERM_VICTIM" <<'VICTIM_EOF'
+#!/bin/sh
+trap 'echo TERM_RECEIVED; sleep 0.3; echo CLEANUP_FINISHED; exit 42' TERM
+sleep 30
+VICTIM_EOF
+chmod +x "$TERM_VICTIM"
+
+set +e
+TERM_OUTPUT=$(shell_run_with_timeout 1 "$TERM_VICTIM" 2>/dev/null)
+TERM_EXIT=$?
+set -e
+if [[ "$TERM_OUTPUT" == *TERM_RECEIVED* ]] && [[ "$TERM_OUTPUT" == *CLEANUP_FINISHED* ]] && [[ $TERM_EXIT -eq 124 ]]; then
+    pass "TERM handler completes before KILL (exit $TERM_EXIT)"
+else
+    fail "TERM handler grace period" "both markers and exit 124" \
+        "exit $TERM_EXIT, output [$TERM_OUTPUT]"
+fi
+rm -rf "$TERM_VICTIM_DIR"
+
+# Test 16e: callers validate the limit with ^[0-9]+$, which accepts a leading
+# zero. Shell arithmetic reads that as octal, so "08" was an error that
+# returned 1 without running the command and "010" quietly meant eight seconds.
+echo ""
+echo "Test 16e: Leading-zero timeout values are read as decimal"
+set +e
+LZ_STDERR=$(shell_run_with_timeout 08 true 2>&1 >/dev/null)
+LZ_EXIT=$?
+set -e
+if [[ $LZ_EXIT -eq 0 ]] && [[ -z "$LZ_STDERR" ]]; then
+    pass "shell_run_with_timeout 08 runs the command and returns its status"
+else
+    fail "leading-zero timeout 08" "exit 0, no stderr" "exit $LZ_EXIT, stderr [$LZ_STDERR]"
+fi
+
+# "010" must mean ten seconds, not eight. Measured rather than asserted on the
+# internal value, and bounded on both sides so octal (8s) fails the check.
+LZ_START=$(date +%s)
+set +e
+shell_run_with_timeout 010 sleep 300 >/dev/null 2>&1
+set -e
+LZ_ELAPSED=$(($(date +%s) - LZ_START))
+if [[ $LZ_ELAPSED -ge 10 ]] && [[ $LZ_ELAPSED -le 13 ]]; then
+    pass "shell_run_with_timeout 010 waits ten seconds, not eight (${LZ_ELAPSED}s)"
+else
+    fail "leading-zero timeout 010" "10-13s elapsed" "${LZ_ELAPSED}s"
+fi
+
+# Test 16f: the wait loop must measure elapsed time, not count iterations.
+# Each iteration costs its sleep plus the fork that runs it, so a counter
+# overshoots by a roughly constant *fraction* -- about 17% here, which is
+# fifteen minutes at the 5400s codex timeout this now guards. Asserting the
+# overshoot is bounded by a constant is what distinguishes the two designs.
+echo ""
+echo "Test 16f: Expiry is measured against the clock, not counted in iterations"
+DRIFT_START=$(date +%s)
+set +e
+shell_run_with_timeout 6 sleep 300 >/dev/null 2>&1
+set -e
+DRIFT_ELAPSED=$(($(date +%s) - DRIFT_START))
+# A counting loop would need about 7s here and would keep growing with the
+# limit; a clock-measured one stays inside limit + 1s granularity + grace.
+if [[ $DRIFT_ELAPSED -ge 6 ]] && [[ $DRIFT_ELAPSED -le 8 ]]; then
+    pass "a 6s limit expires in ${DRIFT_ELAPSED}s, within limit + granularity + grace"
+else
+    fail "timeout accuracy" "6-8s elapsed" "${DRIFT_ELAPSED}s"
+fi
+
 # Test 17: Timeout with subshell
 echo ""
 echo "Test 17: Timeout with subshell command"
