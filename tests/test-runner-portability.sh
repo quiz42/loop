@@ -356,10 +356,12 @@ fi
 echo ""
 echo "Section 5: Shell-native timeout"
 
-# scripts/portable-timeout.sh resolves gtimeout -> timeout -> python3 -> nothing.
-# On the macOS runner the first two are absent, so a Bash-only suite using it
-# would depend on Python, against ADR-0003. portable_run_with_timeout uses only
-# builtins.
+# scripts/portable-timeout.sh resolves gtimeout -> timeout -> shell. On the
+# macOS runner the first two are absent, so the shell rung is what actually
+# runs there; portable_run_with_timeout is that same implementation
+# (scripts/lib/shell-timeout.sh), so every assertion below covers the
+# production timeout too. The chain used to end in python3 and then in nothing
+# at all, which put the Bash layer on Python against ADR-0003.
 TIMEOUT_STATUS=0
 portable_run_with_timeout 5 "$SHELL_TRUE" || TIMEOUT_STATUS=$?
 if [[ "$TIMEOUT_STATUS" -eq 0 ]]; then

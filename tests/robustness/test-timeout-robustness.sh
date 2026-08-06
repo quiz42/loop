@@ -39,12 +39,15 @@ fi
 # Test 2: Timeout works with gtimeout (if available)
 echo ""
 echo "Test 2: Timeout implementation is valid"
+# "none" and "python3" are gone from the chain: the last resort is now the
+# shell implementation, so there is always an implementation that enforces the
+# limit. A stock macOS box has neither gtimeout nor timeout nor python3.
 case "$TIMEOUT_IMPL" in
-    gtimeout|timeout|python3|python|none)
+    gtimeout|timeout|shell)
         pass "Valid timeout implementation: $TIMEOUT_IMPL"
         ;;
     *)
-        fail "Timeout implementation" "gtimeout|timeout|python3|python|none" "$TIMEOUT_IMPL"
+        fail "Timeout implementation" "gtimeout|timeout|shell" "$TIMEOUT_IMPL"
         ;;
 esac
 
@@ -62,18 +65,14 @@ fi
 # Test 4: Timeout returns exit code 124 for timed out command
 echo ""
 echo "Test 4: Timeout returns exit code 124"
-if [[ "$TIMEOUT_IMPL" != "none" ]]; then
-    set +e
-    run_with_timeout 1 sleep 5
-    EXIT_CODE=$?
-    set -e
-    if [[ $EXIT_CODE -eq 124 ]]; then
-        pass "Returns exit code 124 for timeout"
-    else
-        fail "Timeout exit code" "124" "$EXIT_CODE"
-    fi
+set +e
+run_with_timeout 1 sleep 5
+EXIT_CODE=$?
+set -e
+if [[ $EXIT_CODE -eq 124 ]]; then
+    pass "Returns exit code 124 for timeout"
 else
-    pass "Skipped (no timeout implementation)"
+    fail "Timeout exit code" "124" "$EXIT_CODE"
 fi
 
 # Test 5: Command with args works correctly
@@ -119,39 +118,31 @@ echo ""
 
 # Test 8: Very short timeout
 echo "Test 8: Very short timeout (1 second)"
-if [[ "$TIMEOUT_IMPL" != "none" ]]; then
-    START=$(date +%s)
-    set +e
-    run_with_timeout 1 sleep 10
-    EXIT_CODE=$?
-    set -e
-    END=$(date +%s)
-    ELAPSED=$((END - START))
-    if [[ $EXIT_CODE -eq 124 ]] && [[ $ELAPSED -lt 5 ]]; then
-        pass "Short timeout works (elapsed: ${ELAPSED}s)"
-    else
-        fail "Short timeout" "exit 124, elapsed < 5s" "exit $EXIT_CODE, elapsed ${ELAPSED}s"
-    fi
+START=$(date +%s)
+set +e
+run_with_timeout 1 sleep 10
+EXIT_CODE=$?
+set -e
+END=$(date +%s)
+ELAPSED=$((END - START))
+if [[ $EXIT_CODE -eq 124 ]] && [[ $ELAPSED -lt 5 ]]; then
+    pass "Short timeout works (elapsed: ${ELAPSED}s)"
 else
-    pass "Skipped (no timeout implementation)"
+    fail "Short timeout" "exit 124, elapsed < 5s" "exit $EXIT_CODE, elapsed ${ELAPSED}s"
 fi
 
 # Test 9: Zero timeout value (edge case)
 echo ""
 echo "Test 9: Zero timeout value"
-if [[ "$TIMEOUT_IMPL" != "none" ]]; then
-    set +e
-    run_with_timeout 0 echo "instant" 2>/dev/null
-    EXIT_CODE=$?
-    set -e
-    # Behavior varies - may succeed or timeout immediately
-    if [[ $EXIT_CODE -eq 0 ]] || [[ $EXIT_CODE -eq 124 ]]; then
-        pass "Zero timeout handled (exit: $EXIT_CODE)"
-    else
-        fail "Zero timeout" "exit 0 or 124" "exit $EXIT_CODE"
-    fi
+set +e
+run_with_timeout 0 echo "instant" 2>/dev/null
+EXIT_CODE=$?
+set -e
+# Behavior varies - may succeed or timeout immediately
+if [[ $EXIT_CODE -eq 0 ]] || [[ $EXIT_CODE -eq 124 ]]; then
+    pass "Zero timeout handled (exit: $EXIT_CODE)"
 else
-    pass "Skipped (no timeout implementation)"
+    fail "Zero timeout" "exit 0 or 124" "exit $EXIT_CODE"
 fi
 
 # Test 10: Command that produces lots of output
@@ -238,13 +229,61 @@ echo "Test 16: Timeout fallback chain validation"
 # Check that detect_timeout_impl returns a valid option
 DETECTED=$(detect_timeout_impl)
 case "$DETECTED" in
-    gtimeout|timeout|python3|python|none)
+    gtimeout|timeout|shell)
         pass "Fallback chain returns valid: $DETECTED"
         ;;
     *)
         fail "Fallback chain" "valid option" "$DETECTED"
         ;;
 esac
+
+# Test 16b: the chain never gives up. With gtimeout, timeout and python3 all
+# missing -- a stock macOS machine -- detection used to return "none" and
+# run_with_timeout ran the command unbounded after warning on stderr.
+echo ""
+echo "Test 16b: Detection with no gtimeout, timeout or python3 on PATH"
+EMPTY_BIN="$(mktemp -d)"
+# Absolute bash path: with PATH stripped, `bash` itself would not resolve.
+BASH_ABS="$(command -v bash)"
+NO_TIMEOUT_IMPL=$(PATH="$EMPTY_BIN" "$BASH_ABS" -c "
+    source '$PROJECT_ROOT/scripts/portable-timeout.sh'
+    printf '%s' \"\$TIMEOUT_IMPL\"
+" 2>/dev/null)
+rmdir "$EMPTY_BIN" 2>/dev/null || true
+if [[ "$NO_TIMEOUT_IMPL" == "shell" ]]; then
+    pass "Falls back to the shell implementation, not to no timeout at all"
+else
+    fail "Empty-PATH fallback" "shell" "$NO_TIMEOUT_IMPL"
+fi
+
+# Test 16c: the shell implementation is the one that has to enforce the limit
+# on that machine, so exercise it directly rather than through whichever rung
+# this host happens to have.
+echo ""
+echo "Test 16c: Shell implementation enforces the limit and stays silent"
+SHELL_START=$(date +%s)
+set +e
+SHELL_NOISE=$(shell_run_with_timeout 1 sleep 30 2>&1 >/dev/null)
+SHELL_EXIT=$?
+set -e
+SHELL_ELAPSED=$(($(date +%s) - SHELL_START))
+if [[ $SHELL_EXIT -eq 124 ]] && [[ $SHELL_ELAPSED -lt 10 ]] && [[ -z "$SHELL_NOISE" ]]; then
+    pass "shell_run_with_timeout: exit 124 in ${SHELL_ELAPSED}s with empty stderr"
+else
+    fail "shell_run_with_timeout timeout" "exit 124, < 10s, no stderr" \
+        "exit $SHELL_EXIT, ${SHELL_ELAPSED}s, stderr [$SHELL_NOISE]"
+fi
+
+set +e
+SHELL_PASSTHROUGH=$(shell_run_with_timeout 5 sh -c 'printf OK; exit 7')
+SHELL_PASSTHROUGH_EXIT=$?
+set -e
+if [[ "$SHELL_PASSTHROUGH" == "OK" ]] && [[ $SHELL_PASSTHROUGH_EXIT -eq 7 ]]; then
+    pass "shell_run_with_timeout: passes stdout and exit status through"
+else
+    fail "shell_run_with_timeout passthrough" "OK / exit 7" \
+        "$SHELL_PASSTHROUGH / exit $SHELL_PASSTHROUGH_EXIT"
+fi
 
 # Test 17: Timeout with subshell
 echo ""
