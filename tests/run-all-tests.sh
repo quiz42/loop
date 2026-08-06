@@ -180,6 +180,8 @@ TEST_SUITES=(
     "test-skill-monitor.sh"
     # Cross-platform portability of the runner and its shared helpers
     "test-runner-portability.sh"
+    # Cross-platform portability of the runtime itself (hooks/ and scripts/)
+    "test-runtime-portability.sh"
     # Proof contract vectors
     "test-proof-contract.sh"
     "test-proof-export.sh"

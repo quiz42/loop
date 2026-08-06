@@ -537,12 +537,7 @@ _loop_monitor_codex() {
                     # Try to read build_finish_round from marker file for round display
                     local build_finish_round=""
                     local marker_file="$session_dir/.review-phase-started"
-                    if [[ -f "$marker_file" ]]; then
-                        # sed -nE, not grep -oP: BSD grep has no PCRE, so the
-                        # lookbehind form returned empty on macOS and the round
-                        # numbers silently vanished from the status line.
-                        build_finish_round=$(sed -nE 's/^build_finish_round=([0-9]+).*/\1/p' "$marker_file" 2>/dev/null || true)
-                    fi
+                    build_finish_round=$(monitor_read_build_finish_round "$marker_file")
                     if [[ -n "$build_finish_round" ]]; then
                         local review_rounds=$((current_round - build_finish_round))
                         status_line="${yellow}Active${reset}(${green}build(${build_finish_round})->${reset}${yellow}review(${review_rounds})${reset})"

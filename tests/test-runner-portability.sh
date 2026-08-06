@@ -956,9 +956,10 @@ echo "Section 10: Static guards over tests/, hooks/ and scripts/"
 # grep -oP in scripts/loop.sh and the realpath -m in the validators all
 # survived a green suite (issue #20).
 #
-# portable-helpers.sh and this file are exempt because they are where the
-# portable replacements and these rules live, so they necessarily name the
-# non-portable forms in comments, patterns and assertion messages.
+# portable-helpers.sh, test-runtime-portability.sh and this file are exempt
+# because they are where the portable replacements, these rules and the
+# behavioural checks live, so they necessarily name the non-portable forms in
+# comments, patterns, tool stubs and assertion messages.
 GUARD_OUT="$TEST_DIR/guard-findings.txt"
 GUARD_PROG="$TEST_DIR/portability-guard.awk"
 
@@ -968,7 +969,7 @@ GUARD_PROG="$TEST_DIR/portability-guard.awk"
 cat > "$GUARD_PROG" <<'GUARD_AWK'
 # Plain `next` rather than the gawk extension `nextfile`, which mawk on
 # Ubuntu and the BSD awk on macOS do not both provide.
-FILENAME ~ /(portable-helpers|test-runner-portability)\.sh$/ { next }
+FILENAME ~ /(portable-helpers|test-runner-portability|test-runtime-portability)\.sh$/ { next }
 
 # Quote and heredoc state carry across lines, so reset both per file.
 FNR == 1 { heredoc_tag = ""; heredoc_dash = 0; qstate = "none" }

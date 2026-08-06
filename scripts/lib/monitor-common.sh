@@ -72,6 +72,19 @@ monitor_utc_iso_to_local() {
 # File Utilities
 # ========================================
 
+# Read build_finish_round out of a .review-phase-started marker.
+# Usage: round=$(monitor_read_build_finish_round "$session_dir/.review-phase-started")
+# Returns: the digits, or empty when the file is absent or holds no such line.
+#
+# sed -nE rather than grep -oP: BSD grep has no PCRE, so the lookbehind form
+# this replaced returned empty on macOS and the monitor silently dropped the
+# round numbers from its status line.
+monitor_read_build_finish_round() {
+    local marker_file="$1"
+    [[ -f "$marker_file" ]] || return 0
+    sed -nE 's/^build_finish_round=([0-9]+).*/\1/p' "$marker_file" 2>/dev/null || true
+}
+
 # Get file size (cross-platform: Linux uses -c%s, macOS uses -f%z)
 # Usage: monitor_get_file_size "/path/to/file"
 # Returns: file size in bytes, or 0 if file doesn't exist
