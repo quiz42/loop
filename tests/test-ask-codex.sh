@@ -84,7 +84,7 @@ echo ""
 # Test: empty question
 EXIT_CODE=0
 OUTPUT=$(run_ask_codex 2>&1) || EXIT_CODE=$?
-if [[ $EXIT_CODE -eq 1 ]] && echo "$OUTPUT" | grep -q "No question or task provided"; then
+if [[ $EXIT_CODE -eq 1 && "$OUTPUT" == *"No question or task provided"* ]]; then
     pass "empty question exits 1 with error message"
 else
     fail "empty question exits 1 with error message" "exit 1 + error" "exit=$EXIT_CODE"
@@ -93,7 +93,7 @@ fi
 # Test: --help exits 0
 EXIT_CODE=0
 OUTPUT=$(run_ask_codex --help 2>&1) || EXIT_CODE=$?
-if [[ $EXIT_CODE -eq 0 ]] && echo "$OUTPUT" | grep -q "USAGE"; then
+if [[ $EXIT_CODE -eq 0 && "$OUTPUT" == *"USAGE"* ]]; then
     pass "--help exits 0 with usage info"
 else
     fail "--help exits 0 with usage info" "exit 0 + USAGE" "exit=$EXIT_CODE"
@@ -102,7 +102,7 @@ fi
 # Test: unknown option exits 1
 EXIT_CODE=0
 OUTPUT=$(run_ask_codex --bad-flag test 2>&1) || EXIT_CODE=$?
-if [[ $EXIT_CODE -eq 1 ]] && echo "$OUTPUT" | grep -q "Unknown option"; then
+if [[ $EXIT_CODE -eq 1 && "$OUTPUT" == *"Unknown option"* ]]; then
     pass "unknown option exits 1"
 else
     fail "unknown option exits 1" "exit 1 + Unknown option" "exit=$EXIT_CODE"
@@ -111,7 +111,7 @@ fi
 # Test: --codex-model without argument
 EXIT_CODE=0
 OUTPUT=$(run_ask_codex --codex-model 2>&1) || EXIT_CODE=$?
-if [[ $EXIT_CODE -eq 1 ]] && echo "$OUTPUT" | grep -q "requires a MODEL:EFFORT"; then
+if [[ $EXIT_CODE -eq 1 && "$OUTPUT" == *"requires a MODEL:EFFORT"* ]]; then
     pass "--codex-model without argument exits 1"
 else
     fail "--codex-model without argument exits 1" "exit 1" "exit=$EXIT_CODE"
@@ -120,7 +120,7 @@ fi
 # Test: --codex-timeout without argument
 EXIT_CODE=0
 OUTPUT=$(run_ask_codex --codex-timeout 2>&1) || EXIT_CODE=$?
-if [[ $EXIT_CODE -eq 1 ]] && echo "$OUTPUT" | grep -q "requires a number"; then
+if [[ $EXIT_CODE -eq 1 && "$OUTPUT" == *"requires a number"* ]]; then
     pass "--codex-timeout without argument exits 1"
 else
     fail "--codex-timeout without argument exits 1" "exit 1" "exit=$EXIT_CODE"
@@ -129,7 +129,7 @@ fi
 # Test: --codex-timeout non-numeric
 EXIT_CODE=0
 OUTPUT=$(run_ask_codex --codex-timeout abc test 2>&1) || EXIT_CODE=$?
-if [[ $EXIT_CODE -eq 1 ]] && echo "$OUTPUT" | grep -q "must be a positive integer"; then
+if [[ $EXIT_CODE -eq 1 && "$OUTPUT" == *"must be a positive integer"* ]]; then
     pass "--codex-timeout non-numeric exits 1"
 else
     fail "--codex-timeout non-numeric exits 1" "exit 1" "exit=$EXIT_CODE"
@@ -138,7 +138,7 @@ fi
 # Test: invalid model characters
 EXIT_CODE=0
 OUTPUT=$(run_ask_codex --codex-model 'bad;model' test 2>&1) || EXIT_CODE=$?
-if [[ $EXIT_CODE -eq 1 ]] && echo "$OUTPUT" | grep -q "invalid characters"; then
+if [[ $EXIT_CODE -eq 1 && "$OUTPUT" == *"invalid characters"* ]]; then
     pass "invalid model characters exits 1"
 else
     fail "invalid model characters exits 1" "exit 1" "exit=$EXIT_CODE"
@@ -147,7 +147,7 @@ fi
 # Test: invalid effort characters
 EXIT_CODE=0
 OUTPUT=$(run_ask_codex --codex-model 'model:bad;effort' test 2>&1) || EXIT_CODE=$?
-if [[ $EXIT_CODE -eq 1 ]] && echo "$OUTPUT" | grep -q "invalid characters"; then
+if [[ $EXIT_CODE -eq 1 && "$OUTPUT" == *"invalid characters"* ]]; then
     pass "invalid effort characters exits 1"
 else
     fail "invalid effort characters exits 1" "exit 1" "exit=$EXIT_CODE"
@@ -165,7 +165,7 @@ echo ""
 reset_mock
 export MOCK_CODEX_STDOUT="This is the answer"
 STDOUT=$(run_ask_codex "What is 1+1?" 2>/dev/null)
-if echo "$STDOUT" | grep -q "This is the answer"; then
+if [[ "$STDOUT" == *"This is the answer"* ]]; then
     pass "successful run outputs codex response to stdout"
 else
     fail "successful run outputs codex response to stdout" "This is the answer" "$STDOUT"
@@ -261,7 +261,7 @@ reset_mock
 export MOCK_CODEX_EXIT_CODE="124"
 EXIT_CODE=0
 STDERR=$(run_ask_codex --codex-timeout 999 "timeout test" 2>&1 >/dev/null) || EXIT_CODE=$?
-if [[ $EXIT_CODE -eq 124 ]] && echo "$STDERR" | grep -q "timed out"; then
+if [[ $EXIT_CODE -eq 124 && "$STDERR" == *"timed out"* ]]; then
     pass "timeout exit 124 is handled with error message"
 else
     fail "timeout exit 124 is handled with error message" "exit 124 + timed out" "exit=$EXIT_CODE"

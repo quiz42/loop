@@ -919,53 +919,192 @@ echo "Section 10: Static guards over tests/"
 # portable replacements and these rules live, so they necessarily name the
 # non-portable forms in comments, patterns and assertion messages.
 GUARD_OUT="$TEST_DIR/guard-findings.txt"
+GUARD_PROG="$TEST_DIR/portability-guard.awk"
+
+# The guard program lives in its own file so the same matcher both scans the
+# tree and is exercised against fixtures below. A single-quoted heredoc keeps
+# every backslash, dollar, and quote in the program literal.
+cat > "$GUARD_PROG" <<'GUARD_AWK'
+# Plain `next` rather than the gawk extension `nextfile`, which mawk on
+# Ubuntu and the BSD awk on macOS do not both provide.
+FILENAME ~ /(portable-helpers|test-runner-portability)\.sh$/ { next }
+
+# Skip comment lines: naming a construct in prose is not using it.
+/^[[:space:]]*#/ { next }
+
+# BSD sed rejects a nested brace block. The outer brace must open an address
+# block ("{ /^key:/{ ... }") so that sed handling "{{PLACEHOLDER}}" text is
+# not mistaken for one.
+/(^|[^[:alnum:]_])sed[^|#]*\{[[:space:]]*\/[^{}]*\{/ {
+    report("nested-sed", "nested brace block in a sed script; BSD sed rejects it")
+}
+
+# \+, \? and \| inside a BRE are GNU extensions; BSD sed treats them
+# literally and silently produces wrong output.
+/(^|[^[:alnum:]_])sed[^|#]*\\[+?|]/ {
+    report("gnu-sed-bre", "GNU-only BRE escape in a sed script; BSD sed takes it literally")
+}
+
+# BSD date has no %N.
+/date[[:space:]]+\+%s%[0-9]*N/ {
+    report("raw-epoch-ns", "raw date +%s%N; use portable_epoch_ms")
+}
+
+# ${var,,} and ${var^^} need Bash 4.
+/\$\{[A-Za-z_][A-Za-z0-9_]*(,,|\^\^)\}/ {
+    report("bash4-case", "Bash 4 case-conversion expansion; use portable_to_lower")
+}
+
+# BSD grep has no PCRE. Require a real option bundle so that prose
+# mentioning "grep -P)" in a message is not flagged.
+/(^|[^[:alnum:]_])grep[[:space:]]+(-[A-Za-z]+[[:space:]]+)*-[A-Za-z]*P[A-Za-z]*[[:space:]]/ {
+    report("grep-pcre", "grep -P; BSD grep has no PCRE support")
+}
+
+# `echo`/`printf` writing a variable, piped directly into a quiet `grep`, races
+# under pipefail: grep exits on the match and closes the pipe, the still-writing
+# builtin takes SIGPIPE, the pipeline reports 141, and a matching assertion reads
+# as false (issue #22). Use `[[ "$var" == *lit* ]]` or a here-string
+# `grep ... <<< "$var"`.
+#
+# This is a regression tripwire for that specific idiom, not a sound analyzer:
+# detecting the race in general is undecidable -- it depends on the runtime
+# payload size and where the match falls, and any producer that outruns the pipe
+# buffer is equally racy. The rule deliberately covers only the direct
+# `echo|printf ... | grep` form, and within it is getopt-accurate. Quoted flags
+# are unquoted so `"-q"` is still seen; quoted patterns are blanked so a `q`
+# inside them is not; `--` ends options and -e/-f/-m/-A/-B/-C/-D/-d consume their
+# argument -- so `grep -e -q`, `grep -- -q`, and `grep -eq foo` (where -q/q is an
+# operand) are NOT flagged, while every quiet position is (`-q`, `-iq`, `-qe`,
+# `grep X -q`, `grep -e X -q`, `--quiet`/`--silent`). Out of scope, left to code
+# review: intermediate stages (`echo | tr | grep -q`), env/command prefixes
+# (`LC_ALL=C grep -q`), line continuations, indirection (`f=-q; grep $f`), and
+# non-echo producers -- a reintroduction through any of those still surfaces as
+# CI flakiness.
+{
+    probe = unquote_opts($0)
+    gsub(/"[^"]*"/, "@", probe)
+    gsub(/'[^']*'/, "@", probe)
+    sub(/[[:space:]]#.*/, "", probe)
+    # printf -v writes to a variable, not stdout, so it is not a producer.
+    if (probe !~ /(^|[^[:alnum:]_])printf[^|]*-v[[:space:]]/ &&
+        probe ~ /(^|[^[:alnum:]_])(echo|printf)[^[:alnum:]_][^|#;&]*\|[[:space:]]*grep([^[:alnum:]_]|$)/) {
+        args = probe
+        sub(/^.*\|[[:space:]]*grep/, "", args)
+        sub(/[|;&].*/, "", args)
+        if (quiet_in_options(args)) {
+            report("pipefail-grep-q", "echo/printf piped into a quiet grep races under pipefail; use [[ == *lit* ]] or a here-string")
+        }
+    }
+}
+
+# Within grep's argument string, is a quiet option present in option position?
+# Applies grep getopt semantics: `--` ends option parsing, and -e/-f/-m/-A/-B/-C/
+# -D/-d consume an argument, so a q that is such an argument is not the quiet flag.
+function quiet_in_options(s,   a, n, i, t, optsended, j, ch, argtaking) {
+    n = split(s, a, /[[:space:]]+/)
+    optsended = 0
+    argtaking = "efmABCDd"
+    for (i = 1; i <= n; i++) {
+        t = a[i]
+        if (t == "") continue
+        if (optsended) continue
+        if (t == "--") { optsended = 1; continue }
+        if (t ~ /^--/) {
+            if (t == "--quiet" || t == "--silent") return 1
+            if (t == "--regexp" || t == "--file" || t == "--regex") { i++ }
+            continue
+        }
+        if (t ~ /^-.+/) {
+            for (j = 2; j <= length(t); j++) {
+                ch = substr(t, j, 1)
+                if (index(argtaking, ch) > 0) { if (j == length(t)) i++; break }
+                if (ch == "q") return 1
+            }
+            continue
+        }
+    }
+    return 0
+}
+
+# Strip the quotes from quoted tokens that are options ("-q" -> -q), so quoting a
+# flag cannot hide it; quoted patterns are blanked separately by the caller.
+function unquote_opts(s,   out, tok, inner) {
+    out = ""
+    while (match(s, /"-[^"[:space:]]*"|'-[^'[:space:]]*'/)) {
+        tok = substr(s, RSTART, RLENGTH)
+        inner = substr(tok, 2, length(tok) - 2)
+        out = out substr(s, 1, RSTART - 1) inner
+        s = substr(s, RSTART + RLENGTH)
+    }
+    return out s
+}
+
+function report(rule, message) {
+    printf "%s:%d: %s: %s\n", FILENAME, FNR, rule, message
+}
+GUARD_AWK
+
 find "$SCRIPT_DIR" -name '*.sh' -type f -print0 2>/dev/null \
-    | xargs -0 awk '
-    # Plain `next` rather than the gawk extension `nextfile`, which mawk on
-    # Ubuntu and the BSD awk on macOS do not both provide.
-    FILENAME ~ /(portable-helpers|test-runner-portability)\.sh$/ { next }
-
-    # Skip comment lines: naming a construct in prose is not using it.
-    /^[[:space:]]*#/ { next }
-
-    # BSD sed rejects a nested brace block. The outer brace must open an address
-    # block ("{ /^key:/{ ... }") so that sed handling "{{PLACEHOLDER}}" text is
-    # not mistaken for one.
-    /(^|[^[:alnum:]_])sed[^|#]*\{[[:space:]]*\/[^{}]*\{/ {
-        report("nested-sed", "nested brace block in a sed script; BSD sed rejects it")
-    }
-
-    # \+, \? and \| inside a BRE are GNU extensions; BSD sed treats them
-    # literally and silently produces wrong output.
-    /(^|[^[:alnum:]_])sed[^|#]*\\[+?|]/ {
-        report("gnu-sed-bre", "GNU-only BRE escape in a sed script; BSD sed takes it literally")
-    }
-
-    # BSD date has no %N.
-    /date[[:space:]]+\+%s%[0-9]*N/ {
-        report("raw-epoch-ns", "raw date +%s%N; use portable_epoch_ms")
-    }
-
-    # ${var,,} and ${var^^} need Bash 4.
-    /\$\{[A-Za-z_][A-Za-z0-9_]*(,,|\^\^)\}/ {
-        report("bash4-case", "Bash 4 case-conversion expansion; use portable_to_lower")
-    }
-
-    # BSD grep has no PCRE. Require a real option bundle so that prose
-    # mentioning "grep -P)" in a message is not flagged.
-    /(^|[^[:alnum:]_])grep[[:space:]]+(-[A-Za-z]+[[:space:]]+)*-[A-Za-z]*P[A-Za-z]*[[:space:]]/ {
-        report("grep-pcre", "grep -P; BSD grep has no PCRE support")
-    }
-
-    function report(rule, message) {
-        printf "%s:%d: %s: %s\n", FILENAME, FNR, rule, message
-    }
-' > "$GUARD_OUT" 2>&1
+    | xargs -0 awk -f "$GUARD_PROG" > "$GUARD_OUT" 2>&1
 
 if [[ ! -s "$GUARD_OUT" ]]; then
     pass "no non-portable shell constructs in tests/"
 else
     fail "non-portable shell constructs in tests/" "no findings" "$(cat "$GUARD_OUT")"
+fi
+
+# Positive and negative coverage for the pipefail grep -q guard. This file and
+# portable-helpers.sh are exempt from the scan above (they necessarily name the
+# forbidden forms), so the rule's own detection is asserted here against
+# fixtures. Positives exercise every quiet position (leading, reordered and
+# before-e bundles, after -e / after a positional, --quiet, a quoted flag, and a
+# chained condition). Negatives cover the safe forms (here-string, real-command
+# pipeline, grep -c, a `q` inside a quoted pattern), the getopt cases where -q/q
+# is an operand rather than the flag (grep -e -q, grep -eq X, grep -- -q,
+# grep X -- -q, grep -fq X), an `echo`-prefixed variable name, a non-echo
+# producer after a `;`, and an inline comment.
+GUARD_POS="$TEST_DIR/guard-grep-q-positive.sh"
+cat > "$GUARD_POS" <<'GUARD_POS_EOF'
+echo "$OUTPUT" | grep -q "leading"
+echo "$OUTPUT" | grep -qi "short-bundle"
+echo "$OUTPUT" | grep -iq "reordered-bundle"
+echo "$OUTPUT" | grep -qe "before-e-in-bundle"
+echo "$OUTPUT" | grep -e "^1$" -q
+echo "$OUTPUT" | grep "positional" -q
+echo "$OUTPUT" | grep --quiet "long-form"
+echo "$OUTPUT" | grep "-q" "^1$"
+printf '%s' "$OUTPUT" | grep -q "printf-producer"
+if [[ $rc -eq 0 ]] && echo "$OUTPUT" | grep -q "chained"; then :; fi
+GUARD_POS_EOF
+
+GUARD_NEG="$TEST_DIR/guard-grep-q-negative.sh"
+cat > "$GUARD_NEG" <<'GUARD_NEG_EOF'
+grep -q "herestring" <<< "$OUTPUT"
+head -1 "$file" | grep -q "^---$"
+git rev-parse 2>/dev/null | grep -q ":"
+echo "$OUTPUT" | grep -c "count-not-quiet"
+echo "$OUTPUT" | grep "mentions -q inside a literal"
+echo "$OUTPUT" | grep -e -q
+echo "$OUTPUT" | grep -eq operand
+echo "$OUTPUT" | grep -- -q
+echo "$OUTPUT" | grep needle -- -q
+echo "$OUTPUT" | grep -fq patternfile
+echo_result="$OUTPUT" | grep -q assigned-not-echoed
+echo begin; true | grep -q producer-is-true
+[[ "$OUTPUT" == *"literal"* ]]
+echo "$OUTPUT" | cat > /dev/null  # echo foo | grep -q inside-a-comment
+GUARD_NEG_EOF
+
+awk -f "$GUARD_PROG" "$GUARD_POS" > "$TEST_DIR/guard-pos-out.txt" 2>&1
+awk -f "$GUARD_PROG" "$GUARD_NEG" > "$TEST_DIR/guard-neg-out.txt" 2>&1
+GUARD_POS_HITS=$(grep -c 'pipefail-grep-q' "$TEST_DIR/guard-pos-out.txt" || true)
+GUARD_NEG_HITS=$(grep -c 'pipefail-grep-q' "$TEST_DIR/guard-neg-out.txt" || true)
+if [[ "$GUARD_POS_HITS" -eq 10 && "$GUARD_NEG_HITS" -eq 0 ]]; then
+    pass "pipefail grep -q guard flags every quiet position and no safe or non-quiet form"
+else
+    fail "pipefail grep -q guard coverage" "10 positive hits and 0 negative hits" \
+        "positives=$GUARD_POS_HITS negatives=$GUARD_NEG_HITS"
 fi
 
 print_test_summary "Runner Portability Test Summary"

@@ -91,7 +91,7 @@ for script in "${SCRIPTS_TO_CHECK[@]}"; do
         fi
 
         # Match load_template, load_and_render, or load_and_render_safe
-        if echo "$line" | grep -qE '(load_template|load_and_render|load_and_render_safe)[[:space:]]+"\$TEMPLATE_DIR"'; then
+        if grep -qE '(load_template|load_and_render|load_and_render_safe)[[:space:]]+"\$TEMPLATE_DIR"' <<< "$line"; then
             # Extract the template path (second quoted argument)
             template_path=$(echo "$line" | sed -n 's/.*"\$TEMPLATE_DIR"[[:space:]]*"\([^"]*\)".*/\1/p')
 
@@ -186,8 +186,8 @@ for script in "${CRITICAL_SCRIPTS[@]}"; do
     # First get all load_and_render lines, then exclude _safe ones
     unsafe_count=0
     while IFS= read -r line; do
-        if echo "$line" | grep -q 'load_and_render[[:space:]]*"\$TEMPLATE_DIR"'; then
-            if ! echo "$line" | grep -q 'load_and_render_safe'; then
+        if grep -q 'load_and_render[[:space:]]*"\$TEMPLATE_DIR"' <<< "$line"; then
+            if [[ "$line" != *'load_and_render_safe'* ]]; then
                 unsafe_count=$((unsafe_count + 1))
             fi
         fi

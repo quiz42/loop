@@ -680,7 +680,7 @@ if [[ -x "$VALIDATE_SCRIPT" ]]; then
 
     # Test: --discussion flag is recognized (not rejected as unknown)
     OUTPUT=$("$VALIDATE_SCRIPT" --input /dev/null --output /dev/null --discussion 2>&1) || true
-    if ! echo "$OUTPUT" | grep -qi "unknown option\|unrecognized"; then
+    if ! grep -qi "unknown option\|unrecognized" <<< "$OUTPUT"; then
         pass "validate script accepts --discussion flag"
     else
         fail "validate script accepts --discussion flag" "accepted" "unknown option error"
@@ -688,7 +688,7 @@ if [[ -x "$VALIDATE_SCRIPT" ]]; then
 
     # Test: --direct flag is recognized (not rejected as unknown)
     OUTPUT=$("$VALIDATE_SCRIPT" --input /dev/null --output /dev/null --direct 2>&1) || true
-    if ! echo "$OUTPUT" | grep -qi "unknown option\|unrecognized"; then
+    if ! grep -qi "unknown option\|unrecognized" <<< "$OUTPUT"; then
         pass "validate script accepts --direct flag"
     else
         fail "validate script accepts --direct flag" "accepted" "unknown option error"
@@ -696,7 +696,7 @@ if [[ -x "$VALIDATE_SCRIPT" ]]; then
 
     # Test: --discussion and --direct together are rejected as mutually exclusive
     OUTPUT=$("$VALIDATE_SCRIPT" --input /dev/null --output /dev/null --discussion --direct 2>&1) || true
-    if echo "$OUTPUT" | grep -qi "mutually exclusive\|cannot use"; then
+    if grep -qi "mutually exclusive\|cannot use" <<< "$OUTPUT"; then
         pass "validate script rejects --discussion and --direct together"
     else
         fail "validate script rejects --discussion and --direct together" "mutual exclusion error" "no error produced"

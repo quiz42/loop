@@ -206,7 +206,7 @@ exit_code=0
 stderr_out=""
 stderr_out=$(detect_provider "unknown-xyz" 2>&1 >/dev/null) || exit_code=$?
 
-if [[ $exit_code -ne 0 ]] && echo "$stderr_out" | grep -qiE "unknown|error"; then
+if [[ $exit_code -ne 0 ]] && grep -qiE "unknown|error" <<< "$stderr_out"; then
     pass "detect_provider: unknown model exits non-zero with error"
 else
     fail "detect_provider: unknown model exits non-zero with error" "non-zero exit + error message" "exit=$exit_code, stderr=$stderr_out"
@@ -223,7 +223,7 @@ exit_code=0
 stderr_out=""
 stderr_out=$(detect_provider "" 2>&1 >/dev/null) || exit_code=$?
 
-if [[ $exit_code -ne 0 ]] && echo "$stderr_out" | grep -qiE "non-empty|error"; then
+if [[ $exit_code -ne 0 ]] && grep -qiE "non-empty|error" <<< "$stderr_out"; then
     pass "detect_provider: empty model exits non-zero with error"
 else
     fail "detect_provider: empty model exits non-zero with error" "non-zero exit + error message" "exit=$exit_code, stderr=$stderr_out"
@@ -257,7 +257,7 @@ exit_code=0
 stderr_out=""
 stderr_out=$(PATH="$SAFE_BASE_PATH" check_provider_dependency "codex" 2>&1 >/dev/null) || exit_code=$?
 
-if [[ $exit_code -ne 0 ]] && echo "$stderr_out" | grep -qi "codex"; then
+if [[ $exit_code -ne 0 ]] && grep -qi "codex" <<< "$stderr_out"; then
     pass "check_provider_dependency: codex fails when codex is missing"
 else
     fail "check_provider_dependency: codex fails when codex is missing" "non-zero exit + codex in stderr" "exit=$exit_code, stderr=$stderr_out"
@@ -291,7 +291,7 @@ exit_code=0
 stderr_out=""
 stderr_out=$(PATH="$SAFE_BASE_PATH" check_provider_dependency "claude" 2>&1 >/dev/null) || exit_code=$?
 
-if [[ $exit_code -ne 0 ]] && echo "$stderr_out" | grep -qi "claude"; then
+if [[ $exit_code -ne 0 ]] && grep -qi "claude" <<< "$stderr_out"; then
     pass "check_provider_dependency: claude fails when claude is missing"
 else
     fail "check_provider_dependency: claude fails when claude is missing" "non-zero exit + claude in stderr" "exit=$exit_code, stderr=$stderr_out"
@@ -311,7 +311,7 @@ exit_code=0
 result=$(map_effort "xhigh" "claude" 2> "$TEST_DIR/map-effort-stderr.txt") || exit_code=$?
 stderr_out="$(cat "$TEST_DIR/map-effort-stderr.txt")"
 
-if [[ $exit_code -eq 0 ]] && [[ "$result" == "high" ]] && echo "$stderr_out" | grep -qiE "mapping effort|xhigh|high"; then
+if [[ $exit_code -eq 0 ]] && [[ "$result" == "high" ]] && grep -qiE "mapping effort|xhigh|high" <<< "$stderr_out"; then
     pass "map_effort: xhigh maps to high for claude with info log"
 else
     fail "map_effort: xhigh maps to high for claude with info log" "exit 0 + high + info log" "exit=$exit_code, output=$result, stderr=$stderr_out"
@@ -396,7 +396,7 @@ exit_code=0
 stderr_out=""
 stderr_out=$(map_effort "ultra" "claude" 2>&1 >/dev/null) || exit_code=$?
 
-if [[ $exit_code -ne 0 ]] && echo "$stderr_out" | grep -qiE "unknown effort|error"; then
+if [[ $exit_code -ne 0 ]] && grep -qiE "unknown effort|error" <<< "$stderr_out"; then
     pass "map_effort: unknown claude effort exits non-zero with error"
 else
     fail "map_effort: unknown claude effort exits non-zero with error" "non-zero exit + error message" "exit=$exit_code, stderr=$stderr_out"
@@ -413,7 +413,7 @@ exit_code=0
 stderr_out=""
 stderr_out=$(map_effort "ultra" "codex" 2>&1 >/dev/null) || exit_code=$?
 
-if [[ $exit_code -ne 0 ]] && echo "$stderr_out" | grep -qiE "unknown effort|error"; then
+if [[ $exit_code -ne 0 ]] && grep -qiE "unknown effort|error" <<< "$stderr_out"; then
     pass "map_effort: unknown codex effort exits non-zero with error"
 else
     fail "map_effort: unknown codex effort exits non-zero with error" "non-zero exit + error message" "exit=$exit_code, stderr=$stderr_out"

@@ -76,7 +76,7 @@ assert_blocked_with_notes_error() {
     local name="$1"
     local output="$2"
 
-    if echo "$output" | jq -e '.decision == "block"' >/dev/null 2>&1 && echo "$output" | grep -q "Notes"; then
+    if echo "$output" | jq -e '.decision == "block"' >/dev/null 2>&1 && [[ "$output" == *"Notes"* ]]; then
         pass "$name"
     else
         fail "$name" "block decision mentioning Notes" "$output"

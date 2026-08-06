@@ -312,7 +312,7 @@ assert_systemmessage_only() {
         return
     fi
     if [[ -n "$expected_count_regex" ]]; then
-        if ! printf '%s' "$system_message" | grep -Eq "$expected_count_regex"; then
+        if ! grep -Eq "$expected_count_regex" <<< "$system_message"; then
             fail "$test_name" \
                 "systemMessage matches /$expected_count_regex/" \
                 "got: $system_message"
@@ -555,7 +555,7 @@ AC10_HELPER_OUT=$(
     source "$PROJECT_ROOT/hooks/lib/loop-common.sh"
     list_pending_background_task_ids "$AC10_TILDE_PATH" 2>/dev/null | sort -u
 )
-if printf '%s\n' "$AC10_HELPER_OUT" | grep -qx 'agent_pending_H'; then
+if grep -qx 'agent_pending_H' <<< "$AC10_HELPER_OUT"; then
     pass "AC-10b: list_pending_background_task_ids expands '~/...' directly"
 else
     fail "AC-10b: list_pending_background_task_ids expands '~/...' directly" \
@@ -659,7 +659,7 @@ if [[ "$RUN_EXIT_CODE" -eq 0 ]] \
    && [[ ! -f "$RUN_MARKER" ]] \
    && [[ -f "$AC11_MARKER" ]] \
    && [[ "$AC11_STATE_HASH_BEFORE" == "$AC11_STATE_HASH_AFTER" ]] \
-   && printf '%s' "$AC11_SYS_MSG" | grep -qi "parked"; then
+   && grep -qi "parked" <<< "$AC11_SYS_MSG"; then
     pass "AC-11: cross-session stop exits with 'parked' systemMessage; marker and session_id untouched"
 else
     fail "AC-11: cross-session stop exits with 'parked' systemMessage; marker and session_id untouched" \

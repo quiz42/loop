@@ -114,7 +114,7 @@ RESULT=$(echo "$JSON" | CLAUDE_PROJECT_DIR="$TEST_DIR" bash "$PROJECT_ROOT/hooks
 EXIT_CODE=$?
 set -e
 # Paths outside .loop/rlcr are allowed through - sandbox handles security
-if [[ $EXIT_CODE -eq 0 ]] && ! echo "$RESULT" | grep -q '"decision".*:.*"block"'; then
+if [[ $EXIT_CODE -eq 0 ]] && ! grep -q '"decision".*:.*"block"' <<< "$RESULT"; then
     pass "Edit allows paths outside .loop (exit 0, no block)"
 else
     fail "Path outside .loop" "allowed through" "exit $EXIT_CODE, result: $RESULT"
@@ -204,7 +204,7 @@ set -e
 # Check both exit code and JSON output for decision
 if [[ $EXIT_CODE -eq 0 ]]; then
     # Check if JSON contains "decision": "block" - if so, it's blocked despite exit 0
-    if echo "$RESULT" | grep -q '"decision".*:.*"block"'; then
+    if grep -q '"decision".*:.*"block"' <<< "$RESULT"; then
         fail "Plan file edit" "allowed (no block decision)" "got decision: block"
     else
         pass "Plan file edit allowed (exit 0, no block decision)"
@@ -222,7 +222,7 @@ RESULT=$(echo "$JSON" | CLAUDE_PROJECT_DIR="$TEST_DIR/plan-test" bash "$PROJECT_
 EXIT_CODE=$?
 set -e
 # Non-plan file should pass through without block decision
-if [[ $EXIT_CODE -eq 0 ]] && ! echo "$RESULT" | grep -q '"decision".*:.*"block"'; then
+if [[ $EXIT_CODE -eq 0 ]] && ! grep -q '"decision".*:.*"block"' <<< "$RESULT"; then
     pass "Non-plan file passes through (no block decision)"
 else
     fail "Non-plan file" "pass through" "exit $EXIT_CODE, result: $RESULT"
@@ -390,7 +390,7 @@ EXIT_CODE=$?
 set -e
 # State.md modifications should be blocked with exit 2 and JSON decision: block
 if [[ $EXIT_CODE -eq 2 ]]; then
-    if echo "$RESULT" | grep -q '"decision".*:.*"block"'; then
+    if grep -q '"decision".*:.*"block"' <<< "$RESULT"; then
         pass "Bash blocks state.md modification (exit 2, decision: block)"
     else
         pass "Bash blocks state.md modification (exit 2)"
@@ -558,7 +558,7 @@ RESULT=$(echo "$JSON" | CLAUDE_PROJECT_DIR="$TEST_DIR" bash "$PROJECT_ROOT/hooks
 EXIT_CODE=$?
 set -e
 # Unrelated commands pass through - Claude's sandbox handles security
-if [[ $EXIT_CODE -eq 0 ]] && ! echo "$RESULT" | grep -q '"decision".*:.*"block"'; then
+if [[ $EXIT_CODE -eq 0 ]] && ! grep -q '"decision".*:.*"block"' <<< "$RESULT"; then
     pass "Unrelated commands pass through (sandbox responsibility)"
 else
     fail "Unrelated command" "allowed through" "exit $EXIT_CODE, result: $RESULT"
@@ -651,7 +651,7 @@ OUTPUT=$(echo '{}' | CLAUDE_PROJECT_DIR="$TEST_DIR/no-state" bash "$PROJECT_ROOT
 EXIT_CODE=$?
 set -e
 # Should exit 0 (pass through) when no loop is active, with no block decision
-if [[ $EXIT_CODE -eq 0 ]] && ! echo "$OUTPUT" | grep -q '"decision".*:.*"block"'; then
+if [[ $EXIT_CODE -eq 0 ]] && ! grep -q '"decision".*:.*"block"' <<< "$OUTPUT"; then
     pass "Stop hook allows exit when no state (no block decision)"
 else
     fail "Missing state handling" "exit 0, no block decision" "exit=$EXIT_CODE, output=$OUTPUT"
@@ -671,7 +671,7 @@ set -e
 # The key is it doesn't crash (exit < 128)
 if [[ $EXIT_CODE -eq 0 ]]; then
     # Check if it outputs a decision
-    if echo "$OUTPUT" | grep -q '"decision"'; then
+    if [[ "$OUTPUT" == *'"decision"'* ]]; then
         pass "Stop hook outputs decision for corrupted state"
     else
         pass "Stop hook allows exit for corrupted state (no active loop detected)"
@@ -708,7 +708,7 @@ set -e
 # Loop ends gracefully rather than blocking
 if [[ $EXIT_CODE -eq 0 ]]; then
     # Verify it mentions missing required field
-    if echo "$OUTPUT" | grep -qi "missing required field\|current_round"; then
+    if grep -qi "missing required field\|current_round" <<< "$OUTPUT"; then
         # Verify state file was renamed to unexpected-state.md
         if [[ -f "$TEST_DIR/incomplete-state/.loop/rlcr/2026-01-19_00-00-00/unexpected-state.md" ]]; then
             pass "Stop hook ends loop (unexpected) when missing required fields"
@@ -773,7 +773,7 @@ EXIT_CODE=$?
 set -e
 # Active loop with valid state MUST block exit with decision: block
 # This is the expected behavior - no fallback accepted
-if [[ $EXIT_CODE -eq 0 ]] && echo "$OUTPUT" | grep -q '"decision".*:.*"block"'; then
+if [[ $EXIT_CODE -eq 0 ]] && grep -q '"decision".*:.*"block"' <<< "$OUTPUT"; then
     pass "Stop hook blocks exit during active loop (exit 0, decision: block)"
 else
     fail "Active loop blocking" "exit 0 with decision:block" "exit=$EXIT_CODE, output: $OUTPUT"

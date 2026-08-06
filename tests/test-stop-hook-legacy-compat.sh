@@ -150,7 +150,7 @@ echo "legacy state" > "$TEST1_REPO/.loop-old/legacy.txt"
 run_stop_hook "$TEST1_REPO"
 
 if [[ "$RUN_EXIT_CODE" -eq 0 ]] && [[ -f "$RUN_MARKER" ]] && \
-   ! echo "$RUN_OUTPUT" | grep -q "Loop: Blocked - uncommitted changes"; then
+   [[ "$RUN_OUTPUT" != *"Loop: Blocked - uncommitted changes"* ]]; then
     pass "Stop hook ignores untracked .loop-old paths when checking git dirtiness"
 else
     fail \
@@ -171,9 +171,9 @@ echo "legacy" > "$TEST1B_REPO/.loop-old/legacy.txt"
 run_stop_hook "$TEST1B_REPO"
 
 if [[ "$RUN_EXIT_CODE" -eq 0 ]] && [[ ! -f "$RUN_MARKER" ]] && \
-   echo "$RUN_OUTPUT" | grep -q "Loop: Blocked - uncommitted changes" && \
-   echo "$RUN_OUTPUT" | grep -q "Special Case - \\.loop directory detected" && \
-   echo "$RUN_OUTPUT" | grep -q "Note on Untracked Files"; then
+   [[ "$RUN_OUTPUT" == *"Loop: Blocked - uncommitted changes"* ]] && \
+   [[ "$RUN_OUTPUT" == *"Special Case - .loop directory detected"* ]] && \
+   [[ "$RUN_OUTPUT" == *"Note on Untracked Files"* ]]; then
     pass "Stop hook treats .loopconfig as a normal untracked file"
 else
     fail \

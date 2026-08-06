@@ -58,7 +58,7 @@ echo ""
 echo "Test 2: load_template - existing file"
 CONTENT=$(load_template "$TEMPLATE_DIR" "block/git-push.md")
 
-if [[ -n "$CONTENT" ]] && echo "$CONTENT" | grep -q "Git Push Blocked"; then
+if [[ -n "$CONTENT" ]] && [[ "$CONTENT" == *"Git Push Blocked"* ]]; then
     pass "load_template loads existing file correctly"
 else
     fail "load_template failed to load existing file" "Content containing 'Git Push Blocked'" "$CONTENT"
@@ -155,9 +155,9 @@ RESULT=$(load_and_render "$TEMPLATE_DIR" "block/wrong-round-number.md" \
     "CURRENT_ROUND=5" \
     "CORRECT_PATH=/tmp/round-5-summary.md")
 
-if echo "$RESULT" | grep -q "Wrong Round Number" && \
-   echo "$RESULT" | grep -q "round-3-summary.md" && \
-   echo "$RESULT" | grep -q "current round is \*\*5\*\*"; then
+if [[ "$RESULT" == *"Wrong Round Number"* ]] && \
+   grep -q "round-3-summary.md" <<< "$RESULT" && \
+   [[ "$RESULT" == *"current round is **5**"* ]]; then
     pass "load_and_render works correctly with real template"
 else
     fail "load_and_render integration test" "Content with replaced variables" "$RESULT"
@@ -201,7 +201,7 @@ echo "Test 11: load_and_render_safe - missing template uses fallback"
 FALLBACK="Fallback message: {{VAR}}"
 RESULT=$(load_and_render_safe "$TEMPLATE_DIR" "non-existing.md" "$FALLBACK" "VAR=test_value")
 
-if echo "$RESULT" | grep -q "Fallback message: test_value"; then
+if [[ "$RESULT" == *"Fallback message: test_value"* ]]; then
     pass "load_and_render_safe uses fallback for missing template"
 else
     fail "load_and_render_safe fallback" "Fallback message: test_value" "$RESULT"
@@ -215,7 +215,7 @@ echo "Test 12: load_and_render_safe - existing template works normally"
 FALLBACK="This should not appear"
 RESULT=$(load_and_render_safe "$TEMPLATE_DIR" "block/git-push.md" "$FALLBACK")
 
-if echo "$RESULT" | grep -q "Git Push Blocked" && ! echo "$RESULT" | grep -q "should not appear"; then
+if [[ "$RESULT" == *"Git Push Blocked"* && "$RESULT" != *"should not appear"* ]]; then
     pass "load_and_render_safe uses template when available"
 else
     fail "load_and_render_safe with existing template" "Git Push Blocked (not fallback)" "$RESULT"

@@ -64,7 +64,7 @@ printf 'not valid json at all' > "$PROJECT_DIR/.loop/config.json"
 stderr_out=$(XDG_CONFIG_HOME="$TEST_DIR/no-user" \
     load_merged_config "$PROJECT_ROOT" "$PROJECT_DIR" 2>&1 >/dev/null || true)
 
-if echo "$stderr_out" | grep -qi "malformed\|ignoring\|warning"; then
+if grep -qi "malformed\|ignoring\|warning" <<< "$stderr_out"; then
     pass "malformed project config: warning emitted to stderr"
 else
     fail "malformed project config: warning emitted to stderr" \
@@ -93,7 +93,7 @@ printf '{bad json here}' > "$TEST_DIR/bad-user-cfg/loop/config.json"
 stderr_out=$(XDG_CONFIG_HOME="$TEST_DIR/bad-user-cfg" \
     load_merged_config "$PROJECT_ROOT" "$PROJECT_DIR" 2>&1 >/dev/null || true)
 
-if echo "$stderr_out" | grep -qi "malformed\|ignoring\|warning"; then
+if grep -qi "malformed\|ignoring\|warning" <<< "$stderr_out"; then
     pass "malformed user config: warning emitted to stderr"
 else
     fail "malformed user config: warning emitted to stderr" \

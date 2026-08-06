@@ -62,7 +62,7 @@ else
 fi
 
 # Check error message mentions CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS
-if echo "$SETUP_OUTPUT" | grep -qi "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"; then
+if grep -qi "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS" <<< "$SETUP_OUTPUT"; then
     pass "error message mentions CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS env var"
 else
     fail "error message mentions CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS env var" "env var name in output" "$SETUP_OUTPUT"

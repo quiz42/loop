@@ -54,7 +54,7 @@ RESULT=$(load_and_render_safe "$TEMPLATE_DIR" "codex/commit-history-section.md" 
     "COMMIT_HISTORY=$COMMIT_HISTORY" \
     "RECENT_ROUND_FILES=$RECENT_ROUND_FILES")
 
-if echo "$RESULT" | grep -q "(no commits yet)" && echo "$RESULT" | grep -q "(first round, no prior history)"; then
+if [[ "$RESULT" == *"(no commits yet)"* && "$RESULT" == *"(first round, no prior history)"* ]]; then
     pass "Round 0 shows correct placeholders"
 else
     fail "Round 0 placeholders" "(no commits yet) and (first round, no prior history)" "$RESULT"
@@ -92,14 +92,14 @@ RESULT=$(load_and_render_safe "$TEMPLATE_DIR" "codex/commit-history-section.md" 
 HAS_COMMITS=true
 HAS_ROUNDS=true
 
-echo "$RESULT" | grep -q "feat: add feature 1" || HAS_COMMITS=false
-echo "$RESULT" | grep -q "feat: add feature 2" || HAS_COMMITS=false
-echo "$RESULT" | grep -q "fix: resolve bug in feature 1" || HAS_COMMITS=false
+[[ "$RESULT" == *"feat: add feature 1"* ]] || HAS_COMMITS=false
+[[ "$RESULT" == *"feat: add feature 2"* ]] || HAS_COMMITS=false
+[[ "$RESULT" == *"fix: resolve bug in feature 1"* ]] || HAS_COMMITS=false
 
-echo "$RESULT" | grep -q "round-2-summary.md" || HAS_ROUNDS=false
-echo "$RESULT" | grep -q "round-1-summary.md" || HAS_ROUNDS=false
-echo "$RESULT" | grep -q "round-0-summary.md" || HAS_ROUNDS=false
-echo "$RESULT" | grep -q "round-2-review-result.md" || HAS_ROUNDS=false
+grep -q "round-2-summary.md" <<< "$RESULT" || HAS_ROUNDS=false
+grep -q "round-1-summary.md" <<< "$RESULT" || HAS_ROUNDS=false
+grep -q "round-0-summary.md" <<< "$RESULT" || HAS_ROUNDS=false
+grep -q "round-2-review-result.md" <<< "$RESULT" || HAS_ROUNDS=false
 
 if [[ "$HAS_COMMITS" == "true" ]]; then
     pass "Round 3 shows all 3 commits"
@@ -131,13 +131,13 @@ ${COMMIT_HISTORY}"
 fi
 [[ -z "$COMMIT_HISTORY" ]] && COMMIT_HISTORY="(no commits yet)"
 
-if echo "$COMMIT_HISTORY" | grep -q "base commit unavailable"; then
+if [[ "$COMMIT_HISTORY" == *"base commit unavailable"* ]]; then
     pass "Corrupted BASE_COMMIT triggers annotation"
 else
     fail "Corrupted BASE_COMMIT annotation" "base commit unavailable" "$COMMIT_HISTORY"
 fi
 
-if echo "$COMMIT_HISTORY" | grep -q "feat: add feature"; then
+if [[ "$COMMIT_HISTORY" == *"feat: add feature"* ]]; then
     pass "Corrupted BASE_COMMIT still shows recent commits"
 else
     fail "Corrupted BASE_COMMIT recent commits" "recent branch commits" "$COMMIT_HISTORY"
@@ -171,7 +171,7 @@ ${COMMIT_HISTORY}"
 fi
 [[ -z "$COMMIT_HISTORY" ]] && COMMIT_HISTORY="(no commits yet)"
 
-if echo "$COMMIT_HISTORY" | grep -q "base commit unavailable"; then
+if [[ "$COMMIT_HISTORY" == *"base commit unavailable"* ]]; then
     pass "Unrelated valid commit triggers annotation"
 else
     fail "Unrelated valid commit annotation" "base commit unavailable" "$COMMIT_HISTORY"
@@ -208,12 +208,12 @@ RESULT=$(load_and_render_safe "$TEMPLATE_DIR" "codex/non-existent-template.md" "
     "RECENT_ROUND_FILES=$RECENT_ROUND_FILES")
 
 FALLBACK_OK=true
-echo "$RESULT" | grep -q "Development History" || FALLBACK_OK=false
-echo "$RESULT" | grep -q "feat: add feature 1" || FALLBACK_OK=false
-echo "$RESULT" | grep -q "Recent Round Files" || FALLBACK_OK=false
-echo "$RESULT" | grep -q "round-1-summary.md" || FALLBACK_OK=false
-echo "$RESULT" | grep -q "round-0-review-result.md" || FALLBACK_OK=false
-echo "$RESULT" | grep -q "Read these files" || FALLBACK_OK=false
+[[ "$RESULT" == *"Development History"* ]] || FALLBACK_OK=false
+[[ "$RESULT" == *"feat: add feature 1"* ]] || FALLBACK_OK=false
+[[ "$RESULT" == *"Recent Round Files"* ]] || FALLBACK_OK=false
+grep -q "round-1-summary.md" <<< "$RESULT" || FALLBACK_OK=false
+grep -q "round-0-review-result.md" <<< "$RESULT" || FALLBACK_OK=false
+[[ "$RESULT" == *"Read these files"* ]] || FALLBACK_OK=false
 
 if [[ "$FALLBACK_OK" == "true" ]]; then
     pass "Fallback renders full section with commits, round files, and directive"
@@ -236,8 +236,8 @@ for (( r = CURRENT_ROUND - 1; r >= 0 && r >= CURRENT_ROUND - 3; r-- )); do
 done
 [[ -z "$RECENT_ROUND_FILES" ]] && RECENT_ROUND_FILES="(first round, no prior history)"
 
-if echo "$RECENT_ROUND_FILES" | grep -q "round-0-summary.md" && \
-   ! echo "$RECENT_ROUND_FILES" | grep -q "round-1-"; then
+if grep -q "round-0-summary.md" <<< "$RECENT_ROUND_FILES" && \
+   [[ "$RECENT_ROUND_FILES" != *"round-1-"* ]]; then
     pass "Round 1 references only round 0"
 else
     fail "Round 1 boundary" "only round-0 references" "$RECENT_ROUND_FILES"
@@ -259,7 +259,7 @@ ${COMMIT_HISTORY}"
 fi
 [[ -z "$COMMIT_HISTORY" ]] && COMMIT_HISTORY="(no commits yet)"
 
-if echo "$COMMIT_HISTORY" | grep -q "base commit unavailable"; then
+if [[ "$COMMIT_HISTORY" == *"base commit unavailable"* ]]; then
     pass "Empty BASE_COMMIT triggers annotation"
 else
     fail "Empty BASE_COMMIT annotation" "base commit unavailable" "$COMMIT_HISTORY"

@@ -212,20 +212,20 @@ MONITOR_SCRIPT
     output=$(cat "$OUTPUT_FILE" 2>/dev/null || echo "")
 
     # Verify: Clean exit with user-friendly message
-    if echo "$output" | grep -q "Monitoring stopped:"; then
+    if [[ "$output" == *"Monitoring stopped:"* ]]; then
         pass "Graceful stop message displayed"
     else
         fail "Graceful stop message" "Missing 'Monitoring stopped:' in output"
     fi
 
-    if echo "$output" | grep -q "directory no longer exists"; then
+    if [[ "$output" == *"directory no longer exists"* ]]; then
         pass "User-friendly deletion reason"
     else
         fail "Deletion reason" "Missing 'directory no longer exists' in output"
     fi
 
     # Verify: No glob errors
-    if echo "$output" | grep -qE 'no matches found|bad pattern'; then
+    if grep -qE 'no matches found|bad pattern' <<< "$output"; then
         fail "Glob errors present" "Found glob errors: $(echo "$output" | grep -E 'no matches found|bad pattern')"
     else
         pass "No glob errors in output"
@@ -233,7 +233,7 @@ MONITOR_SCRIPT
 
     # Verify: Terminal state restored (scroll region reset)
     # Check for the scroll region reset escape sequence \033[r
-    if echo "$output" | grep -q 'Stopped monitoring'; then
+    if [[ "$output" == *'Stopped monitoring'* ]]; then
         pass "Cleanup message displayed"
     else
         fail "Cleanup message" "Missing 'Stopped monitoring' in output"
@@ -247,7 +247,7 @@ MONITOR_SCRIPT
     fi
 
     # Verify exit code is 0
-    if echo "$output" | grep -q "EXIT_CODE:0"; then
+    if [[ "$output" == *"EXIT_CODE:0"* ]]; then
         pass "Exit code 0 on graceful stop"
     else
         fail "Exit code" "Expected EXIT_CODE:0 in output"
@@ -378,19 +378,19 @@ ZSH_MONITOR_SCRIPT
         output_zsh=$(cat "$OUTPUT_FILE_ZSH" 2>/dev/null || echo "")
 
         # Verify: Works correctly in zsh
-        if echo "$output_zsh" | grep -q "Monitoring stopped:"; then
+        if [[ "$output_zsh" == *"Monitoring stopped:"* ]]; then
             pass "zsh graceful stop message"
         else
             fail "zsh graceful stop" "Missing message in zsh output"
         fi
 
-        if echo "$output_zsh" | grep -qE 'no matches found|bad pattern'; then
+        if grep -qE 'no matches found|bad pattern' <<< "$output_zsh"; then
             fail "zsh glob errors" "Found glob errors in zsh"
         else
             pass "zsh no glob errors"
         fi
 
-        if echo "$output_zsh" | grep -q "EXIT_CODE:0"; then
+        if [[ "$output_zsh" == *"EXIT_CODE:0"* ]]; then
             pass "zsh exit code 0"
         else
             fail "zsh exit code" "Expected EXIT_CODE:0"
@@ -557,11 +557,11 @@ SIGINT_SCRIPT_EOF
     output_sigint=$(cat "$OUTPUT_FILE_SIGINT" 2>/dev/null || echo "")
 
     # Verify clean exit message for SIGINT
-    if echo "$output_sigint" | grep -qE 'Stopped|Monitoring stopped|interrupt|signal'; then
+    if grep -qE 'Stopped|Monitoring stopped|interrupt|signal' <<< "$output_sigint"; then
         pass "bash SIGINT cleanup message"
     else
         # May not have cleanup message if terminated too fast, check exit was clean
-        if echo "$output_sigint" | grep -qE 'EXIT_CODE:[01]'; then
+        if grep -qE 'EXIT_CODE:[01]' <<< "$output_sigint"; then
             pass "bash SIGINT clean exit code"
         else
             fail "bash SIGINT cleanup" "No cleanup message or clean exit code in output"
@@ -569,7 +569,7 @@ SIGINT_SCRIPT_EOF
     fi
 
     # Verify no glob errors
-    if echo "$output_sigint" | grep -qE 'no matches found|bad pattern'; then
+    if grep -qE 'no matches found|bad pattern' <<< "$output_sigint"; then
         fail "bash SIGINT glob errors" "Found glob errors"
     else
         pass "bash SIGINT no glob errors"
@@ -698,13 +698,13 @@ ZSH_SIGINT_SCRIPT
 
         output_zsh_sigint=$(cat "$OUTPUT_FILE_ZSH_SIGINT" 2>/dev/null || echo "")
 
-        if echo "$output_zsh_sigint" | grep -qE 'Stopped|Monitoring stopped|interrupt|signal|EXIT_CODE:[01]'; then
+        if grep -qE 'Stopped|Monitoring stopped|interrupt|signal|EXIT_CODE:[01]' <<< "$output_zsh_sigint"; then
             pass "zsh SIGINT cleanup or clean exit"
         else
             fail "zsh SIGINT cleanup" "No cleanup indication in output"
         fi
 
-        if echo "$output_zsh_sigint" | grep -qE 'no matches found|bad pattern'; then
+        if grep -qE 'no matches found|bad pattern' <<< "$output_zsh_sigint"; then
             fail "zsh SIGINT glob errors" "Found glob errors"
         else
             pass "zsh SIGINT no glob errors"

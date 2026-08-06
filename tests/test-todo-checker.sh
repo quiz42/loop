@@ -136,7 +136,7 @@ fi
 
 # Test 7: Output includes incomplete todo details
 echo "Test 7: Output includes todo details"
-if echo "$RESULT" | grep -q "Task 2"; then
+if [[ "$RESULT" == *"Task 2"* ]]; then
     pass "Output includes incomplete task name"
 else
     fail "Output includes task name" "Task 2 in output" "$RESULT"
@@ -181,7 +181,7 @@ set +e
 RESULT=$(echo "{\"transcript_path\": \"$TEST_DIR/transcript-inline-tag.jsonl\"}" | python3 "$TODO_CHECKER" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 1 ]] && echo "$RESULT" | grep -q '\[blocking\]'; then
+if [[ $EXIT_CODE -eq 1 && "$RESULT" == *'[blocking]'* ]]; then
     pass "Inline queued tag still blocks TodoWrite item"
 else
     fail "Inline queued TodoWrite item" "exit 1 with [blocking] output" "exit $EXIT_CODE, output: $RESULT"
@@ -415,7 +415,7 @@ set +e
 RESULT=$(echo "{\"session_id\": \"$MOCK_SESSION_19C\", \"tasks_base_dir\": \"$MOCK_TASKS_BASE\"}" | python3 "$TODO_CHECKER" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 1 ]] && echo "$RESULT" | grep -q '\[blocking\]'; then
+if [[ $EXIT_CODE -eq 1 && "$RESULT" == *'[blocking]'* ]]; then
     pass "Blocking task exits 1 with lane marker"
 else
     fail "Blocking task" "exit 1 with [blocking] output" "exit $EXIT_CODE, output: $RESULT"
@@ -432,7 +432,7 @@ set +e
 RESULT=$(echo "{\"session_id\": \"$MOCK_SESSION_19D\", \"tasks_base_dir\": \"$MOCK_TASKS_BASE\"}" | python3 "$TODO_CHECKER" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 1 ]] && echo "$RESULT" | grep -q '\[blocking\]'; then
+if [[ $EXIT_CODE -eq 1 && "$RESULT" == *'[blocking]'* ]]; then
     pass "Inline queued tag still blocks file-based task"
 else
     fail "Inline queued file-based task" "exit 1 with [blocking] output" "exit $EXIT_CODE, output: $RESULT"
@@ -517,7 +517,7 @@ fi
 
 # Test 24: Output includes Task ID for new Task system
 echo "Test 24: Output includes Task ID"
-if echo "$RESULT" | grep -q "Task #"; then
+if [[ "$RESULT" == *"Task #"* ]]; then
     pass "Output includes Task ID marker"
 else
     fail "Output includes Task ID" "Task # in output" "$RESULT"

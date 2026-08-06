@@ -94,7 +94,7 @@ set +e
 RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" "/absolute/path/plan.md" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -ne 0 ]] && echo "$RESULT" | grep -q "relative path"; then
+if [[ $EXIT_CODE -ne 0 && "$RESULT" == *"relative path"* ]]; then
     pass "Absolute path rejected"
 else
     fail "Absolute path rejection" "exit 1 with relative path error" "$RESULT"
@@ -106,7 +106,7 @@ set +e
 RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" "nonexistent.md" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -ne 0 ]] && echo "$RESULT" | grep -q "not found"; then
+if [[ $EXIT_CODE -ne 0 && "$RESULT" == *"not found"* ]]; then
     pass "Non-existent file rejected"
 else
     fail "Non-existent file rejection" "exit 1 with not found error" "$RESULT"
@@ -118,7 +118,7 @@ set +e
 RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" "nonexistent-dir/plan.md" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -ne 0 ]] && echo "$RESULT" | grep -q "directory not found"; then
+if [[ $EXIT_CODE -ne 0 && "$RESULT" == *"directory not found"* ]]; then
     pass "Non-existent parent directory rejected with clear error"
 else
     fail "Non-existent parent directory rejection" "exit 1 with directory not found error" "$RESULT"
@@ -139,7 +139,7 @@ set +e
 RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" "path with spaces/plan.md" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -ne 0 ]] && echo "$RESULT" | grep -q "cannot contain spaces"; then
+if [[ $EXIT_CODE -ne 0 && "$RESULT" == *"cannot contain spaces"* ]]; then
     pass "Path with spaces rejected"
 else
     fail "Path with spaces rejection" "exit 1 with spaces error" "$RESULT"
@@ -159,7 +159,7 @@ set +e
 RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" "plan with spaces.md" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -ne 0 ]] && echo "$RESULT" | grep -q "cannot contain spaces"; then
+if [[ $EXIT_CODE -ne 0 && "$RESULT" == *"cannot contain spaces"* ]]; then
     pass "Filename with spaces rejected"
 else
     fail "Filename with spaces rejection" "exit 1 with spaces error" "$RESULT"
@@ -178,7 +178,7 @@ EOF
 # Test various shell metacharacters
 for meta_char in ';' '&' '|' '$' '`' '<' '>' '(' ')' '{' '}' '[' ']' '!' '#' '~' '*' '?'; do
     RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" "plans/test${meta_char}plan.md" 2>&1) || true
-    if ! echo "$RESULT" | grep -q "shell metacharacters"; then
+    if [[ "$RESULT" != *"shell metacharacters"* ]]; then
         fail "Shell metacharacter rejection ($meta_char)" "error mentioning metacharacters" "$RESULT"
         break
     fi
@@ -192,7 +192,7 @@ set +e
 RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" "link-plan.md" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -ne 0 ]] && echo "$RESULT" | grep -q "symbolic link"; then
+if [[ $EXIT_CODE -ne 0 && "$RESULT" == *"symbolic link"* ]]; then
     pass "Symlink rejected"
 else
     fail "Symlink rejection" "exit 1 with symbolic link error" "$RESULT"
@@ -231,7 +231,7 @@ if chmod 000 plans 2>/dev/null; then
     # Restore permissions for cleanup
     chmod 755 plans
     # Should fail with clear error about directory access
-    if [[ $EXIT_CODE -ne 0 ]] && echo "$RESULT" | grep -qE "resolve|not found|directory"; then
+    if [[ $EXIT_CODE -ne 0 ]] && grep -qE "resolve|not found|directory" <<< "$RESULT"; then
         pass "Path resolution error handled gracefully"
     else
         fail "Path resolution error" "clear error message" "exit $EXIT_CODE, output: $RESULT"
@@ -264,7 +264,7 @@ set +e
 RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" "../outside/escape-plan.md" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -ne 0 ]] && echo "$RESULT" | grep -qE "(within project|not found)"; then
+if [[ $EXIT_CODE -ne 0 ]] && grep -qE "(within project|not found)" <<< "$RESULT"; then
     pass "Path escape rejected"
 else
     fail "Path escape rejection" "exit 1 with project directory error" "$RESULT"
@@ -289,7 +289,7 @@ EXIT_CODE=$?
 set -e
 rm -rf "$NOGIT_DIR"
 cd "$TEST_DIR"
-if [[ $EXIT_CODE -ne 0 ]] && echo "$RESULT" | grep -q "git repository"; then
+if [[ $EXIT_CODE -ne 0 && "$RESULT" == *"git repository"* ]]; then
     pass "Non-git repo rejected"
 else
     fail "Non-git repo rejection" "exit 1 with git repository error" "$RESULT"
@@ -315,7 +315,7 @@ EXIT_CODE=$?
 set -e
 rm -rf "$NOCOMMIT_DIR"
 cd "$TEST_DIR"
-if [[ $EXIT_CODE -ne 0 ]] && echo "$RESULT" | grep -q "at least one commit"; then
+if [[ $EXIT_CODE -ne 0 && "$RESULT" == *"at least one commit"* ]]; then
     pass "Git repo without commits rejected"
 else
     fail "Git repo without commits rejection" "exit 1 with commit error" "$RESULT"
@@ -351,7 +351,7 @@ set +e
 RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" "tracked-plan.md" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -ne 0 ]] && echo "$RESULT" | grep -q "gitignored"; then
+if [[ $EXIT_CODE -ne 0 && "$RESULT" == *"gitignored"* ]]; then
     pass "Tracked file without --track-plan-file rejected"
 else
     fail "Tracked file rejection" "exit 1 with gitignored error" "$RESULT"
@@ -385,7 +385,7 @@ set +e
 RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" --track-plan-file "plans/untracked-plan.md" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -ne 0 ]] && echo "$RESULT" | grep -q "tracked in git"; then
+if [[ $EXIT_CODE -ne 0 && "$RESULT" == *"tracked in git"* ]]; then
     pass "Untracked file with --track-plan-file rejected"
 else
     fail "Untracked file with --track-plan-file rejection" "exit 1 with tracked error" "$RESULT"
@@ -418,7 +418,7 @@ set +e
 RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" --track-plan-file "modified-plan.md" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -ne 0 ]] && echo "$RESULT" | grep -q "clean"; then
+if [[ $EXIT_CODE -ne 0 && "$RESULT" == *"clean"* ]]; then
     pass "Modified tracked file with --track-plan-file rejected"
 else
     fail "Modified tracked file rejection" "exit 1 with clean error" "$RESULT"
@@ -462,7 +462,7 @@ if git checkout -q -b "feature:test" 2>/dev/null; then
     RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" "plans/plan.md" 2>&1)
     EXIT_CODE=$?
     set -e
-    if [[ $EXIT_CODE -ne 0 ]] && echo "$RESULT" | grep -q "YAML-unsafe"; then
+    if [[ $EXIT_CODE -ne 0 && "$RESULT" == *"YAML-unsafe"* ]]; then
         pass "Branch with colon rejected"
     else
         fail "Branch with colon rejection" "exit 1 with YAML-unsafe error" "$RESULT"
@@ -482,7 +482,7 @@ if git checkout -q -b "test#comment" 2>/dev/null; then
     RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" "plans/plan.md" 2>&1)
     EXIT_CODE=$?
     set -e
-    if [[ $EXIT_CODE -ne 0 ]] && echo "$RESULT" | grep -q "YAML-unsafe"; then
+    if [[ $EXIT_CODE -ne 0 && "$RESULT" == *"YAML-unsafe"* ]]; then
         pass "Branch with hash rejected"
     else
         fail "Branch with hash rejection" "exit 1 with YAML-unsafe error" "$RESULT"
@@ -500,7 +500,7 @@ if git checkout -q -b 'test"quote' 2>/dev/null; then
     RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" "plans/plan.md" 2>&1)
     EXIT_CODE=$?
     set -e
-    if [[ $EXIT_CODE -ne 0 ]] && echo "$RESULT" | grep -q "YAML-unsafe"; then
+    if [[ $EXIT_CODE -ne 0 && "$RESULT" == *"YAML-unsafe"* ]]; then
         pass "Branch with quotes rejected"
     else
         fail "Branch with quotes rejection" "exit 1 with YAML-unsafe error" "$RESULT"
@@ -536,7 +536,7 @@ set +e
 RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" "plans/blank-plan.md" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -ne 0 ]] && echo "$RESULT" | grep -q "insufficient content"; then
+if [[ $EXIT_CODE -ne 0 && "$RESULT" == *"insufficient content"* ]]; then
     pass "Plan with only blank lines rejected"
 else
     fail "Blank plan rejection" "exit 1 with insufficient content error" "$RESULT"
@@ -557,7 +557,7 @@ set +e
 RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" "plans/sparse-plan.md" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -ne 0 ]] && echo "$RESULT" | grep -q "insufficient content"; then
+if [[ $EXIT_CODE -ne 0 && "$RESULT" == *"insufficient content"* ]]; then
     pass "Plan with too few non-blank lines rejected"
 else
     fail "Sparse plan rejection" "exit 1 with insufficient content error" "$RESULT"
@@ -580,7 +580,7 @@ set +e
 RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" "plans/comment-plan.md" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -ne 0 ]] && echo "$RESULT" | grep -q "insufficient content"; then
+if [[ $EXIT_CODE -ne 0 && "$RESULT" == *"insufficient content"* ]]; then
     pass "Plan with only HTML comments rejected"
 else
     fail "HTML-comment-only plan rejection" "exit 1 with insufficient content error" "$RESULT"
@@ -600,7 +600,7 @@ set +e
 RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" "plans/hash-comment-plan.md" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -ne 0 ]] && echo "$RESULT" | grep -q "insufficient content"; then
+if [[ $EXIT_CODE -ne 0 && "$RESULT" == *"insufficient content"* ]]; then
     pass "Plan with only # comments rejected"
 else
     fail "#-comment-only plan rejection" "exit 1 with insufficient content error" "$RESULT"
@@ -627,7 +627,7 @@ RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" "plans/good-plan.md" 2>&1)
 EXIT_CODE=$?
 set -e
 # Should not fail due to content validation (may fail later for other reasons like codex)
-if ! echo "$RESULT" | grep -q "insufficient content"; then
+if [[ "$RESULT" != *"insufficient content"* ]]; then
     pass "Valid plan with sufficient content accepted"
 else
     fail "Valid plan acceptance" "no insufficient content error" "$RESULT"
@@ -653,7 +653,7 @@ RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" "plans/single-line-html-comm
 EXIT_CODE=$?
 set -e
 # Should not fail due to content validation - single-line comments should be skipped properly
-if ! echo "$RESULT" | grep -q "insufficient content"; then
+if [[ "$RESULT" != *"insufficient content"* ]]; then
     pass "Plan with single-line HTML comments + valid content accepted"
 else
     fail "Single-line HTML comment handling" "no insufficient content error" "$RESULT"
@@ -674,7 +674,7 @@ RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" --plan-file "plans/test-plan
 EXIT_CODE=$?
 set -e
 # Should get past CLI parsing - either run or fail on some validation
-if ! echo "$RESULT" | grep -q "requires a file path"; then
+if [[ "$RESULT" != *"requires a file path"* ]]; then
     pass "--plan-file option accepted"
 else
     fail "--plan-file option" "option accepted" "$RESULT"
@@ -687,7 +687,7 @@ set +e
 RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" --plan-file "plans/a.md" "plans/b.md" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -ne 0 ]] && echo "$RESULT" | grep -q "Cannot specify both"; then
+if [[ $EXIT_CODE -ne 0 && "$RESULT" == *"Cannot specify both"* ]]; then
     pass "Both --plan-file and positional rejected"
 else
     fail "Both options rejection" "exit 1 with both error" "$RESULT"
@@ -707,7 +707,7 @@ set +e
 RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" --codex-model 'model$inject:high' "plans/test-plan.md" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -ne 0 ]] && echo "$RESULT" | grep -q "invalid characters"; then
+if [[ $EXIT_CODE -ne 0 && "$RESULT" == *"invalid characters"* ]]; then
     pass "Codex model with $ rejected"
 else
     fail "Codex model validation" "exit 1 with invalid characters error" "$RESULT"
@@ -720,7 +720,7 @@ set +e
 RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" --codex-model "gpt-5.5:high#comment" "plans/test-plan.md" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -ne 0 ]] && echo "$RESULT" | grep -q "Invalid codex effort"; then
+if [[ $EXIT_CODE -ne 0 && "$RESULT" == *"Invalid codex effort"* ]]; then
     pass "Codex effort with hash rejected"
 else
     fail "Codex effort validation" "exit 1 with invalid codex effort error" "$RESULT"
@@ -733,7 +733,7 @@ RESULT=$("$PROJECT_ROOT/scripts/setup-rlcr-loop.sh" --codex-model "gpt-5.5:mediu
 EXIT_CODE=$?
 set -e
 # Should not fail due to model/effort validation (may fail later for other reasons)
-if ! echo "$RESULT" | grep -q "invalid characters"; then
+if [[ "$RESULT" != *"invalid characters"* ]]; then
     pass "Valid codex model accepted"
 else
     fail "Valid codex model" "no invalid characters error" "$RESULT"
