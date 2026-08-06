@@ -388,7 +388,14 @@ sleep 30
 VICTIM_EOF
 chmod +x "$zsh_term_victim"
 
+# Grace widened for the test, not the handler shortened. See the note on the
+# same assertion in tests/robustness/test-timeout-robustness.sh: at the
+# production 500ms this flakes on a loaded runner, and a shorter handler
+# finishes inside the window the broken version leaves too.
+term_grace_saved="$LOOP_PORTABLE_KILL_GRACE_MS"
+LOOP_PORTABLE_KILL_GRACE_MS=3000
 term_output=$(shell_run_with_timeout 1 "$zsh_term_victim" 2>/dev/null) || true
+LOOP_PORTABLE_KILL_GRACE_MS="$term_grace_saved"
 if [[ "$term_output" == *TERM_RECEIVED* && "$term_output" == *CLEANUP_FINISHED* ]]; then
     pass "a TERM handler completes before KILL under zsh"
 else
