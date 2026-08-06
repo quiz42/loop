@@ -285,6 +285,120 @@ else
         "$SHELL_PASSTHROUGH / exit $SHELL_PASSTHROUGH_EXIT"
 fi
 
+# Test 16d: a trapped TERM must get the documented grace period before KILL.
+# The grace loop used to wait on the brace-group wrapper shell, which has no
+# trap and dies instantly, so KILL followed TERM immediately and a command
+# cleaning up on TERM was cut off mid-handler. GNU timeout gives the handler
+# the full period; the marker pair is what distinguishes the two.
+echo ""
+echo "Test 16d: A trapped TERM runs its handler before KILL"
+TERM_VICTIM_DIR="$(mktemp -d)"
+TERM_VICTIM="$TERM_VICTIM_DIR/term-victim.sh"
+cat > "$TERM_VICTIM" <<'VICTIM_EOF'
+#!/bin/sh
+trap 'echo TERM_RECEIVED; sleep 0.3; echo CLEANUP_FINISHED; exit 42' TERM
+sleep 30
+VICTIM_EOF
+chmod +x "$TERM_VICTIM"
+
+# The grace period is widened for this test rather than the handler shortened.
+# At the production 500ms a 0.3s handler leaves only 200ms of slack, which a
+# loaded CI runner ate -- this test flaked on Ubuntu for exactly that reason --
+# and shortening the handler instead made it vacuous, because a 0.05s handler
+# finishes inside the window the broken version leaves too.
+#
+# Raising the grace only helps the fixed code: the defect was that the grace was
+# not honoured at all (the wait was on the wrapper shell, which dies at once),
+# so the broken version sends KILL just as promptly whatever this is set to.
+# Verified in both directions.
+TERM_GRACE_SAVED="$LOOP_PORTABLE_KILL_GRACE_MS"
+LOOP_PORTABLE_KILL_GRACE_MS=3000
+set +e
+TERM_OUTPUT=$(shell_run_with_timeout 1 "$TERM_VICTIM" 2>/dev/null)
+TERM_EXIT=$?
+set -e
+LOOP_PORTABLE_KILL_GRACE_MS="$TERM_GRACE_SAVED"
+if [[ "$TERM_OUTPUT" == *TERM_RECEIVED* ]] && [[ "$TERM_OUTPUT" == *CLEANUP_FINISHED* ]] && [[ $TERM_EXIT -eq 124 ]]; then
+    pass "TERM handler completes before KILL (exit $TERM_EXIT)"
+else
+    fail "TERM handler grace period" "both markers and exit 124" \
+        "exit $TERM_EXIT, output [$TERM_OUTPUT]"
+fi
+rm -rf "$TERM_VICTIM_DIR"
+
+# Test 16e: callers validate the limit with ^[0-9]+$, which accepts a leading
+# zero. Shell arithmetic reads that as octal, so "08" was an error that
+# returned 1 without running the command and "010" quietly meant eight seconds.
+echo ""
+echo "Test 16e: Leading-zero timeout values are read as decimal"
+set +e
+LZ_STDERR=$(shell_run_with_timeout 08 true 2>&1 >/dev/null)
+LZ_EXIT=$?
+set -e
+if [[ $LZ_EXIT -eq 0 ]] && [[ -z "$LZ_STDERR" ]]; then
+    pass "shell_run_with_timeout 08 runs the command and returns its status"
+else
+    fail "leading-zero timeout 08" "exit 0, no stderr" "exit $LZ_EXIT, stderr [$LZ_STDERR]"
+fi
+
+# "010" must mean ten seconds, not eight. The lower bound is the discriminator:
+# read as octal the wait is 8s, and since expiry is now measured against the
+# clock rather than counted, a slow runner inflates this by process startup
+# only -- a fraction of a second, nowhere near the two-second gap. The upper
+# bound is deliberately loose; it only rules out a nonsense result.
+LZ_START=$(date +%s)
+set +e
+shell_run_with_timeout 010 sleep 300 >/dev/null 2>&1
+set -e
+LZ_ELAPSED=$(($(date +%s) - LZ_START))
+if [[ $LZ_ELAPSED -ge 10 ]] && [[ $LZ_ELAPSED -le 15 ]]; then
+    pass "shell_run_with_timeout 010 waits ten seconds, not eight (${LZ_ELAPSED}s)"
+else
+    fail "leading-zero timeout 010" "10-15s elapsed" "${LZ_ELAPSED}s"
+fi
+
+# Test 16f: the wait loop must measure elapsed time, not count iterations.
+# Each iteration costs its sleep plus the fork that runs it, so a counter
+# overshoots by a roughly constant *fraction* -- about 17%, which is fifteen
+# minutes at the 5400s codex timeout this now guards.
+#
+# Told apart by making the loop's own `sleep` slow rather than by timing a long
+# run: a counting loop takes 20 iterations for a 2s limit, so a 0.3s sleep
+# stretches it to 6s, while a clock-measured loop still expires at 2s no matter
+# how long each poll takes. That is a 3x separation from a 2-second test,
+# where distinguishing the two designs by elapsed time alone needs a 30-second
+# one -- and a window tight enough to do it would flake on a loaded runner.
+#
+# The victim is invoked by absolute path so it runs the real sleep; only the
+# library's own unqualified `sleep 0.1` picks up the stub.
+echo ""
+echo "Test 16f: Expiry is measured against the clock, not counted in iterations"
+REAL_SLEEP="$(command -v sleep)"
+SLOW_SLEEP_BIN="$(mktemp -d)"
+cat > "$SLOW_SLEEP_BIN/sleep" <<STUB
+#!/bin/sh
+exec "$REAL_SLEEP" 0.3
+STUB
+chmod +x "$SLOW_SLEEP_BIN/sleep"
+
+DRIFT_PATH_SAVED="$PATH"
+DRIFT_START=$(date +%s)
+set +e
+PATH="$SLOW_SLEEP_BIN:$PATH"
+shell_run_with_timeout 2 "$REAL_SLEEP" 300 >/dev/null 2>&1
+PATH="$DRIFT_PATH_SAVED"
+set -e
+DRIFT_ELAPSED=$(($(date +%s) - DRIFT_START))
+rm -rf "$SLOW_SLEEP_BIN"
+
+# Counting: 20 polls x 0.3s = 6s or more. Clock: expiry at 2s, plus at most one
+# more poll and the 1s granularity.
+if [[ $DRIFT_ELAPSED -le 4 ]]; then
+    pass "a 2s limit expires in ${DRIFT_ELAPSED}s even with 0.3s polls (counting would need 6s+)"
+else
+    fail "timeout measured against the clock" "<= 4s with 0.3s polls" "${DRIFT_ELAPSED}s"
+fi
+
 # Test 17: Timeout with subshell
 echo ""
 echo "Test 17: Timeout with subshell command"

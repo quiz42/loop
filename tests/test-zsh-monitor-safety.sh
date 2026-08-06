@@ -321,6 +321,88 @@ mkdir -p .loop/rlcr
 ) && pass "Glob vs find safety demonstration" || fail "Glob vs find demonstration" "Error"
 
 # ========================================
+# Shared shell timeout under zsh
+# ========================================
+#
+# scripts/lib/shell-timeout.sh is the last rung of the gtimeout -> timeout ->
+# shell chain, so on a stock macOS box it is what actually times out codex --
+# and scripts/loop.sh is sourced by zsh users, so it has to work here too.
+#
+# The zsh branch deliberately runs without job control (`set -m` is a fatal
+# error inside a zsh subshell), which leaves the descendant list as its ONLY
+# cleanup path. That list is a space-separated scalar, and zsh does not
+# word-split unquoted parameters, so `for pid in $descendants` once passed the
+# entire list to kill as a single argument: every kill failed, the timed-out
+# command was left running, and because the orphan still held the capture pipe
+# open, a command substitution blocked for the command's full duration despite
+# the function having returned 124.
+
+echo ""
+echo "Test: shared shell timeout under zsh"
+
+source "$PROJECT_ROOT/scripts/lib/shell-timeout.sh"
+
+# `|| timeout_status=$?` rather than a bare assignment: this suite runs under
+# `set -e`, and an expiry is a non-zero status by design.
+timeout_start=$SECONDS
+timeout_status=0
+captured=$(shell_run_with_timeout 1 sleep 25) || timeout_status=$?
+timeout_elapsed=$((SECONDS - timeout_start))
+
+if [[ $timeout_status -eq 124 ]]; then
+    pass "shell_run_with_timeout returns 124 under zsh"
+else
+    fail "shell_run_with_timeout status under zsh" "expected 124, got $timeout_status"
+fi
+
+# The point of the assertion: the capture must return with the timeout, not
+# when the abandoned command eventually finishes 25 seconds later.
+if [[ $timeout_elapsed -le 5 ]]; then
+    pass "command substitution returns with the timeout (${timeout_elapsed}s), not with the command"
+else
+    fail "command substitution under zsh" "expected <= 5s, took ${timeout_elapsed}s"
+fi
+
+if [[ -z "$captured" ]]; then
+    pass "timed-out command captures no output"
+else
+    fail "timed-out command output" "expected empty, got [$captured]"
+fi
+
+# A distinctive duration so the check cannot match an unrelated sleep.
+shell_run_with_timeout 1 sleep 2917 >/dev/null 2>&1 || true
+sleep 1
+if pgrep -f 'sleep 2917' >/dev/null 2>&1; then
+    fail "descendant cleanup under zsh" "the timed-out command is still running"
+    pkill -f 'sleep 2917' 2>/dev/null || true
+else
+    pass "no orphaned descendant survives the timeout under zsh"
+fi
+
+# TERM handlers get their grace period here too, not just under bash.
+zsh_term_victim="$TEST_BASE/zsh-term-victim.sh"
+cat > "$zsh_term_victim" <<'VICTIM_EOF'
+#!/bin/sh
+trap 'echo TERM_RECEIVED; sleep 0.3; echo CLEANUP_FINISHED; exit 42' TERM
+sleep 30
+VICTIM_EOF
+chmod +x "$zsh_term_victim"
+
+# Grace widened for the test, not the handler shortened. See the note on the
+# same assertion in tests/robustness/test-timeout-robustness.sh: at the
+# production 500ms this flakes on a loaded runner, and a shorter handler
+# finishes inside the window the broken version leaves too.
+term_grace_saved="$LOOP_PORTABLE_KILL_GRACE_MS"
+LOOP_PORTABLE_KILL_GRACE_MS=3000
+term_output=$(shell_run_with_timeout 1 "$zsh_term_victim" 2>/dev/null) || true
+LOOP_PORTABLE_KILL_GRACE_MS="$term_grace_saved"
+if [[ "$term_output" == *TERM_RECEIVED* && "$term_output" == *CLEANUP_FINISHED* ]]; then
+    pass "a TERM handler completes before KILL under zsh"
+else
+    fail "TERM handler grace under zsh" "expected both markers, got [$term_output]"
+fi
+
+# ========================================
 # Summary
 # ========================================
 echo ""
