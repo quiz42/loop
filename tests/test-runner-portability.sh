@@ -961,24 +961,83 @@ FILENAME ~ /(portable-helpers|test-runner-portability)\.sh$/ { next }
     report("grep-pcre", "grep -P; BSD grep has no PCRE support")
 }
 
-# `echo`/`printf` writing a variable, piped into a `grep` that carries a `q`
-# option, races under pipefail: grep exits on the match and closes the pipe,
-# the still-writing builtin takes SIGPIPE, the pipeline reports 141, and a
-# matching assertion reads as false (issue #22). The `q` is recognised in any
-# valid position -- a leading bundle (grep -q, grep -iq), after an -e/-f option
-# or a positional pattern (grep -e X -q, grep X -q), or the long form
-# (--quiet/--silent). Quoted strings are blanked first so a `q` named inside a
-# pattern or filename literal is not read as the flag, and only echo/printf
-# feeding grep counts, so a real command piped into grep -q (head, sed, git,
-# another grep) is not flagged. Use `[[ "$var" == *lit* ]]` for a literal
-# substring, or feed grep with a here-string: `grep ... <<< "$var"`.
+# `echo`/`printf` writing a variable, piped directly into a quiet `grep`, races
+# under pipefail: grep exits on the match and closes the pipe, the still-writing
+# builtin takes SIGPIPE, the pipeline reports 141, and a matching assertion reads
+# as false (issue #22). Use `[[ "$var" == *lit* ]]` or a here-string
+# `grep ... <<< "$var"`.
+#
+# This is a regression tripwire for that specific idiom, not a sound analyzer:
+# detecting the race in general is undecidable -- it depends on the runtime
+# payload size and where the match falls, and any producer that outruns the pipe
+# buffer is equally racy. The rule deliberately covers only the direct
+# `echo|printf ... | grep` form, and within it is getopt-accurate. Quoted flags
+# are unquoted so `"-q"` is still seen; quoted patterns are blanked so a `q`
+# inside them is not; `--` ends options and -e/-f/-m/-A/-B/-C/-D/-d consume their
+# argument -- so `grep -e -q`, `grep -- -q`, and `grep -eq foo` (where -q/q is an
+# operand) are NOT flagged, while every quiet position is (`-q`, `-iq`, `-qe`,
+# `grep X -q`, `grep -e X -q`, `--quiet`/`--silent`). Out of scope, left to code
+# review: intermediate stages (`echo | tr | grep -q`), env/command prefixes
+# (`LC_ALL=C grep -q`), line continuations, indirection (`f=-q; grep $f`), and
+# non-echo producers -- a reintroduction through any of those still surfaces as
+# CI flakiness.
 {
-    probe = $0
+    probe = unquote_opts($0)
     gsub(/"[^"]*"/, "@", probe)
     gsub(/'[^']*'/, "@", probe)
-    if (probe ~ /(^|[^[:alnum:]_])(echo|printf)[^|#]*\|[[:space:]]*grep([[:space:]]+[^|&;#]*)?[[:space:]](-[A-Za-z]*q[A-Za-z]*|--quiet|--silent)([^A-Za-z0-9_-]|$)/) {
-        report("pipefail-grep-q", "echo/printf piped into grep -q races under pipefail; use [[ == *lit* ]] or a here-string")
+    sub(/[[:space:]]#.*/, "", probe)
+    # printf -v writes to a variable, not stdout, so it is not a producer.
+    if (probe !~ /(^|[^[:alnum:]_])printf[^|]*-v[[:space:]]/ &&
+        probe ~ /(^|[^[:alnum:]_])(echo|printf)[^[:alnum:]_][^|#;&]*\|[[:space:]]*grep([^[:alnum:]_]|$)/) {
+        args = probe
+        sub(/^.*\|[[:space:]]*grep/, "", args)
+        sub(/[|;&].*/, "", args)
+        if (quiet_in_options(args)) {
+            report("pipefail-grep-q", "echo/printf piped into a quiet grep races under pipefail; use [[ == *lit* ]] or a here-string")
+        }
     }
+}
+
+# Within grep's argument string, is a quiet option present in option position?
+# Applies grep getopt semantics: `--` ends option parsing, and -e/-f/-m/-A/-B/-C/
+# -D/-d consume an argument, so a q that is such an argument is not the quiet flag.
+function quiet_in_options(s,   a, n, i, t, optsended, j, ch, argtaking) {
+    n = split(s, a, /[[:space:]]+/)
+    optsended = 0
+    argtaking = "efmABCDd"
+    for (i = 1; i <= n; i++) {
+        t = a[i]
+        if (t == "") continue
+        if (optsended) continue
+        if (t == "--") { optsended = 1; continue }
+        if (t ~ /^--/) {
+            if (t == "--quiet" || t == "--silent") return 1
+            if (t == "--regexp" || t == "--file" || t == "--regex") { i++ }
+            continue
+        }
+        if (t ~ /^-.+/) {
+            for (j = 2; j <= length(t); j++) {
+                ch = substr(t, j, 1)
+                if (index(argtaking, ch) > 0) { if (j == length(t)) i++; break }
+                if (ch == "q") return 1
+            }
+            continue
+        }
+    }
+    return 0
+}
+
+# Strip the quotes from quoted tokens that are options ("-q" -> -q), so quoting a
+# flag cannot hide it; quoted patterns are blanked separately by the caller.
+function unquote_opts(s,   out, tok, inner) {
+    out = ""
+    while (match(s, /"-[^"[:space:]]*"|'-[^'[:space:]]*'/)) {
+        tok = substr(s, RSTART, RLENGTH)
+        inner = substr(tok, 2, length(tok) - 2)
+        out = out substr(s, 1, RSTART - 1) inner
+        s = substr(s, RSTART + RLENGTH)
+    }
+    return out s
 }
 
 function report(rule, message) {
@@ -995,20 +1054,27 @@ else
     fail "non-portable shell constructs in tests/" "no findings" "$(cat "$GUARD_OUT")"
 fi
 
-# Positive coverage for the pipefail grep -q guard. This file and
+# Positive and negative coverage for the pipefail grep -q guard. This file and
 # portable-helpers.sh are exempt from the scan above (they necessarily name the
 # forbidden forms), so the rule's own detection is asserted here against
-# fixtures. The guard must catch `-q` in every valid position -- including after
-# the pattern, which a matcher anchored on the leading option bundle misses --
-# and must not fire on safe forms (a here-string, a real-command pipeline,
-# grep -c, or a `q` that only appears inside a quoted literal).
+# fixtures. Positives exercise every quiet position (leading, reordered and
+# before-e bundles, after -e / after a positional, --quiet, a quoted flag, and a
+# chained condition). Negatives cover the safe forms (here-string, real-command
+# pipeline, grep -c, a `q` inside a quoted pattern), the getopt cases where -q/q
+# is an operand rather than the flag (grep -e -q, grep -eq X, grep -- -q,
+# grep X -- -q, grep -fq X), an `echo`-prefixed variable name, a non-echo
+# producer after a `;`, and an inline comment.
 GUARD_POS="$TEST_DIR/guard-grep-q-positive.sh"
 cat > "$GUARD_POS" <<'GUARD_POS_EOF'
 echo "$OUTPUT" | grep -q "leading"
-echo "$OUTPUT" | grep -qi "leading-bundle"
+echo "$OUTPUT" | grep -qi "short-bundle"
+echo "$OUTPUT" | grep -iq "reordered-bundle"
+echo "$OUTPUT" | grep -qe "before-e-in-bundle"
 echo "$OUTPUT" | grep -e "^1$" -q
 echo "$OUTPUT" | grep "positional" -q
-printf '%s' "$OUTPUT" | grep --quiet "long-form"
+echo "$OUTPUT" | grep --quiet "long-form"
+echo "$OUTPUT" | grep "-q" "^1$"
+printf '%s' "$OUTPUT" | grep -q "printf-producer"
 if [[ $rc -eq 0 ]] && echo "$OUTPUT" | grep -q "chained"; then :; fi
 GUARD_POS_EOF
 
@@ -1019,17 +1085,25 @@ head -1 "$file" | grep -q "^---$"
 git rev-parse 2>/dev/null | grep -q ":"
 echo "$OUTPUT" | grep -c "count-not-quiet"
 echo "$OUTPUT" | grep "mentions -q inside a literal"
+echo "$OUTPUT" | grep -e -q
+echo "$OUTPUT" | grep -eq operand
+echo "$OUTPUT" | grep -- -q
+echo "$OUTPUT" | grep needle -- -q
+echo "$OUTPUT" | grep -fq patternfile
+echo_result="$OUTPUT" | grep -q assigned-not-echoed
+echo begin; true | grep -q producer-is-true
 [[ "$OUTPUT" == *"literal"* ]]
+echo "$OUTPUT" | cat > /dev/null  # echo foo | grep -q inside-a-comment
 GUARD_NEG_EOF
 
 awk -f "$GUARD_PROG" "$GUARD_POS" > "$TEST_DIR/guard-pos-out.txt" 2>&1
 awk -f "$GUARD_PROG" "$GUARD_NEG" > "$TEST_DIR/guard-neg-out.txt" 2>&1
 GUARD_POS_HITS=$(grep -c 'pipefail-grep-q' "$TEST_DIR/guard-pos-out.txt" || true)
 GUARD_NEG_HITS=$(grep -c 'pipefail-grep-q' "$TEST_DIR/guard-neg-out.txt" || true)
-if [[ "$GUARD_POS_HITS" -eq 6 && "$GUARD_NEG_HITS" -eq 0 ]]; then
-    pass "pipefail grep -q guard flags every racy ordering and no safe form"
+if [[ "$GUARD_POS_HITS" -eq 10 && "$GUARD_NEG_HITS" -eq 0 ]]; then
+    pass "pipefail grep -q guard flags every quiet position and no safe or non-quiet form"
 else
-    fail "pipefail grep -q guard coverage" "6 positive hits and 0 negative hits" \
+    fail "pipefail grep -q guard coverage" "10 positive hits and 0 negative hits" \
         "positives=$GUARD_POS_HITS negatives=$GUARD_NEG_HITS"
 fi
 
