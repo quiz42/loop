@@ -472,13 +472,10 @@ _loop_monitor_codex() {
         local git_deletions="${git_parts[5]}"
 
         # Format started_at for display (convert UTC to local time)
+        # Input: 2026-01-29T18:45:46Z -> Output: 2026-01-29 10:45:46 (local)
         local start_display="$started_at"
         if [[ "$started_at" != "N/A" ]]; then
-            # Convert ISO UTC format to local time
-            # Input: 2026-01-29T18:45:46Z
-            # Output: 2026-01-29 10:45:46 (local time)
-            local utc_time=$(echo "$started_at" | sed 's/T/ /; s/Z//')
-            start_display=$(date -d "$utc_time UTC" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "$started_at")
+            start_display=$(monitor_utc_iso_to_local "$started_at")
         fi
 
         # Truncate strings for display (label column is ~10 chars)
@@ -541,7 +538,10 @@ _loop_monitor_codex() {
                     local build_finish_round=""
                     local marker_file="$session_dir/.review-phase-started"
                     if [[ -f "$marker_file" ]]; then
-                        build_finish_round=$(grep -oP '(?<=^build_finish_round=)\d+' "$marker_file" 2>/dev/null || true)
+                        # sed -nE, not grep -oP: BSD grep has no PCRE, so the
+                        # lookbehind form returned empty on macOS and the round
+                        # numbers silently vanished from the status line.
+                        build_finish_round=$(sed -nE 's/^build_finish_round=([0-9]+).*/\1/p' "$marker_file" 2>/dev/null || true)
                     fi
                     if [[ -n "$build_finish_round" ]]; then
                         local review_rounds=$((current_round - build_finish_round))

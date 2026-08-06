@@ -23,6 +23,52 @@ monitor_color_dim() { echo "\033[2m"; }
 monitor_color_blue() { echo "\033[1;34m"; }
 
 # ========================================
+# Time Utilities
+# ========================================
+
+# Render a UTC ISO-8601 timestamp as local wall-clock time.
+# Usage: monitor_utc_iso_to_local "2026-01-29T18:45:46Z"
+# Returns: "2026-01-29 10:45:46" in the caller's zone, or the input unchanged
+#          when no date binary on this host can parse it.
+#
+# GNU date converts a foreign-zone timestamp in one call with -d. BSD date has
+# no -d at all: it needs -j -f <input_fmt> to parse and -r <epoch> to format,
+# so the same conversion takes two steps there -- parse the value as UTC to get
+# an epoch, then format that epoch in the caller's zone. GNU is tried first so
+# Linux keeps its single call, and because BSD date rejects -d loudly (exit 1)
+# rather than misreading it.
+monitor_utc_iso_to_local() {
+    local iso="$1"
+    [[ -z "$iso" ]] && return 0
+
+    # "2026-01-29T18:45:46Z" -> "2026-01-29 18:45:46", the one input format
+    # BSD date's -f can be told about.
+    local naive="${iso%Z}"
+    naive="${naive/T/ }"
+
+    local formatted=""
+    formatted=$(date -d "$naive UTC" '+%Y-%m-%d %H:%M:%S' 2>/dev/null) || formatted=""
+    if [[ -n "$formatted" ]]; then
+        printf '%s\n' "$formatted"
+        return 0
+    fi
+
+    # BSD: TZ scopes the parse, so the epoch is read as UTC; -r then formats it
+    # in the caller's own zone.
+    local epoch=""
+    epoch=$(TZ=UTC date -j -f '%Y-%m-%d %H:%M:%S' "$naive" '+%s' 2>/dev/null) || epoch=""
+    if [[ -n "$epoch" ]]; then
+        formatted=$(date -r "$epoch" '+%Y-%m-%d %H:%M:%S' 2>/dev/null) || formatted=""
+        if [[ -n "$formatted" ]]; then
+            printf '%s\n' "$formatted"
+            return 0
+        fi
+    fi
+
+    printf '%s\n' "$iso"
+}
+
+# ========================================
 # File Utilities
 # ========================================
 
