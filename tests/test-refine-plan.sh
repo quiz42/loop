@@ -763,15 +763,20 @@ assert_file_contains "$REFINE_PLAN_CMD" 'If omitted, set `OUTPUT_FILE=INPUT_FILE
 assert_file_contains "$REFINE_PLAN_CMD" 'Compute `IN_PLACE_MODE=true` when `OUTPUT_FILE` equals `INPUT_FILE`' "refine-plan.md derives IN_PLACE_MODE"
 assert_file_contains "$REFINE_PLAN_CMD" 'Compute `QA_FILE` from the input basename, not the output basename:' "refine-plan.md derives QA file from input basename"
 assert_file_contains "$REFINE_PLAN_CMD" 'Do not introduce `--language` or `--qa-output`' "refine-plan.md constrains v1 CLI surface"
-assert_file_contains "$REFINE_PLAN_CMD" "- `## Goal Description`" "refine-plan.md preserves Goal Description section"
-assert_file_contains "$REFINE_PLAN_CMD" "- `## Acceptance Criteria`" "refine-plan.md preserves Acceptance Criteria section"
-assert_file_contains "$REFINE_PLAN_CMD" "- `## Path Boundaries`" "refine-plan.md preserves Path Boundaries section"
-assert_file_contains "$REFINE_PLAN_CMD" "- `## Feasibility Hints and Suggestions`" "refine-plan.md preserves Feasibility Hints and Suggestions section"
-assert_file_contains "$REFINE_PLAN_CMD" "- `## Dependencies and Sequence`" "refine-plan.md preserves Dependencies and Sequence section"
-assert_file_contains "$REFINE_PLAN_CMD" "- `## Task Breakdown`" "refine-plan.md preserves Task Breakdown section"
-assert_file_contains "$REFINE_PLAN_CMD" "- `## Claude-Codex Deliberation`" "refine-plan.md preserves Claude-Codex Deliberation section"
-assert_file_contains "$REFINE_PLAN_CMD" "- `## Pending User Decisions`" "refine-plan.md preserves Pending User Decisions section"
-assert_file_contains "$REFINE_PLAN_CMD" "- `## Implementation Notes`" "refine-plan.md preserves Implementation Notes section"
+# Single-quoted, like the four assertions above. In double quotes the
+# backticks are command substitution: "- `## Goal Description`" evaluates to
+# "- " (the # starts a comment inside the substitution, so it runs nothing and
+# expands to nothing), and each assertion then only checked that the file
+# contains "- ". All nine passed no matter what the command file said.
+assert_file_contains "$REFINE_PLAN_CMD" '- `## Goal Description`' "refine-plan.md preserves Goal Description section"
+assert_file_contains "$REFINE_PLAN_CMD" '- `## Acceptance Criteria`' "refine-plan.md preserves Acceptance Criteria section"
+assert_file_contains "$REFINE_PLAN_CMD" '- `## Path Boundaries`' "refine-plan.md preserves Path Boundaries section"
+assert_file_contains "$REFINE_PLAN_CMD" '- `## Feasibility Hints and Suggestions`' "refine-plan.md preserves Feasibility Hints and Suggestions section"
+assert_file_contains "$REFINE_PLAN_CMD" '- `## Dependencies and Sequence`' "refine-plan.md preserves Dependencies and Sequence section"
+assert_file_contains "$REFINE_PLAN_CMD" '- `## Task Breakdown`' "refine-plan.md preserves Task Breakdown section"
+assert_file_contains "$REFINE_PLAN_CMD" '- `## Claude-Codex Deliberation`' "refine-plan.md preserves Claude-Codex Deliberation section"
+assert_file_contains "$REFINE_PLAN_CMD" '- `## Pending User Decisions`' "refine-plan.md preserves Pending User Decisions section"
+assert_file_contains "$REFINE_PLAN_CMD" '- `## Implementation Notes`' "refine-plan.md preserves Implementation Notes section"
 
 echo ""
 echo "PT-8: Alternative language and filename rules"

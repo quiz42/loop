@@ -17,8 +17,11 @@
 # - Bash 3.2 has no associative arrays, and run-all-tests.sh used to abort on
 #   them and still exit 0 -- a green CI job that ran nothing.
 #
-# Static guards cover tests/ only. Equivalent defects in scripts/ and hooks/ are
-# tracked separately so that this suite stays green while they are fixed.
+# Static guards cover tests/, hooks/ and scripts/. They stopped at tests/ until
+# issue #20, which is how a grep -oP, two GNU-only sed addresses and three
+# realpath -m calls stayed in product code through a green suite. The one rule
+# still scoped to tests/ is pipefail-grep-q, whose product-code sweep is its own
+# issue; its comment in Section 10 says so.
 #
 # ADR-0003 requires the Bash layer to stay independent of Python, which the Proof
 # layer alone may depend on. The helpers therefore use only shell builtins and
@@ -907,15 +910,51 @@ else
     fail "shared test infrastructure is Python-free" "no python3 references" "$PYTHON_REFS"
 fi
 
+# Same rule for the runtime shell libraries, which are to the hooks what the
+# files above are to the suites: every hook and every entry script inherits
+# them, so a Python dependency here is a Python dependency everywhere. Both
+# offenders are gone -- portable-timeout.sh's python3 rung (which left a stock
+# macOS box with no timeout at all) and project-root.sh's python3
+# os.path.realpath fallback -- and this keeps them gone.
+#
+# Deliberately NOT covered, because each is a different decision than this
+# issue's:
+#   scripts/loop.sh            proof export|verify|open, which is the Proof
+#                              layer ADR-0003 grants Python to.
+#   scripts/install-*.sh       install-time JSON merging. Python is a declared
+#                              prerequisite there and its absence is a loud
+#                              `die`, not a silent degradation.
+#   hooks/loop-codex-stop-hook.sh
+#                              check-todos-from-transcript.py. A real
+#                              hook-layer Python dependency; replacing it means
+#                              reimplementing a transcript parser in shell.
+RUNTIME_PYTHON_REFS=""
+for lib in "$PROJECT_ROOT"/hooks/lib/*.sh "$PROJECT_ROOT"/scripts/lib/*.sh "$PROJECT_ROOT/scripts/portable-timeout.sh"; do
+    [[ -f "$lib" ]] || continue
+    if grep -n 'python3' "$lib" | grep -vE '^[0-9]+:[[:space:]]*#' | grep -q .; then
+        RUNTIME_PYTHON_REFS="${RUNTIME_PYTHON_REFS}${lib##*/} "
+    fi
+done
+if [[ -z "$RUNTIME_PYTHON_REFS" ]]; then
+    pass "runtime shell libraries contain no python3 calls"
+else
+    fail "runtime shell libraries are Python-free" "no python3 references" "$RUNTIME_PYTHON_REFS"
+fi
+
 # ========================================
 # Static guards
 # ========================================
 
 echo ""
-echo "Section 10: Static guards over tests/"
+echo "Section 10: Static guards over tests/, hooks/ and scripts/"
 
 # Implemented in awk, not Python: this suite is the thing that must not quietly
 # acquire a Python dependency (ADR-0003).
+#
+# The scan covers product code as well as tests. It used to stop at tests/,
+# which is why the GNU-only sed addresses in scripts/setup-rlcr-loop.sh, the
+# grep -oP in scripts/loop.sh and the realpath -m in the validators all
+# survived a green suite (issue #20).
 #
 # portable-helpers.sh and this file are exempt because they are where the
 # portable replacements and these rules live, so they necessarily name the
@@ -931,19 +970,84 @@ cat > "$GUARD_PROG" <<'GUARD_AWK'
 # Ubuntu and the BSD awk on macOS do not both provide.
 FILENAME ~ /(portable-helpers|test-runner-portability)\.sh$/ { next }
 
-# Skip comment lines: naming a construct in prose is not using it.
+# Quote and heredoc state carry across lines, so reset both per file.
+FNR == 1 { heredoc_tag = ""; heredoc_dash = 0; qstate = "none" }
+
+# Track heredoc bodies. Loop writes prompts and block messages with
+# `cat <<'EOF'`, and that markdown routinely contains backticked code spans,
+# which are literal text there rather than shell syntax. Only the backtick
+# rule consults in_heredoc; every other rule keeps scanning heredoc bodies
+# exactly as it did when this guard covered tests/ alone.
+{
+    in_heredoc = 0
+    if (heredoc_tag != "") {
+        in_heredoc = 1
+        hd_trimmed = $0
+        sub(/^[[:space:]]+/, "", hd_trimmed)
+        if ($0 == heredoc_tag || (heredoc_dash && hd_trimmed == heredoc_tag)) {
+            heredoc_tag = ""
+        }
+    } else if (qstate == "none" && $0 !~ /^[[:space:]]*#/) {
+        hd_scan = $0
+        gsub(/<<</, "@@@", hd_scan)
+        if (match(hd_scan, /<<-?[[:space:]]*("[A-Za-z_][A-Za-z0-9_]*"|'[A-Za-z_][A-Za-z0-9_]*'|[A-Za-z_][A-Za-z0-9_]*)/)) {
+            hd_tok = substr(hd_scan, RSTART, RLENGTH)
+            heredoc_dash = (hd_tok ~ /^<<-/)
+            sub(/^<<-?[[:space:]]*/, "", hd_tok)
+            gsub(/"/, "", hd_tok)
+            gsub(/'/, "", hd_tok)
+            heredoc_tag = hd_tok
+        }
+    }
+}
+
+# A backtick that is neither escaped nor inside single quotes is command
+# substitution -- including in the middle of a double-quoted message body,
+# which is how a block message containing `goal-tracker.md` came to run the
+# filename as a command and print it as nothing (issue #20 item 1), and how
+# nine assertions in test-refine-plan.sh came to compare against "- ". The
+# repo writes $( ) for real substitution, so the rule is: no live backtick.
+# Use \` for a literal one.
+#
+# Unlike the pipefail race below, shell quote state is decidable, so this is a
+# character scanner with cross-line state rather than a regex. A per-line
+# regex cannot do it: single-quoted awk programs run for dozens of lines with
+# backticked markdown fences inside them, and an apostrophe in a double-quoted
+# sentence must not be mistaken for the start of a quoted span.
+{
+    live_backtick = 0
+    if (!in_heredoc) {
+        live_backtick = scan_for_live_backtick($0)
+    }
+}
+live_backtick {
+    report("live-backtick", "unescaped backtick runs as a command substitution; write \\` for a literal")
+}
+
+# Skip comment lines for the rules below: naming a construct in prose is not
+# using it. The scanner above already ran, because a comment line inside a
+# multi-line quoted span still carries quote state.
 /^[[:space:]]*#/ { next }
+
+# The rules below match probe_line: the record with any trailing comment
+# removed. They used to write [^#] inline to mean "stop before a comment", but
+# a sed script carries #s of its own ('/^## Goal/'), which blinded the GNU-BRE
+# rule to exactly the address in scripts/setup-rlcr-loop.sh it exists to catch.
+{
+    probe_line = $0
+    sub(/[[:space:]]#.*/, "", probe_line)
+}
 
 # BSD sed rejects a nested brace block. The outer brace must open an address
 # block ("{ /^key:/{ ... }") so that sed handling "{{PLACEHOLDER}}" text is
 # not mistaken for one.
-/(^|[^[:alnum:]_])sed[^|#]*\{[[:space:]]*\/[^{}]*\{/ {
+probe_line ~ /(^|[^[:alnum:]_])sed[^|]*\{[[:space:]]*\/[^{}]*\{/ {
     report("nested-sed", "nested brace block in a sed script; BSD sed rejects it")
 }
 
 # \+, \? and \| inside a BRE are GNU extensions; BSD sed treats them
 # literally and silently produces wrong output.
-/(^|[^[:alnum:]_])sed[^|#]*\\[+?|]/ {
+probe_line ~ /(^|[^[:alnum:]_])sed[^|]*\\[+?|]/ {
     report("gnu-sed-bre", "GNU-only BRE escape in a sed script; BSD sed takes it literally")
 }
 
@@ -961,6 +1065,14 @@ FILENAME ~ /(portable-helpers|test-runner-portability)\.sh$/ { next }
 # mentioning "grep -P)" in a message is not flagged.
 /(^|[^[:alnum:]_])grep[[:space:]]+(-[A-Za-z]+[[:space:]]+)*-[A-Za-z]*P[A-Za-z]*[[:space:]]/ {
     report("grep-pcre", "grep -P; BSD grep has no PCRE support")
+}
+
+# BSD realpath has no -m and fails outright on a component that does not exist
+# yet, so `realpath -m "$out" || echo "$out"` yields the raw relative input on
+# macOS where Linux yields an absolute path -- and an assertion built with the
+# same call degrades with it instead of failing.
+probe_line ~ /(^|[^[:alnum:]_])realpath[[:space:]]+(-[A-Za-z]+[[:space:]]+)*-[A-Za-z]*m/ {
+    report("gnu-realpath-m", "realpath -m; BSD realpath has no -m, use portable_abs_path")
 }
 
 # `echo`/`printf` writing a variable, piped directly into a quiet `grep`, races
@@ -983,7 +1095,12 @@ FILENAME ~ /(portable-helpers|test-runner-portability)\.sh$/ { next }
 # (`LC_ALL=C grep -q`), line continuations, indirection (`f=-q; grep $f`), and
 # non-echo producers -- a reintroduction through any of those still surfaces as
 # CI flakiness.
-{
+#
+# check_pipefail gates this rule to tests/. The same idiom appears about fifty
+# times in hooks/ and scripts/, which do run under `set -o pipefail`; sweeping
+# those is the same mechanical change issue #22 made to tests/ and belongs in
+# its own issue rather than folded into a portability fix.
+check_pipefail == 1 {
     probe = unquote_opts($0)
     gsub(/"[^"]*"/, "@", probe)
     gsub(/'[^']*'/, "@", probe)
@@ -998,6 +1115,41 @@ FILENAME ~ /(portable-helpers|test-runner-portability)\.sh$/ { next }
             report("pipefail-grep-q", "echo/printf piped into a quiet grep races under pipefail; use [[ == *lit* ]] or a here-string")
         }
     }
+}
+
+# Walk one record, carrying shell quote state across lines in qstate, and
+# report whether it contains a live backtick. Returns 1 at the first one.
+#
+# Rules applied: a backslash escapes the next character outside single quotes;
+# single quotes take everything literally until the next single quote (no
+# escapes there, which is why the single-quote branch comes first); double
+# quotes end at the next unescaped double quote and keep backticks live; and an
+# unquoted # that starts a word begins a comment, so ${var#pat} and a=b#c are
+# not mistaken for one.
+function scan_for_live_backtick(line,   i, c, n) {
+    n = length(line)
+    i = 1
+    while (i <= n) {
+        c = substr(line, i, 1)
+        if (qstate == "single") {
+            if (c == "'") { qstate = "none" }
+            i++
+            continue
+        }
+        if (c == "\\") { i += 2; continue }
+        if (qstate == "double") {
+            if (c == "\"") { qstate = "none" }
+            else if (c == "`") { return 1 }
+            i++
+            continue
+        }
+        if (c == "#" && (i == 1 || substr(line, i - 1, 1) ~ /[[:space:];&|()]/)) { return 0 }
+        if (c == "'") { qstate = "single"; i++; continue }
+        if (c == "\"") { qstate = "double"; i++; continue }
+        if (c == "`") { return 1 }
+        i++
+    }
+    return 0
 }
 
 # Within grep's argument string, is a quiet option present in option position?
@@ -1047,13 +1199,27 @@ function report(rule, message) {
 }
 GUARD_AWK
 
+# Two passes because check_pipefail differs: tests/ gets every rule, product
+# code gets every rule except pipefail-grep-q (see the rule's own comment).
 find "$SCRIPT_DIR" -name '*.sh' -type f -print0 2>/dev/null \
-    | xargs -0 awk -f "$GUARD_PROG" > "$GUARD_OUT" 2>&1
+    | xargs -0 awk -v check_pipefail=1 -f "$GUARD_PROG" > "$GUARD_OUT" 2>&1
+find "$PROJECT_ROOT/hooks" "$PROJECT_ROOT/scripts" -name '*.sh' -type f -print0 2>/dev/null \
+    | xargs -0 awk -v check_pipefail=0 -f "$GUARD_PROG" >> "$GUARD_OUT" 2>&1
 
 if [[ ! -s "$GUARD_OUT" ]]; then
-    pass "no non-portable shell constructs in tests/"
+    pass "no non-portable shell constructs in tests/, hooks/ or scripts/"
 else
-    fail "non-portable shell constructs in tests/" "no findings" "$(cat "$GUARD_OUT")"
+    fail "non-portable shell constructs in tests/, hooks/ or scripts/" "no findings" "$(cat "$GUARD_OUT")"
+fi
+
+# The scan above is only as good as the files it reaches, and a find that
+# silently matched nothing would report "clean" for the whole tree.
+GUARD_SCANNED=$(find "$SCRIPT_DIR" "$PROJECT_ROOT/hooks" "$PROJECT_ROOT/scripts" \
+    -name '*.sh' -type f 2>/dev/null | portable_count_lines)
+if [[ "$GUARD_SCANNED" -ge 60 ]]; then
+    pass "static guard scanned $GUARD_SCANNED shell files across tests/, hooks/ and scripts/"
+else
+    fail "static guard scan coverage" ">= 60 shell files" "$GUARD_SCANNED"
 fi
 
 # Positive and negative coverage for the pipefail grep -q guard. This file and
@@ -1098,8 +1264,8 @@ echo begin; true | grep -q producer-is-true
 echo "$OUTPUT" | cat > /dev/null  # echo foo | grep -q inside-a-comment
 GUARD_NEG_EOF
 
-awk -f "$GUARD_PROG" "$GUARD_POS" > "$TEST_DIR/guard-pos-out.txt" 2>&1
-awk -f "$GUARD_PROG" "$GUARD_NEG" > "$TEST_DIR/guard-neg-out.txt" 2>&1
+awk -v check_pipefail=1 -f "$GUARD_PROG" "$GUARD_POS" > "$TEST_DIR/guard-pos-out.txt" 2>&1
+awk -v check_pipefail=1 -f "$GUARD_PROG" "$GUARD_NEG" > "$TEST_DIR/guard-neg-out.txt" 2>&1
 GUARD_POS_HITS=$(grep -c 'pipefail-grep-q' "$TEST_DIR/guard-pos-out.txt" || true)
 GUARD_NEG_HITS=$(grep -c 'pipefail-grep-q' "$TEST_DIR/guard-neg-out.txt" || true)
 if [[ "$GUARD_POS_HITS" -eq 10 && "$GUARD_NEG_HITS" -eq 0 ]]; then
@@ -1107,6 +1273,97 @@ if [[ "$GUARD_POS_HITS" -eq 10 && "$GUARD_NEG_HITS" -eq 0 ]]; then
 else
     fail "pipefail grep -q guard coverage" "10 positive hits and 0 negative hits" \
         "positives=$GUARD_POS_HITS negatives=$GUARD_NEG_HITS"
+fi
+
+# check_pipefail=0 must silence that rule and only that rule, which is what
+# lets product code be scanned before its own sweep lands.
+awk -v check_pipefail=0 -f "$GUARD_PROG" "$GUARD_POS" > "$TEST_DIR/guard-pos-off.txt" 2>&1
+GUARD_OFF_HITS=$(grep -c 'pipefail-grep-q' "$TEST_DIR/guard-pos-off.txt" || true)
+if [[ "$GUARD_OFF_HITS" -eq 0 ]]; then
+    pass "pipefail grep -q rule is gated off by check_pipefail=0"
+else
+    fail "pipefail grep -q gating" "0 hits with check_pipefail=0" "$GUARD_OFF_HITS"
+fi
+
+# Every other rule, positive and negative, against fixtures rather than against
+# the tree: the tree is clean by construction once the fixes land, so a rule
+# that matched nothing at all would look exactly the same as a rule that works.
+#
+# The positives are the real defects issue #20 fixed, verbatim. Note line 3:
+# the GNU-BRE address carries a # of its own, which the previous [^#] form of
+# the rule could not see past -- the case that let this defect ship.
+GUARD_RULES_POS="$TEST_DIR/guard-rules-positive.sh"
+cat > "$GUARD_RULES_POS" <<'GUARD_RULES_POS_EOF'
+local fallback="Do not modify `goal-tracker.md` via Bash"
+assert_file_contains "$FILE" "- `## Goal Description`" "reads as - and nothing else"
+goal=$(sed -n '/^##[[:space:]]*[Gg]oal\|^##[[:space:]]*[Oo]bjective/,/^##/p' "$plan")
+value=$(sed -n 's/^x\+//p' "$f")
+round=$(grep -oP '(?<=^build_finish_round=)\d+' "$marker")
+OUTPUT_FILE=$(realpath -m "$OUTPUT_FILE" 2>/dev/null || echo "$OUTPUT_FILE")
+INPUT_FILE=$(realpath -q -m "$INPUT_FILE")
+stamp=$(date +%s%3N)
+lower="${NAME,,}"
+sed -n '/^---$/,/^---$/{ /^key:/{ s/^key://p; q; } }' "$f"
+msg="a double-quoted body that runs for
+more than one line and mentions `a-file.md` on the second"
+GUARD_RULES_POS_EOF
+
+GUARD_RULES_NEG="$TEST_DIR/guard-rules-negative.sh"
+cat > "$GUARD_RULES_NEG" <<'GUARD_RULES_NEG_EOF'
+local fallback="Do not modify \`goal-tracker.md\` via Bash"
+assert_file_contains "$FILE" '- `## Goal Description`' "single quotes keep it literal"
+goal=$(sed -nE '/^##[[:space:]]*([Gg]oal|[Oo]bjective)/,/^##/p' "$plan")
+round=$(sed -nE 's/^build_finish_round=([0-9]+).*/\1/p' "$marker")
+OUTPUT_FILE=$(portable_abs_path "$OUTPUT_FILE")
+stamp=$(portable_epoch_ms)
+lower=$(portable_to_lower "$NAME")
+awk '
+    function update_fence(line) {
+        if (!in_fence && line ~ /^```/) { in_fence = 1; return }
+        if (in_fence && line ~ /^```/) { in_fence = 0 }
+    }
+' "$f"
+note="do not write to an old loop session's tracker"
+after="the apostrophe above must not open a quoted span"
+cat >> "$prompt_file" << 'ROUTING_EOF'
+- `coding` task -> Claude executes directly
+- `analyze` task -> via `/rloop:ask-codex`
+ROUTING_EOF
+# a comment naming `backticks`, sed \| , realpath -m and grep -P is prose
+value="${var#prefix}"
+GUARD_RULES_NEG_EOF
+
+awk -v check_pipefail=0 -f "$GUARD_PROG" "$GUARD_RULES_POS" > "$TEST_DIR/guard-rules-pos-out.txt" 2>&1
+awk -v check_pipefail=0 -f "$GUARD_PROG" "$GUARD_RULES_NEG" > "$TEST_DIR/guard-rules-neg-out.txt" 2>&1
+
+GUARD_RULE_FAILURES=""
+# rule name : how many fixture lines must trip it
+for rule_expectation in \
+    "live-backtick:3" \
+    "gnu-sed-bre:2" \
+    "grep-pcre:1" \
+    "gnu-realpath-m:2" \
+    "raw-epoch-ns:1" \
+    "bash4-case:1" \
+    "nested-sed:1"
+do
+    rule_name="${rule_expectation%%:*}"
+    rule_want="${rule_expectation##*:}"
+    rule_got=$(grep -c "$rule_name" "$TEST_DIR/guard-rules-pos-out.txt" || true)
+    if [[ "$rule_got" -ne "$rule_want" ]]; then
+        GUARD_RULE_FAILURES="${GUARD_RULE_FAILURES}${rule_name} want=${rule_want} got=${rule_got}; "
+    fi
+done
+if [[ -z "$GUARD_RULE_FAILURES" ]]; then
+    pass "every static guard rule flags its own defect fixture"
+else
+    fail "static guard rule positives" "each rule hits its fixture lines" "$GUARD_RULE_FAILURES"
+fi
+
+if [[ ! -s "$TEST_DIR/guard-rules-neg-out.txt" ]]; then
+    pass "no static guard rule fires on the portable forms, quoted heredocs or prose"
+else
+    fail "static guard rule negatives" "no findings" "$(cat "$TEST_DIR/guard-rules-neg-out.txt")"
 fi
 
 print_test_summary "Runner Portability Test Summary"
