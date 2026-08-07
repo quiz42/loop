@@ -1231,14 +1231,13 @@ class ReviewFacts:
     spec section G requires.
     """
 
+    # "Parseable" in spec section G's sense is `present and not
+    # malformed_markers`. It is not exposed as one property because both
+    # readers need to tell the two apart: an absent review and an unreadable
+    # one fail for different reasons and say so differently.
     present: bool
     malformed_markers: Tuple[str, ...]
     markers: Tuple[Tuple[str, str], ...]
-
-    @property
-    def parseable(self) -> bool:
-        """Whether this review can support a lifecycle conclusion at all."""
-        return self.present and not self.malformed_markers
 
     def finding_ids(self, found_round: int) -> set:
         """The identities these markers would mint for a given found round."""

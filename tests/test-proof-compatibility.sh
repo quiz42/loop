@@ -154,6 +154,70 @@ json.dump(bundle, open(path, "w", encoding="utf-8"), ensure_ascii=False, sort_ke
 PY
 }
 
+# Rewrite one evidence file's contents and make the Bundle coherent again: new
+# digest, new Evidence ID, every reference to the old ID updated, new proof_id.
+#
+# A Bundle is only a useful tamper case once it is internally coherent -- the
+# Evidence ID is derived from path plus digest, so editing a file without this
+# fails on the ID rule or a hash mismatch and the assertion passes for a reason
+# that has nothing to do with the check under test.
+#
+# Usage: rewrite_evidence <bundle-dir> <evidence-relative-path> <<'EOF'
+#        <new file contents>
+#        EOF
+rewrite_evidence() {
+    local bundle="$1"
+    local target="$2"
+    cat > "$bundle/evidence/$target"
+    python3 - "$bundle/proof.json" "$target" <<'PY'
+import hashlib
+import json
+import os
+import sys
+
+manifest_path, target = sys.argv[1], sys.argv[2]
+bundle = json.load(open(manifest_path, encoding="utf-8"))
+data = open(
+    os.path.join(os.path.dirname(manifest_path), "evidence", target), "rb"
+).read()
+digest = hashlib.sha256(data).hexdigest()
+
+
+def canonical(value):
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+
+
+new_id = hashlib.sha256(canonical({"path": target, "sha256": digest})).hexdigest()[:16]
+old_id = None
+for item in bundle["evidence"]:
+    if item["path"] == target:
+        old_id = item["id"]
+        item["sha256"] = digest
+        item["bytes"] = len(data)
+        item["id"] = new_id
+
+
+def swap(node):
+    if isinstance(node, list):
+        return [swap(child) for child in node]
+    if isinstance(node, dict):
+        return {key: swap(child) for key, child in node.items()}
+    return new_id if node == old_id else node
+
+
+bundle = swap(bundle)
+payload = dict(bundle)
+payload.pop("proof_id", None)
+payload.pop("transport", None)
+bundle["proof_id"] = "sha256:" + hashlib.sha256(canonical(payload)).hexdigest()
+json.dump(
+    bundle, open(manifest_path, "w", encoding="utf-8"), ensure_ascii=False, sort_keys=True
+)
+PY
+}
+
 warnings_of() {
     python3 - "$1" <<'PY'
 import json
@@ -477,50 +541,8 @@ PY
     # Byte-identical to the marker line the round-0 review raised: the finding
     # key is derived from the marker's summary, so a paraphrase would mint a
     # different identity and the assertion would pass without proving anything.
-    cp "$REPEATED_BUNDLE/evidence/round-0-review-result.md" \
-        "$REPEATED_BUNDLE/evidence/round-1-review-result.md"
-    rehash_bundle "$REPEATED_BUNDLE/proof.json" <<'PY'
-import hashlib
-import json
-import os
-
-target = "round-1-review-result.md"
-data = open(
-    os.path.join(os.path.dirname(path), "evidence", target), "rb"
-).read()
-digest = hashlib.sha256(data).hexdigest()
-
-
-def canonical(value):
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
-
-
-new_id = hashlib.sha256(
-    canonical({"path": target, "sha256": digest})
-).hexdigest()[:16]
-old_id = None
-for item in bundle["evidence"]:
-    if item["path"] == target:
-        old_id = item["id"]
-        item["sha256"] = digest
-        item["bytes"] = len(data)
-        item["id"] = new_id
-
-
-def swap(node):
-    if isinstance(node, list):
-        return [swap(child) for child in node]
-    if isinstance(node, dict):
-        return {key: swap(child) for key, child in node.items()}
-    return new_id if node == old_id else node
-
-
-replacement = swap(dict(bundle))
-bundle.clear()
-bundle.update(replacement)
-PY
+    rewrite_evidence "$REPEATED_BUNDLE" round-1-review-result.md \
+        < "$REPEATED_BUNDLE/evidence/round-0-review-result.md"
     REPEATED_REASONS=$(verify_reasons "$REPEATED_BUNDLE")
     if [[ "$REPEATED_REASONS" != *hash-mismatch* && "$REPEATED_REASONS" != *proof-id-mismatch* ]]; then
         pass "the repeated-finding Bundle is coherent, so its contents are what is under test"
@@ -539,45 +561,8 @@ PY
         review_body="${review_case#*:}"
         UNREADABLE_BUNDLE="$TEST_DIR/bundles/link-$review_label"
         cp -R "$LINK_BUNDLE" "$UNREADABLE_BUNDLE"
-        printf '%s' "$review_body" > "$UNREADABLE_BUNDLE/evidence/round-1-review-result.md"
-        rehash_bundle "$UNREADABLE_BUNDLE/proof.json" <<'PY'
-import hashlib
-import json
-import os
-
-target = "round-1-review-result.md"
-data = open(os.path.join(os.path.dirname(path), "evidence", target), "rb").read()
-digest = hashlib.sha256(data).hexdigest()
-
-
-def canonical(value):
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
-
-
-new_id = hashlib.sha256(canonical({"path": target, "sha256": digest})).hexdigest()[:16]
-old_id = None
-for item in bundle["evidence"]:
-    if item["path"] == target:
-        old_id = item["id"]
-        item["sha256"] = digest
-        item["bytes"] = len(data)
-        item["id"] = new_id
-
-
-def swap(node):
-    if isinstance(node, list):
-        return [swap(child) for child in node]
-    if isinstance(node, dict):
-        return {key: swap(child) for key, child in node.items()}
-    return new_id if node == old_id else node
-
-
-replacement = swap(dict(bundle))
-bundle.clear()
-bundle.update(replacement)
-PY
+        printf '%s' "$review_body" |
+            rewrite_evidence "$UNREADABLE_BUNDLE" round-1-review-result.md
         UNREADABLE_REASONS=$(verify_reasons "$UNREADABLE_BUNDLE")
         if [[ "$UNREADABLE_REASONS" != *hash-mismatch* && "$UNREADABLE_REASONS" != *proof-id-mismatch* ]]; then
             pass "the $review_label re-review Bundle is coherent, so its contents are what is under test"
