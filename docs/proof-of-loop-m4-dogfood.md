@@ -19,15 +19,15 @@ suit the Proof layer, which is the point.
 | `retry-backoff` | implementation | 1 | `complete` | none |
 | `glob-match` | implementation | 1 | `complete` | none |
 | `roman-numeral` | implementation | 1 | `complete` | none |
-| `token-bucket` | implementation | 3 | `complete` | none |
+| `token-bucket` | implementation | 3 | `complete` | 1 |
 | `session-store` | `--skip-impl` review-only | 4 | `complete` | 4 over two rounds |
 | `csv-writer` | `--skip-impl` review-only | 2 | `complete` | 4 in one round |
 
-Seven implementation Runs came back clean, so two review-only Runs were added
-over deliberately flawed code to reach the finding lifecycle at all. That is
-itself an observation: on small, well-specified tasks the loop rarely produces
-a `[P0-9]` finding, so a corpus that only runs greenfield tasks never exercises
-the Findings view.
+Six of the seven implementation Runs came back clean, so two review-only Runs
+were added over deliberately flawed code to reach the finding lifecycle at all.
+That is itself an observation: on small, well-specified tasks the loop rarely
+produces a `[P0-9]` finding, so a corpus that only runs greenfield tasks barely
+exercises the Findings view.
 
 Two of the nine are now compatibility fixtures: `wrapped-ac-complete`
 (`ini-parser`) and `path-cited-review-complete` (`csv-writer`). See
