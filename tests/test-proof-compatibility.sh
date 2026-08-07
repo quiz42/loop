@@ -438,8 +438,81 @@ for finding in bundle["findings"]:
 PY
     assert_equals "a re-review link pointing at the plan is invalid" "3|invalid" \
         "$(verify_run "$WRONG_KIND_BUNDLE")"
+
+    # Right kind, wrong review: pointing at the round-0 review that *raised*
+    # the finding is not a re-review of it.
+    EARLIER_BUNDLE="$TEST_DIR/bundles/link-earlier"
+    cp -R "$LINK_BUNDLE" "$EARLIER_BUNDLE"
+    rehash_bundle "$EARLIER_BUNDLE/proof.json" <<'PY'
+raiser = next(
+    item
+    for item in bundle["evidence"]
+    if item["path"] == "round-0-review-result.md" and item["status"] == "included"
+)
+for finding in bundle["findings"]:
+    if "re_review_ref" in finding:
+        finding["re_review_ref"] = raiser["id"]
+PY
+    assert_equals "a link to the review that raised the finding is invalid" "3|invalid" \
+        "$(verify_run "$EARLIER_BUNDLE")"
+
+    # A resolved finding with no recorded fix round cannot be checked at all.
+    NO_FIX_ROUND_BUNDLE="$TEST_DIR/bundles/link-no-fix-round"
+    cp -R "$LINK_BUNDLE" "$NO_FIX_ROUND_BUNDLE"
+    rehash_bundle "$NO_FIX_ROUND_BUNDLE/proof.json" <<'PY'
+for finding in bundle["findings"]:
+    finding.pop("fix_round", None)
+PY
+    assert_equals "a resolved finding with no fix round is invalid" "3|invalid" \
+        "$(verify_run "$NO_FIX_ROUND_BUNDLE")"
+
+    # A waiver has to be backed by the record spec section G requires, not
+    # merely by pointing at a Goal Tracker.
+    FAKE_WAIVER_BUNDLE="$TEST_DIR/bundles/fake-waiver"
+    cp -R "$LINK_BUNDLE" "$FAKE_WAIVER_BUNDLE"
+    rehash_bundle "$FAKE_WAIVER_BUNDLE/proof.json" <<'PY'
+tracker = next(
+    item
+    for item in bundle["evidence"]
+    if item["path"] == "goal-tracker.md" and item["status"] == "included"
+)
+for finding in bundle["findings"]:
+    finding["status"] = "waived"
+    finding.pop("re_review_ref", None)
+    finding.pop("fix_round", None)
+    finding["waived_ref"] = tracker["id"]
+PY
+    assert_equals "a waiver with no Queued or Deferred record is invalid" "3|invalid" \
+        "$(verify_run "$FAKE_WAIVER_BUNDLE")"
 else
     fail "link export" "a bundle" "export failed"
+fi
+
+# A waiver that the Goal Tracker really does record must still verify, or the
+# check above would just be rejecting every waiver.
+GENUINE_WAIVER_RUN=$(make_run genuine-waiver clean-complete)
+cat > "$GENUINE_WAIVER_RUN/round-0-review-result.md" <<'REVIEW_EOF'
+- [P3] Tidy the module docstring - greeting.py:1-1
+  Cosmetic only.
+REVIEW_EOF
+python3 - "$GENUINE_WAIVER_RUN/goal-tracker.md" <<'PY'
+import sys
+
+path = sys.argv[1]
+text = open(path, encoding="utf-8").read()
+text = text.replace(
+    "| Issue | Discovered Round | Why Not Blocking | Revisit Trigger |\n"
+    "|-------|-----------------|------------------|-----------------|",
+    "| Issue | Discovered Round | Why Not Blocking | Revisit Trigger |\n"
+    "|-------|-----------------|------------------|-----------------|\n"
+    "| [P3] Tidy the module docstring | 0 | Cosmetic only | Next docs pass |",
+)
+open(path, "w", encoding="utf-8").write(text)
+PY
+GENUINE_WAIVER_BUNDLE=$(export_run "$GENUINE_WAIVER_RUN" genuine-waiver)
+if [[ -n "$GENUINE_WAIVER_BUNDLE" ]]; then
+    assert_equals "a recorded waiver verifies valid with exit 0" "0|valid" \
+        "$(verify_run "$GENUINE_WAIVER_BUNDLE")"
 fi
 
 echo ""

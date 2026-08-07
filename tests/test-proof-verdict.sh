@@ -405,9 +405,9 @@ echo "Section 7: Deferral needs a citable Plan Evolution Log row"
 # round 1 row, so the deferral is backed by a recorded replan.
 DEFERRED_RUN=$(make_run deferred)
 append_table_row "$DEFERRED_RUN/goal-tracker.md" "Plan Evolution Log" \
-    "| 1 | Dropped AC5 from scope | Out of scope after review | AC5 deferred |"
+    "| 0 | Dropped AC5 from scope | Out of scope after review | AC5 deferred |"
 append_table_row "$DEFERRED_RUN/goal-tracker.md" "Explicitly Deferred" \
-    "| Limit the change surface | AC5 | 1 | Superseded by the round 1 replan | Next milestone |"
+    "| Limit the change surface | AC5 | 0 | Superseded by the round 0 replan | Next milestone |"
 
 DEFERRED_BUNDLE=$(export_run "$DEFERRED_RUN" deferred)
 if [[ -n "$DEFERRED_BUNDLE" ]]; then
@@ -585,9 +585,9 @@ fi
 # impact. Only the Impact on AC column authorizes.
 INCIDENTAL_RUN=$(make_run incidental)
 append_table_row "$INCIDENTAL_RUN/goal-tracker.md" "Plan Evolution Log" \
-    "| 1 | Reworded notes mentioning AC5 | tidy up | - |"
+    "| 0 | Reworded notes mentioning AC5 | tidy up | - |"
 append_table_row "$INCIDENTAL_RUN/goal-tracker.md" "Explicitly Deferred" \
-    "| Skip the scope limit | AC5 | 1 | authorized only by a prose mention | later |"
+    "| Skip the scope limit | AC5 | 0 | authorized only by a prose mention | later |"
 
 INCIDENTAL_BUNDLE=$(export_run "$INCIDENTAL_RUN" incidental)
 if [[ -n "$INCIDENTAL_BUNDLE" ]]; then
@@ -604,9 +604,9 @@ fi
 # criterion is not enough; the row has to name the criterion being dropped.
 WRONG_AC_RUN=$(make_run wrong-ac)
 append_table_row "$WRONG_AC_RUN/goal-tracker.md" "Plan Evolution Log" \
-    "| 1 | Reworded the test criterion | Clarity | AC2 wording updated |"
+    "| 0 | Reworded the test criterion | Clarity | AC2 wording updated |"
 append_table_row "$WRONG_AC_RUN/goal-tracker.md" "Explicitly Deferred" \
-    "| Skip the scope limit | AC5 | 1 | the round-1 replan names AC2, not AC5 | later |"
+    "| Skip the scope limit | AC5 | 0 | the round-0 replan names AC2, not AC5 | later |"
 
 WRONG_AC_BUNDLE=$(export_run "$WRONG_AC_RUN" wrong-ac)
 if [[ -n "$WRONG_AC_BUNDLE" ]]; then
@@ -622,9 +622,9 @@ fi
 # Original AC column says what was deferred.
 PROSE_RUN=$(make_run prose)
 append_table_row "$PROSE_RUN/goal-tracker.md" "Plan Evolution Log" \
-    "| 1 | Deferred the scope limit | Out of scope after review | AC5 leaves the required set |"
+    "| 0 | Deferred the scope limit | Out of scope after review | AC5 leaves the required set |"
 append_table_row "$PROSE_RUN/goal-tracker.md" "Explicitly Deferred" \
-    "| Defer AC4 work as well | AC5 | 1 | the task text names a second criterion | later |"
+    "| Defer AC4 work as well | AC5 | 0 | the task text names a second criterion | later |"
 
 PROSE_BUNDLE=$(export_run "$PROSE_RUN" prose)
 if [[ -n "$PROSE_BUNDLE" ]]; then
@@ -636,6 +636,56 @@ if [[ -n "$PROSE_BUNDLE" ]]; then
         "$(probe "$PROSE_BUNDLE" required_set)"
 else
     fail "prose deferral export" "a bundle" "export failed"
+fi
+
+# A round nobody ran authorizes nothing, however consistently the tracker
+# talks about it. Two rows agreeing with each other about round 999 removed
+# the criterion and produced accept.
+GHOST_ROUND_RUN=$(make_run ghost-round)
+append_table_row "$GHOST_ROUND_RUN/goal-tracker.md" "Plan Evolution Log" \
+    "| 999 | Dropped the scope limit | out of scope | AC5 leaves the required set |"
+append_table_row "$GHOST_ROUND_RUN/goal-tracker.md" "Explicitly Deferred" \
+    "| Skip the scope limit | AC5 | 999 | round 999 never happened | later |"
+
+GHOST_ROUND_BUNDLE=$(export_run "$GHOST_ROUND_RUN" ghost-round)
+if [[ -n "$GHOST_ROUND_BUNDLE" ]]; then
+    assert_equals "a deferral citing a round the Run never ran is not accepted" \
+        "unverifiable" "$(probe "$GHOST_ROUND_BUNDLE" ac:ac-5)"
+    assert_equals "the criterion stays required" "ac-1,ac-2,ac-3,ac-4,ac-5" \
+        "$(probe "$GHOST_ROUND_BUNDLE" required_set)"
+    assert_equals "and no accept is manufactured" "unverifiable" \
+        "$(probe "$GHOST_ROUND_BUNDLE" decision)"
+else
+    fail "ghost round export" "a bundle" "export failed"
+fi
+
+# Renaming the column the deferral is read from must not let another column
+# stand in for it. A table this deriver cannot read is a table problem.
+UNLABELLED_RUN=$(make_run unlabelled)
+python3 - "$UNLABELLED_RUN/goal-tracker.md" <<'PY'
+import sys
+
+path = sys.argv[1]
+text = open(path, encoding="utf-8").read()
+text = text.replace(
+    "| Task | Original AC | Deferred Since | Justification | When to Reconsider |",
+    "| Task | Owner | Deferred Since | Justification | When to Reconsider |",
+)
+open(path, "w", encoding="utf-8").write(text)
+PY
+append_table_row "$UNLABELLED_RUN/goal-tracker.md" "Plan Evolution Log" \
+    "| 0 | Dropped the scope limit | out of scope | AC5 leaves the required set |"
+append_table_row "$UNLABELLED_RUN/goal-tracker.md" "Explicitly Deferred" \
+    "| Skip the scope limit | AC5 | 0 | AC5 sits in a column named Owner | later |"
+
+UNLABELLED_BUNDLE=$(export_run "$UNLABELLED_RUN" unlabelled)
+if [[ -n "$UNLABELLED_BUNDLE" ]]; then
+    assert_equals "a deferred table with no Original AC column defers nothing" \
+        "ac-1,ac-2,ac-3,ac-4,ac-5" "$(probe "$UNLABELLED_BUNDLE" required_set)"
+    assert_equals "and the unreadable table makes the verdict unverifiable" \
+        "unverifiable" "$(probe "$UNLABELLED_BUNDLE" decision)"
+else
+    fail "unlabelled deferred export" "a bundle" "export failed"
 fi
 
 echo ""
@@ -684,6 +734,24 @@ if [[ -n "$NO_SUMMARY_BUNDLE" ]]; then
     fi
 else
     fail "no-summary export" "a bundle" "export failed"
+fi
+
+# Present-but-withheld is not present. A profile that omits the final summary
+# while an earlier round's summary stays included satisfies the kind-level
+# required-evidence check, so testing only for absence let this export accept.
+WITHHELD_RUN=$(make_run withheld)
+cp "$WITHHELD_RUN/round-0-summary.md" "$WITHHELD_RUN/round-1-summary.md"
+cp "$WITHHELD_RUN/round-0-review-result.md" "$WITHHELD_RUN/round-1-review-result.md"
+printf '\nLocal path: /Users/example/private/greeting.py\n' >> "$WITHHELD_RUN/round-1-summary.md"
+
+WITHHELD_BUNDLE=$(export_run "$WITHHELD_RUN" withheld public-v0)
+if [[ -n "$WITHHELD_BUNDLE" ]]; then
+    assert_equals "an omitted final summary does not derive accept" "unverifiable" \
+        "$(probe "$WITHHELD_BUNDLE" decision)"
+    assert_equals "and the Bundle is incomplete" "incomplete" \
+        "$(probe "$WITHHELD_BUNDLE" integrity)"
+else
+    fail "withheld summary export" "a bundle" "export failed"
 fi
 
 # An intermediate round without a review is normal: work summarized in round N

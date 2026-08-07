@@ -433,13 +433,20 @@ def _parse_completed_and_deferred(
     for row in deferred_rows:
         if not row or row[0].lower() in ("task", "ac"):
             continue
-        if original_ac_column is not None and original_ac_column < len(row):
-            ac_source = row[original_ac_column]
-        else:
-            # No labelled column: fall back to the conventional second cell
-            # rather than to the whole row.
-            ac_source = row[1] if len(row) > 1 else ""
-        identifiers, malformed = _ac_references(ac_source)
+        if original_ac_column is None:
+            # No labelled Original AC column. Guessing at cell 2 read whatever
+            # happened to sit there -- renaming the column to "Owner" and
+            # putting AC5 in it silently shrank the required set. A table this
+            # deriver cannot read is a table problem, which makes the mapping
+            # invalid and the verdict unverifiable, not a licence to guess.
+            problems.append(
+                "Explicitly Deferred has no Original AC column, so its "
+                "deferrals cannot be resolved to acceptance criteria."
+            )
+            continue
+        if original_ac_column >= len(row):
+            continue
+        identifiers, malformed = _ac_references(row[original_ac_column])
         if malformed:
             problems.append(
                 "Explicitly Deferred contains malformed AC references: "
@@ -1770,15 +1777,27 @@ class BundleCompiler:
         if final_round is not None:
             summary_relative = f"round-{final_round}-summary.md"
             summary_item = evidence_by_path.get(summary_relative)
-            if summary_item is None:
+            # Present-but-withheld is not present. Testing only for None let a
+            # public export omit the final summary for an absolute path while
+            # an earlier round's summary kept the kind-level check satisfied,
+            # and the Run still derived `accept`. Required evidence has to be
+            # evidence a reader of *this* Bundle can actually see.
+            if summary_item is None or summary_item.get("status") != "included":
                 findings_parseable = False
+                withheld = (
+                    "omitted or truncated"
+                    if summary_item is not None
+                    else "absent"
+                )
                 warnings.append(
                     {
                         "reason": "profile-required-evidence-missing",
                         "target": summary_relative,
                         "detail": "Final round "
                         + str(final_round)
-                        + " has no summary; the delivered work is unrecorded.",
+                        + " summary is "
+                        + withheld
+                        + "; the delivered work is unrecorded in this Bundle.",
                     }
                 )
         open_finding_refs: Dict[str, List[str]] = {}
@@ -1804,7 +1823,20 @@ class BundleCompiler:
         # replanned is an AC quietly dropped from the required set, which is
         # the one way this deriver could manufacture a green result out of
         # nothing (D5).
-        replan_pairs = _replan_ac_rounds(run.goal_tracker_text)
+        # A round cited anywhere in the tracker only means something if the Run
+        # recorded it.
+        recorded_round_indices = {
+            round_data["index"] for round_data in run.rounds
+        }
+        # The cited round must also be one the Run actually recorded. Without
+        # this a Deferred Since of 999 plus an Impact on AC row for round 999
+        # authorized itself: two rows agreeing with each other about a round
+        # that never happened removed the criterion and produced `accept`.
+        replan_pairs = {
+            (ac_id, round_index)
+            for ac_id, round_index in _replan_ac_rounds(run.goal_tracker_text)
+            if round_index in recorded_round_indices
+        }
         deferred_ac_ids = {
             item["ac_id"]
             for item in run.deferred
@@ -1816,9 +1848,6 @@ class BundleCompiler:
         # A Verified Round only verifies something if the Run recorded that
         # round. "999" parses as a round and names none, so without this a
         # tracker could claim verification in a round that never happened.
-        recorded_round_indices = {
-            round_data["index"] for round_data in run.rounds
-        }
         for criterion in projected_criteria:
             ac_id = criterion["id"]
             verified_in = run.completed_ac_ids.get(ac_id)
@@ -2148,6 +2177,26 @@ class BundleValidator:
                 continue
         return total
 
+    def _check_lifecycle_coherence(
+        self,
+        report: "ValidationReport",
+        finding: Mapping[str, Any],
+        status: str,
+        linked: Mapping[str, Any],
+        target: str,
+    ) -> None:
+        """Fail a cleared finding whose link does not substantiate the claim."""
+        tracker_text: Optional[str] = None
+        if status == "waived":
+            tracker_text = _read_text(self.bundle_dir / "evidence" / "goal-tracker.md")
+        detail = _lifecycle_incoherence(finding, status, linked, tracker_text)
+        if detail is None:
+            return
+        report.status = "invalid"
+        report.reasons.append(
+            {"reason": "schema-violation", "target": target, "detail": detail}
+        )
+
     def validate(self) -> ValidationReport:
         report = ValidationReport("valid", proof_path=str(self.proof_path))
         try:
@@ -2380,6 +2429,10 @@ class BundleValidator:
                                 "detail": f"{link_field!r} must reference {required_kind!r} evidence, not {linked.get('kind')!r}.",
                             }
                         )
+                    elif linked is not None:
+                        self._check_lifecycle_coherence(
+                            report, finding, status, linked, target
+                        )
             for ac_id in finding.get("ac_refs", []):
                 if ac_id not in ac_ids:
                     report.status = "invalid"
@@ -2585,6 +2638,58 @@ def export_run(
     return ExportResult(
         write_bundle(bundle, evidence, _output_outside_run(run_dir, destination)), bundle
     )
+
+
+def _lifecycle_incoherence(
+    finding: Mapping[str, Any],
+    status: str,
+    linked: Mapping[str, Any],
+    tracker_text: Optional[str],
+) -> Optional[str]:
+    """Return why a cleared finding's link fails to substantiate it, or None.
+
+    Checking that the link resolves to included evidence of the right kind is
+    not enough. A `resolved` finding could point at the very review that raised
+    it, and a `waived` finding could point at a Goal Tracker holding no such
+    record; both verified clean. The Bundle carries the evidence, so these
+    claims can be checked against it rather than taken on trust.
+
+    This is not tamper-proofing. Anyone who rewrites proof.json can rewrite the
+    evidence and its hashes too; the anchor against that is comparing proof_id
+    with the value the producer published, not any check inside the Bundle.
+    What this does is make the Bundle internally coherent, so a claim it makes
+    is answerable from what it contains.
+    """
+    found_round = finding.get("found_round")
+    if status == "resolved":
+        fix_round = finding.get("fix_round")
+        if not isinstance(fix_round, int):
+            return "A 'resolved' finding must record the round that fixed it."
+        if isinstance(found_round, int) and fix_round <= found_round:
+            return (
+                f"A finding found in round {found_round} cannot be resolved by "
+                f"round {fix_round}."
+            )
+        expected = f"round-{fix_round}-review-result.md"
+        if linked.get("path") != expected:
+            return (
+                f"'re_review_ref' must reference {expected!r}, the review for "
+                f"the recorded fix round, not {linked.get('path')!r}."
+            )
+        return None
+
+    # waived: the Goal Tracker has to carry the record spec section G requires.
+    if not isinstance(found_round, int):
+        return "A 'waived' finding must record the round it was found in."
+    severity = finding.get("severity")
+    if tracker_text is None:
+        return "The referenced Goal Tracker could not be read to confirm the waiver."
+    if (severity, found_round) not in _waiver_targets(tracker_text):
+        return (
+            f"The referenced Goal Tracker carries no Queued or Deferred record "
+            f"for {severity} in round {found_round}."
+        )
+    return None
 
 
 def validate_bundle(bundle_path: Union[str, os.PathLike[str]]) -> ValidationReport:

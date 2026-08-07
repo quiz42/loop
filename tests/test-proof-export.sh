@@ -140,8 +140,23 @@ import sys
 from copy import deepcopy
 from pathlib import Path
 
-sys.path.insert(0, sys.argv[1])
-from proof.contract import compute_proof_id
+def proof_id_of(document):
+    """Recompute the Bundle identity without importing the product.
+
+    The spec's Testing Decisions keep the CLI subprocess as the only seam these
+    suites touch, so the identity is recomputed here rather than imported --
+    which also makes this an independent check of the rule rather than a
+    comparison of the implementation with itself.
+    """
+    payload = dict(document)
+    payload.pop("proof_id", None)
+    payload.pop("transport", None)
+    return "sha256:" + hashlib.sha256(
+        json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+
 
 proof = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
 display_path = Path(sys.argv[3])
@@ -162,10 +177,10 @@ for name, path in {
     "styles.css": Path(sys.argv[6]),
 }.items():
     assert asset_hashes[name] == "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
-assert compute_proof_id(proof) == proof["proof_id"]
+assert proof_id_of(proof) == proof["proof_id"]
 asset_mutation = deepcopy(proof)
 asset_mutation["explorer"]["assets"]["index.html"] = "sha256:" + "0" * 64
-assert compute_proof_id(asset_mutation) != proof["proof_id"]
+assert proof_id_of(asset_mutation) != proof["proof_id"]
 assert '<script src="proof-data.js"></script>' in index
 assert '<script src="app.js"></script>' in index
 assert 'window.PROOF' in app
@@ -303,14 +318,30 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, sys.argv[1])
-from proof.contract import compute_proof_id
+import hashlib
+def proof_id_of(document):
+    """Recompute the Bundle identity without importing the product.
+
+    The spec's Testing Decisions keep the CLI subprocess as the only seam these
+    suites touch, so the identity is recomputed here rather than imported --
+    which also makes this an independent check of the rule rather than a
+    comparison of the implementation with itself.
+    """
+    payload = dict(document)
+    payload.pop("proof_id", None)
+    payload.pop("transport", None)
+    return "sha256:" + hashlib.sha256(
+        json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+
 
 bundle_dir = Path(sys.argv[2])
 proof_path = bundle_dir / "proof.json"
 bundle = json.loads(proof_path.read_text(encoding="utf-8"))
 bundle.pop("explorer")
-bundle["proof_id"] = compute_proof_id(bundle)
+bundle["proof_id"] = proof_id_of(bundle)
 proof_path.write_text(
     json.dumps(bundle, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
     encoding="utf-8",
