@@ -126,6 +126,15 @@ elif query == "finding_count":
     print(len(findings))
 elif query.startswith("ac:"):
     print(ac(query[3:]).get("status", "absent"))
+elif query.startswith("ac_text:"):
+    wanted = query[len("ac_text:") :]
+    criteria = bundle.get("specification", {}).get("acceptance_criteria", [])
+    print(
+        next(
+            (item["text"] for item in criteria if item["id"] == wanted),
+            "absent",
+        )
+    )
 elif query.startswith("ac_contradicting:"):
     print(len(ac(query[17:]).get("contradicting", [])))
 elif query.startswith("finding_field:"):
@@ -844,6 +853,43 @@ for fixture in cancel-after-review maxiter-derived stop-derived unexpected-deriv
         fail "$fixture export" "a bundle" "export failed"
     fi
 done
+
+echo ""
+echo "=== Scenario: Goal Tracker shapes the M4 dogfood produced ==="
+
+# Both fixtures below are real Runs captured during the issue #12 dogfood, so
+# each assertion is a shape the golden corpus never contained and real Runs
+# produce routinely.
+
+# A real plan hard-wraps, so a criterion spans several lines. Reading only the
+# bullet line recorded the first line as the whole criterion.
+WRAPPED_RUN=$(make_run wrapped-ac wrapped-ac-complete)
+WRAPPED_BUNDLE=$(export_run "$WRAPPED_RUN" "wrapped-ac")
+if [[ -n "$WRAPPED_BUNDLE" ]]; then
+    WRAPPED_TEXT=$(probe "$WRAPPED_BUNDLE" ac_text:ac-1)
+    case "$WRAPPED_TEXT" in
+        *"whitespace; values keep interior whitespace but lose surrounding whitespace."*)
+            pass "a wrapped acceptance criterion keeps its continuation lines"
+            ;;
+        *)
+            fail "wrapped criterion text" \
+                "the whole criterion" "$WRAPPED_TEXT"
+            ;;
+    esac
+
+    # The same Run's Completed and Verified table covers five criteria with one
+    # `AC1-AC5` cell. Reading that as `ac-5` alone left four verified criteria
+    # `unverifiable` and reported the cell as a malformed reference, which
+    # invalidates the mapping and costs the delivery its verdict.
+    assert_equals "an AC range in Completed and Verified marks every criterion it names" \
+        "met" "$(probe "$WRAPPED_BUNDLE" statuses)"
+    assert_equals "a Run whose tracker uses an AC range still derives accept" \
+        "accept" "$(probe "$WRAPPED_BUNDLE" decision)"
+    assert_equals "an AC range is not reported as a malformed reference" \
+        "" "$(probe "$WRAPPED_BUNDLE" warning_reasons)"
+else
+    fail "wrapped-ac export" "a bundle" "export failed"
+fi
 
 echo ""
 echo "========================================"

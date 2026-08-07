@@ -197,6 +197,15 @@ _AC_REFERENCE_ATTEMPT = re.compile(
     r"(?<![A-Za-z0-9_])AC(?:[-_ ]?[^\s,;|)]*|[-_])",
     re.IGNORECASE,
 )
+# An inclusive range over criterion labels: `AC1-AC5` and its `AC1-5` short
+# form, both of which a real Goal Tracker writes. Anchored on both ends so a
+# hyphenated word is not mistaken for one.
+_AC_RANGE = re.compile(
+    r"(?<![A-Za-z0-9_])AC-?([0-9]+)\s*-\s*(?:AC-?)?([0-9]+)(?=(?:\s|[,;|)]|$))",
+    re.IGNORECASE,
+)
+# A range wider than this is a typo, not a reference to that many criteria.
+_AC_RANGE_MAX_SPAN = 63
 
 
 def _ac_id(number: str) -> str:
@@ -212,6 +221,50 @@ def _looks_like_malformed_ac_label(raw: str) -> bool:
     )
 
 
+_CRITERION_BULLET = re.compile(r"^(?:[-*]|[0-9]+[.)])\s+(.*)$")
+
+
+def _criteria_list_items(section: str) -> List[str]:
+    """Return each Acceptance Criteria list item as one whole criterion.
+
+    A criterion wraps. Real plans hard-wrap at the margin, so the tracker's
+    IMMUTABLE section routinely holds
+
+        - AC1: `parse(version)` accepts a valid SemVer 2.0.0 string and
+          returns a structure exposing major, minor and patch.
+
+    Reading only the bullet line recorded "...string and" as the criterion and
+    dropped the rest, silently: the continuation lines match no bullet, so they
+    were skipped rather than reported. The Acceptance Matrix then showed the
+    maintainer a criterion cut off mid-sentence, and `text_sha256` committed to
+    the fragment. Continuation lines are folded back in, joined with a single
+    space; a blank line ends the item.
+    """
+    items: List[str] = []
+    current: Optional[List[str]] = None
+
+    def flush() -> None:
+        if current is not None:
+            items.append(" ".join(part for part in current if part))
+
+    for line in section.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            flush()
+            current = None
+            continue
+        if stripped.startswith("<!--") or stripped.endswith("-->"):
+            continue
+        match = _CRITERION_BULLET.match(stripped)
+        if match:
+            flush()
+            current = [match.group(1).strip()]
+        elif current is not None:
+            current.append(stripped)
+    flush()
+    return items
+
+
 def _parse_criteria(goal_tracker: Optional[str]) -> Tuple[List[Dict[str, str]], List[str]]:
     """Parse criteria, retaining only unambiguous stable criterion identities."""
     if not goal_tracker:
@@ -223,15 +276,8 @@ def _parse_criteria(goal_tracker: Optional[str]) -> Tuple[List[Dict[str, str]], 
     parsed: List[Tuple[str, str]] = []
     problems: List[str] = []
     list_position = 0
-    for line in section.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("<!--") or stripped.endswith("-->"):
-            continue
-        match = re.match(r"^(?:[-*]|[0-9]+[.)])\s+(.*)$", stripped)
-        if not match:
-            continue
+    for raw in _criteria_list_items(section):
         list_position += 1
-        raw = match.group(1).strip()
         explicit = _EXPLICIT_AC_LABEL.match(raw)
         if explicit:
             identifier = _ac_id(explicit.group(1))
@@ -276,10 +322,46 @@ def _parse_criteria(goal_tracker: Optional[str]) -> Tuple[List[Dict[str, str]], 
     return criteria, problems
 
 
+def _expand_ac_ranges(raw: str) -> Tuple[List[str], str]:
+    """Return the IDs an inclusive AC range names, and the text without it.
+
+    A Goal Tracker row that covers several criteria at once is written as a
+    range: four of the nine M4 dogfood Runs put `AC1-AC5` in the Completed and
+    Verified table. That form matched neither the single-reference pattern nor
+    the well-formed shape, so the row resolved to its last criterion alone and
+    reported the rest as a malformed reference -- and since a malformed
+    reference invalidates the AC mapping, one range cost the whole delivery its
+    verdict while three or four genuinely verified criteria fell back to
+    `unverifiable`.
+
+    A range is a label form, not prose: `AC1-AC5` states which criteria it
+    names as exactly as `AC1, AC2, AC3, AC4, AC5` does, so reading it stays
+    inside ADR-0002. A descending range is not a reference form and is left to
+    the malformed report, and the span is bounded so a typo cannot expand into
+    thousands of identifiers.
+    """
+    identifiers: List[str] = []
+    remainder: List[str] = []
+    last = 0
+    for match in _AC_RANGE.finditer(raw):
+        first_number = int(match.group(1))
+        last_number = int(match.group(2))
+        if last_number < first_number or last_number - first_number > _AC_RANGE_MAX_SPAN:
+            continue
+        remainder.append(raw[last : match.start()])
+        last = match.end()
+        for number in range(first_number, last_number + 1):
+            identifier = _ac_id(str(number))
+            if identifier not in identifiers:
+                identifiers.append(identifier)
+    remainder.append(raw[last:])
+    return identifiers, " ".join(remainder)
+
+
 def _ac_ids(raw: str) -> List[str]:
     """Return stable criterion IDs explicitly named in free-form table text."""
-    identifiers: List[str] = []
-    for match in _AC_REFERENCE.finditer(raw):
+    identifiers, remainder = _expand_ac_ranges(raw)
+    for match in _AC_REFERENCE.finditer(remainder):
         identifier = _ac_id(match.group(1))
         if identifier not in identifiers:
             identifiers.append(identifier)
@@ -288,9 +370,13 @@ def _ac_ids(raw: str) -> List[str]:
 
 def _ac_references(raw: str) -> Tuple[List[str], List[str]]:
     """Return valid AC IDs and any malformed AC-like references in the text."""
-    identifiers = _ac_ids(raw)
+    identifiers, remainder = _expand_ac_ranges(raw)
+    for match in _AC_REFERENCE.finditer(remainder):
+        identifier = _ac_id(match.group(1))
+        if identifier not in identifiers:
+            identifiers.append(identifier)
     malformed: List[str] = []
-    for match in _AC_REFERENCE_ATTEMPT.finditer(raw):
+    for match in _AC_REFERENCE_ATTEMPT.finditer(remainder):
         token = match.group(0)
         if not re.fullmatch(r"AC-?[0-9]+(?::)?", token, flags=re.IGNORECASE):
             if token not in malformed:
@@ -1393,6 +1479,60 @@ def _append_unique(values: List[str], value: str) -> None:
         values.append(value)
 
 
+def _withheld_review_findings(
+    round_index: int,
+    item: Mapping[str, Any],
+    text: Optional[str],
+    known_ac_ids: Sequence[str],
+) -> List[Dict[str, Any]]:
+    """Record that a withheld review raised findings, without claiming more.
+
+    The review is in the manifest but its bytes are not in the Bundle, because
+    the profile omitted or truncated the item. Dropping its findings made the
+    Bundle read as if the Run had found nothing, and under `public-v0` that is
+    not incidental: `codex review` cites the file it faults by absolute path,
+    so in the M4 dogfood corpus every one of the seven review results that
+    reported a finding contained an absolute home path, and the public path
+    rule withheld every one of them. Every public Bundle listed no findings at
+    all while its local counterpart listed them.
+
+    So the finding's existence is recorded and nothing else is. `unverifiable`
+    is the honest state (spec section G: a lifecycle no evidence in this Bundle
+    can establish), the id is a hash of round, severity and normalized summary
+    so no review prose enters the Bundle, and these findings never join
+    ``active`` -- a later review may not clear a finding whose own evidence
+    this profile withheld (D9). The direction is one-way on purpose: withheld
+    evidence may show that a problem existed, never that one was fixed.
+    """
+    facts = parse_review_result(text)
+    if not facts.present:
+        return []
+    known = set(known_ac_ids)
+    findings: List[Dict[str, Any]] = []
+    by_key: Dict[str, Dict[str, Any]] = {}
+    for severity, summary in facts.markers:
+        key = _finding_key(severity, summary)
+        ac_refs = [
+            identifier for identifier in _ac_ids(summary) if identifier in known
+        ]
+        existing = by_key.get(key)
+        if existing is not None:
+            for identifier in ac_refs:
+                _append_unique(existing["ac_refs"], identifier)
+            continue
+        finding = {
+            "id": _finding_id(round_index, severity, key),
+            "severity": severity,
+            "status": "unverifiable",
+            "found_round": round_index,
+            "evidence_refs": [item["id"]],
+            "ac_refs": ac_refs,
+        }
+        by_key[key] = finding
+        findings.append(finding)
+    return findings
+
+
 def _derive_findings(
     run: RunRecord, evidence_by_path: Mapping[str, Mapping[str, Any]]
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, str]], bool]:
@@ -1448,6 +1588,12 @@ def _derive_findings(
                 if item and item.get("id"):
                     _append_unique(finding["evidence_refs"], item["id"])
             active = {}
+            if item is not None:
+                findings.extend(
+                    _withheld_review_findings(
+                        round_index, item, _read_text(path), sorted(known_ac_ids)
+                    )
+                )
             continue
         facts = parse_review_result(_read_text(path))
         if not facts.present:
