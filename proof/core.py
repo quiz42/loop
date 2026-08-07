@@ -340,18 +340,42 @@ def _plan_evolution_events(goal_tracker: Optional[str]) -> List[Dict[str, Any]]:
     return events
 
 
+def _round_value(raw: str) -> Optional[int]:
+    """Return a round ordinal from a table cell, or None when it is not one.
+
+    A tracker writes "0", "Round 0", and also "pending" or "-" while the work is
+    still in flight. Only the first form is a recorded round.
+    """
+    match = re.fullmatch(r"(?:round\s+)?([0-9]+)", raw.strip(), re.IGNORECASE)
+    return int(match.group(1)) if match else None
+
+
 def _parse_completed_and_deferred(
     goal_tracker: Optional[str], known_ac_ids: Sequence[str]
-) -> Tuple[set, List[Dict[str, str]], List[str]]:
-    """Resolve completed/deferred table references against known stable AC IDs."""
+) -> Tuple[Dict[str, int], set, List[Dict[str, Any]], List[str]]:
+    """Resolve completed/deferred table references against known stable AC IDs.
+
+    Returns the verified completions, the completions recorded without a
+    Verified Round, the deferrals, and any table problems.
+    """
     if not goal_tracker:
-        return set(), [], []
+        return {}, set(), [], []
     known = set(known_ac_ids)
     problems: List[str] = []
     completed_rows = _parse_table_rows(
         _first_heading_section(goal_tracker, "Completed and Verified")
     )
-    completed: set = set()
+    # Spec section G: an AC is `met` only when its Completed and Verified row
+    # carries a Verified Round. The column was previously not read at all, so a
+    # row still reading "pending" -- the literal value the tracker template
+    # writes while a round is awaiting review -- produced `met` and `accept`.
+    verified_column: Optional[int] = None
+    if completed_rows:
+        header = [cell.strip().lower() for cell in completed_rows[0]]
+        if "verified round" in header:
+            verified_column = header.index("verified round")
+    completed: Dict[str, int] = {}
+    completed_unverified: set = set()
     for row in completed_rows:
         if not row or row[0].lower() in ("ac", "acceptance criteria"):
             continue
@@ -371,14 +395,58 @@ def _parse_completed_and_deferred(
                 + ", ".join(unknown)
                 + "."
             )
-        completed.update(identifier for identifier in identifiers if identifier in known)
+        # No Verified Round column at all is treated the same as an unfilled
+        # one: the tracker did not record the verification this status needs.
+        verified_round = None
+        if verified_column is not None and verified_column < len(row):
+            verified_round = _round_value(row[verified_column])
+        for identifier in identifiers:
+            if identifier not in known:
+                continue
+            if verified_round is None:
+                completed_unverified.add(identifier)
+            else:
+                # The round number is carried out so the verdict can check it
+                # against the rounds the Run actually recorded. A syntactically
+                # valid "999" is not a verification that happened.
+                completed[identifier] = verified_round
 
     deferred_rows = _parse_table_rows(_first_heading_section(goal_tracker, "Explicitly Deferred"))
     deferred: List[Dict[str, str]] = []
+    # "Deferred Since" names the round the deferral happened in. It is captured
+    # so the verdict can require a matching Plan Evolution Log row before
+    # accepting the deferral: a row that cites no round cites no replan.
+    since_column: Optional[int] = None
+    # Only the Original AC column names what was deferred. Reading the Task
+    # prose as well meant a row whose task text happened to mention another
+    # criterion ("Defer AC4 work as well") silently dropped that criterion from
+    # the required set too.
+    original_ac_column: Optional[int] = None
+    if deferred_rows:
+        header = [cell.strip().lower() for cell in deferred_rows[0]]
+        if "deferred since" in header:
+            since_column = header.index("deferred since")
+        for candidate in ("original ac", "ac"):
+            if candidate in header:
+                original_ac_column = header.index(candidate)
+                break
     for row in deferred_rows:
         if not row or row[0].lower() in ("task", "ac"):
             continue
-        identifiers, malformed = _ac_references(" ".join(row[:2]))
+        if original_ac_column is None:
+            # No labelled Original AC column. Guessing at cell 2 read whatever
+            # happened to sit there -- renaming the column to "Owner" and
+            # putting AC5 in it silently shrank the required set. A table this
+            # deriver cannot read is a table problem, which makes the mapping
+            # invalid and the verdict unverifiable, not a licence to guess.
+            problems.append(
+                "Explicitly Deferred has no Original AC column, so its "
+                "deferrals cannot be resolved to acceptance criteria."
+            )
+            continue
+        if original_ac_column >= len(row):
+            continue
+        identifiers, malformed = _ac_references(row[original_ac_column])
         if malformed:
             problems.append(
                 "Explicitly Deferred contains malformed AC references: "
@@ -394,12 +462,56 @@ def _parse_completed_and_deferred(
                 + ", ".join(unknown)
                 + "."
             )
+        since_round: Optional[int] = None
+        if since_column is not None and since_column < len(row):
+            since_round = _round_value(row[since_column])
         # The row's source evidence is the goal tracker itself.  Keep a stable
         # human-readable anchor rather than trying to parse free-form prose.
         for identifier in identifiers:
             if identifier in known:
-                deferred.append({"ac_id": identifier, "detail": " | ".join(row)})
-    return completed, deferred, problems
+                entry: Dict[str, Any] = {
+                    "ac_id": identifier,
+                    "detail": " | ".join(row),
+                }
+                if since_round is not None:
+                    entry["since_round"] = since_round
+                deferred.append(entry)
+    return completed, completed_unverified, deferred, problems
+
+
+def _replan_ac_rounds(goal_tracker: Optional[str]) -> set:
+    """Return (ac_id, round) pairs the Plan Evolution Log records a replan for.
+
+    Matching a deferral on the round alone is not enough: every Run opens with
+    a "| 0 | Initial plan |" row, so any deferral citing round 0 would be
+    authorized by a row that replanned nothing. The row has to name the
+    criterion.
+
+    Only the declared "Impact on AC" column is read. Scanning every cell meant
+    an incidental token in a Change or Reason cell -- "Reworded notes
+    mentioning AC5" -- authorized deferring AC5, which is the prose reading
+    ADR-0002 rules out. A log without that column authorizes no deferral.
+    """
+    rows = _parse_table_rows(
+        _first_heading_section(goal_tracker or "", "Plan Evolution Log")
+    )
+    if not rows:
+        return set()
+    header = [cell.strip().lower() for cell in rows[0]]
+    if "round" not in header or "impact on ac" not in header:
+        return set()
+    round_column = header.index("round")
+    impact_column = header.index("impact on ac")
+    pairs = set()
+    for row in rows[1:]:
+        if round_column >= len(row) or impact_column >= len(row):
+            continue
+        round_index = _round_value(row[round_column])
+        if round_index is None:
+            continue
+        for identifier in _ac_ids(row[impact_column]):
+            pairs.add((identifier, round_index))
+    return pairs
 
 
 def _kind_for_path(relative_path: str) -> str:
@@ -472,7 +584,12 @@ class RunRecord:
     goal: str
     acceptance_criteria: List[Dict[str, str]]
     ac_mapping_valid: bool = True
-    completed_ac_ids: set = field(default_factory=set)
+    # Maps a criterion to the round its Completed and Verified row recorded as
+    # the Verified Round.
+    completed_ac_ids: Dict[str, int] = field(default_factory=dict)
+    # Recorded in Completed and Verified but without a Verified Round, so
+    # completion is claimed and verification is not evidenced.
+    unverified_completion_ac_ids: set = field(default_factory=set)
     deferred: List[Dict[str, str]] = field(default_factory=list)
     warnings: List[Dict[str, str]] = field(default_factory=list)
     rounds: List[Dict[str, Any]] = field(default_factory=list)
@@ -558,7 +675,7 @@ class RunAdapter:
             if not goal:
                 first_heading = re.search(r"^#\s+(.+?)\s*$", plan_text, flags=re.MULTILINE)
                 goal = first_heading.group(1).strip() if first_heading else ""
-        completed, deferred, table_problems = _parse_completed_and_deferred(
+        completed, completed_unverified, deferred, table_problems = _parse_completed_and_deferred(
             tracker_text, [criterion["id"] for criterion in criteria]
         )
         if table_problems:
@@ -591,6 +708,7 @@ class RunAdapter:
             acceptance_criteria=criteria,
             ac_mapping_valid=not criteria_problems and not table_problems,
             completed_ac_ids=completed,
+            unverified_completion_ac_ids=completed_unverified,
             deferred=deferred,
             warnings=warnings,
             rounds=rounds,
@@ -1077,12 +1195,197 @@ _FINDING_MARKER = re.compile(
 _FINDING_MARKER_ATTEMPT = re.compile(
     r"^.{0,9}?(?P<marker>\[P[^\]]*\])", re.MULTILINE
 )
+# A bare severity marker anywhere in a cell. Goal Tracker tables put the marker
+# mid-cell rather than at the start of a line, so the line-anchored patterns
+# above do not apply.
+_FINDING_MARKER_TOKEN = re.compile(r"\[P(?P<severity>[0-9])\]")
 
 
 def _finding_key(severity: str, summary: str) -> str:
     """Return a stable internal key without exposing review prose in the Bundle."""
     normalized = re.sub(r"\s+", " ", summary.strip().lower())
     return f"{severity}:{normalized}"
+
+
+def _finding_id(round_index: int, severity: str, key: str) -> str:
+    """Return the stable identity of a finding first seen in a given round.
+
+    Shared by the compiler, which mints these, and the validator, which
+    re-derives them to check a lifecycle claim against the review it points at.
+    A second copy of this rule would let the two disagree silently.
+    """
+    return "finding-" + hashlib.sha256(
+        canonical_json_bytes({"round": round_index, "severity": severity, "key": key})
+    ).hexdigest()[:16]
+
+
+@dataclass(frozen=True)
+class ReviewFacts:
+    """What one round-review artifact says, parsed once for both readers.
+
+    The compiler decides a finding's lifecycle from these facts and the
+    validator re-checks a lifecycle claim against them, so they are derived
+    here rather than in each. When only the compiler knew how to parse a
+    review, the validator could confirm a `resolved` claim against an empty or
+    malformed review -- neither of which is the "later parseable review result"
+    spec section G requires.
+    """
+
+    # "Parseable" in spec section G's sense is `present and not
+    # malformed_markers`. It is not exposed as one property because both
+    # readers need to tell the two apart: an absent review and an unreadable
+    # one fail for different reasons and say so differently.
+    present: bool
+    malformed_markers: Tuple[str, ...]
+    markers: Tuple[Tuple[str, str], ...]
+
+    def finding_ids(self, found_round: int) -> set:
+        """The identities these markers would mint for a given found round."""
+        return {
+            _finding_id(found_round, severity, _finding_key(severity, summary))
+            for severity, summary in self.markers
+        }
+
+
+def parse_review_result(text: Optional[str]) -> ReviewFacts:
+    """Read a round review result into the facts both readers need."""
+    if text is None or not text.strip():
+        return ReviewFacts(present=False, malformed_markers=(), markers=())
+
+    matches = list(_FINDING_MARKER.finditer(text))
+    valid_spans = {(m.start("marker"), m.end("marker")) for m in matches}
+    malformed: List[str] = []
+    for attempt in _FINDING_MARKER_ATTEMPT.finditer(text):
+        token = attempt.group("marker")
+        span = (attempt.start("marker"), attempt.end("marker"))
+        if span not in valid_spans and token not in malformed:
+            malformed.append(token)
+
+    markers = tuple(
+        (f"P{m.group('severity')}", m.group("summary")) for m in matches
+    )
+    return ReviewFacts(
+        present=True, malformed_markers=tuple(malformed), markers=markers
+    )
+
+
+def round_coverage_gaps(
+    rounds: Sequence[Mapping[str, Any]],
+    status_by_path: Mapping[str, str],
+) -> List[Dict[str, str]]:
+    """Return the round-evidence gaps in a Bundle, as reason records.
+
+    Evaluated from the recorded rounds and each artifact's status, so the
+    compiler and the validator reach the same conclusion from the same inputs.
+    The validator previously read this off ``integrity.compile_warnings``,
+    which meant deleting a warning and re-hashing made the gap disappear: the
+    producer's account of itself was the only thing being checked.
+
+    ``status_by_path`` maps an evidence path to its status; a path absent from
+    the mapping was never collected, and one whose status is not ``included``
+    is in the Bundle in name only.
+
+    Two rules, both narrower than spec section H's "each round's summary and
+    review_result". See issue #30: applying H literally rejects
+    cancel-after-review, a real captured Run, so the stricter reading needs a
+    product decision before it can be enforced.
+    """
+    gaps: List[Dict[str, str]] = []
+    indices = [round_data["index"] for round_data in rounds]
+    if not indices:
+        return gaps
+
+    def included(path: str) -> bool:
+        return status_by_path.get(path) == "included"
+
+    # Every recorded round needs some evidence of what happened in it.
+    for index in indices:
+        summary = f"round-{index}-summary.md"
+        review = f"round-{index}-review-result.md"
+        if included(summary) or included(review):
+            continue
+        gaps.append(
+            {
+                "reason": "profile-required-evidence-missing",
+                "target": f"round-{index}",
+                "detail": "Round "
+                + str(index)
+                + " has neither a summary nor a review result in this Bundle, "
+                "so what happened in it is unrecorded.",
+            }
+        )
+
+    # The final round needs both: it delivered the work, and a Run cannot have
+    # exited the loop as complete without that work being summarized and
+    # reviewed.
+    final_index = max(indices)
+    for path, missing in (
+        (f"round-{final_index}-summary.md", "summary"),
+        (f"round-{final_index}-review-result.md", "review result"),
+    ):
+        if included(path):
+            continue
+        state = "absent" if path not in status_by_path else "omitted or truncated"
+        gaps.append(
+            {
+                "reason": "profile-required-evidence-missing",
+                "target": path,
+                "detail": "Final round "
+                + str(final_index)
+                + " "
+                + missing
+                + " is "
+                + state
+                + "; the delivered work is unrecorded in this Bundle.",
+            }
+        )
+    return gaps
+
+
+def _waiver_targets(goal_tracker: Optional[str]) -> List[Tuple[str, int]]:
+    """Return (severity, round) pairs the Goal Tracker explicitly queued.
+
+    A waiver is a section move plus a ``[P0-9]`` marker, both structured
+    signals ADR-0002 admits. The row is identified by its severity marker and
+    its ``Discovered Round`` column, never by its prose: a tracker row
+    summarizes an issue in the author's own words ("only replaced literal
+    spaces") while the review result names it differently ("Implement full slug
+    normalization"), so matching on summary text would either never fire or
+    require exactly the fuzzy matching the ADR rules out.
+
+    Both tables spec section G names are read: ``Queued Side Issues``, whose
+    round column is "Discovered Round", and ``Explicitly Deferred``, whose
+    equivalent is "Deferred Since". A finding can be parked in either.
+    """
+    if not goal_tracker:
+        return []
+    targets: List[Tuple[str, int]] = []
+    for heading, round_header in (
+        ("Queued Side Issues", "discovered round"),
+        ("Explicitly Deferred", "deferred since"),
+    ):
+        section = _first_heading_section(goal_tracker, heading)
+        if not section:
+            continue
+        rows = _parse_table_rows(section)
+        if not rows:
+            continue
+        header = [cell.strip().lower() for cell in rows[0]]
+        if round_header not in header:
+            continue
+        round_column = header.index(round_header)
+        for row in rows[1:]:
+            if round_column >= len(row):
+                continue
+            found_round = _round_value(row[round_column])
+            if found_round is None:
+                continue
+            for cell in row:
+                for marker in _FINDING_MARKER_TOKEN.finditer(cell):
+                    target = (f"P{marker.group('severity')}", found_round)
+                    if target not in targets:
+                        targets.append(target)
+    return targets
 
 
 def _append_unique(values: List[str], value: str) -> None:
@@ -1113,9 +1416,17 @@ def _derive_findings(
         item = evidence_by_path.get(relative)
         if not item or item.get("status") != "included":
             if item is None and not active:
-                # A Run can record early contract/summary artifacts before it
-                # produces its first review result. Without an active finding,
-                # that absence is not a failed re-review to resolve.
+                # No review result for this round and no finding waiting on
+                # one, so this is not a failed re-review.
+                #
+                # An intermediate round can legitimately lack one: work
+                # summarized in round N and reviewed in round N+1 is reviewed
+                # work, and cancel-after-review is a real Run shaped exactly
+                # that way. Whether the round that lacks one is required to
+                # have it is decided by round_coverage_gaps, which both the
+                # compiler and the validator consult; this branch only declines
+                # to read a lifecycle conclusion out of a review that is not
+                # there.
                 continue
             # A profile cannot use source content it did not retain to make a
             # finding judgment. One included review result of the required kind
@@ -1138,8 +1449,8 @@ def _derive_findings(
                     _append_unique(finding["evidence_refs"], item["id"])
             active = {}
             continue
-        text = _read_text(path)
-        if text is None or not text.strip():
+        facts = parse_review_result(_read_text(path))
+        if not facts.present:
             parseable = False
             warnings.append(
                 {
@@ -1154,16 +1465,7 @@ def _derive_findings(
             active = {}
             continue
 
-        marker_matches = list(_FINDING_MARKER.finditer(text))
-        valid_marker_spans = {
-            (match.start("marker"), match.end("marker")) for match in marker_matches
-        }
-        malformed_markers = []
-        for marker in _FINDING_MARKER_ATTEMPT.finditer(text):
-            token = marker.group("marker")
-            span = (marker.start("marker"), marker.end("marker"))
-            if span not in valid_marker_spans and token not in malformed_markers:
-                malformed_markers.append(token)
+        malformed_markers = list(facts.malformed_markers)
         if malformed_markers:
             parseable = False
             warnings.append(
@@ -1177,11 +1479,9 @@ def _derive_findings(
             )
 
         current: Dict[str, Tuple[str, List[str]]] = {}
-        for marker in marker_matches:
-            severity = f"P{marker.group('severity')}"
-            summary = marker.group("summary")
+        for severity, summary in facts.markers:
             key = _finding_key(severity, summary)
-            ac_refs = [identifier for identifier in _ac_ids(marker.group(0)) if identifier in known_ac_ids]
+            ac_refs = [identifier for identifier in _ac_ids(summary) if identifier in known_ac_ids]
             if key not in current:
                 current[key] = (severity, ac_refs)
             else:
@@ -1198,19 +1498,21 @@ def _derive_findings(
                 if key not in current:
                     finding["status"] = "resolved"
                     _append_unique(finding["evidence_refs"], item["id"])
+                    # Record which round closed it and which review said so.
+                    # Both are already known here and were previously dropped,
+                    # which left the Explorer rendering "not linked" for every
+                    # resolved finding. They are structural facts -- the marker
+                    # is absent from this round's review result -- so recording
+                    # them stays inside ADR-0002. The fix landed in the work of
+                    # this round, and this round's review is the re-review that
+                    # confirms it; neither is inferred from review prose.
+                    finding["fix_round"] = round_index
+                    finding["re_review_ref"] = item["id"]
             next_active: Dict[str, Dict[str, Any]] = {}
             for key, (severity, ac_refs) in current.items():
                 finding = active.get(key)
                 if finding is None:
-                    identifier = "finding-" + hashlib.sha256(
-                        canonical_json_bytes(
-                            {
-                                "round": round_index,
-                                "severity": severity,
-                                "key": key,
-                            }
-                        )
-                    ).hexdigest()[:16]
+                    identifier = _finding_id(round_index, severity, key)
                     finding = {
                         "id": identifier,
                         "severity": severity,
@@ -1226,6 +1528,43 @@ def _derive_findings(
                         _append_unique(finding["ac_refs"], ac_id)
                 next_active[key] = finding
             active = next_active
+
+    # A finding the Goal Tracker explicitly queued is waived rather than left
+    # open. Only a still-open finding can be waived: a waiver cannot overturn a
+    # resolved finding, and it must not paper over one whose lifecycle this
+    # profile could not verify. The tracker has to be retained under the active
+    # profile, or the waiver is not profile-verifiable.
+    tracker_item = evidence_by_path.get("goal-tracker.md")
+    if tracker_item and tracker_item.get("status") == "included":
+        for severity, found_round in _waiver_targets(run.goal_tracker_text):
+            matches = [
+                finding
+                for finding in findings
+                if finding["severity"] == severity
+                and finding["found_round"] == found_round
+                and finding["status"] == "open"
+            ]
+            # Exactly one, or none. A waiver removes a blocker, so an ambiguous
+            # row -- two open P2s from the same round -- must not silently
+            # clear both when the tracker only accounted for one.
+            if len(matches) != 1:
+                if len(matches) > 1:
+                    warnings.append(
+                        {
+                            "reason": "unparseable-artifact",
+                            "target": "goal-tracker.md",
+                            "detail": "Queued Side Issues row for "
+                            + severity
+                            + " in round "
+                            + str(found_round)
+                            + " matches more than one open finding; no waiver applied.",
+                        }
+                    )
+                continue
+            finding = matches[0]
+            finding["status"] = "waived"
+            finding["waived_ref"] = tracker_item["id"]
+            _append_unique(finding["evidence_refs"], tracker_item["id"])
 
     return findings, warnings, parseable
 
@@ -1523,6 +1862,20 @@ class BundleCompiler:
             for finding in findings:
                 finding["ac_refs"] = []
         warnings.extend(finding_warnings)
+        # Round-evidence coverage, evaluated by the shared rule so the
+        # validator reaches the same conclusion from the same inputs rather
+        # than trusting the warnings recorded here.
+        coverage_gaps = round_coverage_gaps(
+            run.rounds,
+            {
+                path: item.get("status", "")
+                for path, item in evidence_by_path.items()
+            },
+        )
+        if coverage_gaps:
+            findings_parseable = False
+            warnings.extend(coverage_gaps)
+
         open_finding_refs: Dict[str, List[str]] = {}
         unverifiable_finding_refs: Dict[str, List[str]] = {}
         for finding in findings:
@@ -1538,17 +1891,69 @@ class BundleCompiler:
                     _append_unique(target[ac_id], identifier)
         per_ac: List[Dict[str, Any]] = []
         deferred_output: List[Dict[str, str]] = []
-        deferred_ac_ids = {item["ac_id"] for item in run.deferred}
+        # A deferral is only accepted when the Plan Evolution Log carries the
+        # row it implies, and that row has to name this criterion at that
+        # round. Matching on the round alone was not enough: every Run opens
+        # with a "| 0 | Initial plan |" row, so any deferral citing round 0 was
+        # authorized by a row that replanned nothing. A deferral nobody
+        # replanned is an AC quietly dropped from the required set, which is
+        # the one way this deriver could manufacture a green result out of
+        # nothing (D5).
+        # A round cited anywhere in the tracker only means something if the Run
+        # recorded it.
+        recorded_round_indices = {
+            round_data["index"] for round_data in run.rounds
+        }
+        # The cited round must also be one the Run actually recorded. Without
+        # this a Deferred Since of 999 plus an Impact on AC row for round 999
+        # authorized itself: two rows agreeing with each other about a round
+        # that never happened removed the criterion and produced `accept`.
+        replan_pairs = {
+            (ac_id, round_index)
+            for ac_id, round_index in _replan_ac_rounds(run.goal_tracker_text)
+            if round_index in recorded_round_indices
+        }
+        deferred_ac_ids = {
+            item["ac_id"]
+            for item in run.deferred
+            if (item["ac_id"], item.get("since_round")) in replan_pairs
+        }
+        uncited_deferrals = {
+            item["ac_id"] for item in run.deferred
+        } - deferred_ac_ids
+        # A Verified Round only verifies something if the Run recorded that
+        # round. "999" parses as a round and names none, so without this a
+        # tracker could claim verification in a round that never happened.
         for criterion in projected_criteria:
             ac_id = criterion["id"]
-            completed = ac_id in run.completed_ac_ids
+            verified_in = run.completed_ac_ids.get(ac_id)
+            completed = verified_in is not None and verified_in in recorded_round_indices
+            claimed_unrecorded_round = (
+                verified_in is not None and verified_in not in recorded_round_indices
+            )
             supporting = tracker_ref + review_refs + summary_refs if completed and tracker_ref else []
-            if completed and tracker_ref:
+            if claimed_unrecorded_round:
+                status = "unverifiable"
+                reason = (
+                    "Completed and Verified cites round "
+                    + str(verified_in)
+                    + ", which this Run did not record."
+                )
+            elif completed and tracker_ref:
                 status = "met"
                 reason = "Recorded in the Completed and Verified table."
             elif completed:
                 status = "unverifiable"
                 reason = "Completion evidence is unavailable in this verification profile."
+            elif ac_id in run.unverified_completion_ac_ids:
+                # Claimed complete, but the row's Verified Round is blank or
+                # still reads "pending". Spec section G makes the Verified
+                # Round part of what `met` means.
+                status = "unverifiable"
+                reason = (
+                    "Completed and Verified row records no Verified Round, so "
+                    "the completion is not evidenced as verified."
+                )
             elif run.terminal_state != "complete":
                 status = "unmet"
                 reason = "Run ended before this criterion was recorded as completed."
@@ -1564,6 +1969,15 @@ class BundleCompiler:
                 else:
                     status = "unverifiable"
                     reason = "Deferral evidence is unavailable in this verification profile."
+            elif ac_id in uncited_deferrals:
+                # Deliberately not "deferred": it stays in the required set, so
+                # an uncited deferral costs the Run its accept rather than
+                # silently shrinking what had to be delivered.
+                status = "unverifiable"
+                reason = (
+                    "Deferral cites no Plan Evolution Log round, so it was not "
+                    "accepted as a deferral."
+                )
             elif ac_id in unverifiable_finding_refs:
                 status = "unverifiable"
                 reason = "A finding associated with this criterion could not be verified."
@@ -1839,6 +2253,33 @@ class BundleValidator:
                 continue
         return total
 
+    def _check_lifecycle_coherence(
+        self,
+        report: "ValidationReport",
+        finding: Mapping[str, Any],
+        status: str,
+        linked: Mapping[str, Any],
+        target: str,
+    ) -> None:
+        """Fail a cleared finding whose link does not substantiate the claim."""
+        tracker_text: Optional[str] = None
+        review_text: Optional[str] = None
+        if status == "waived":
+            tracker_text = _read_text(self.bundle_dir / "evidence" / "goal-tracker.md")
+        else:
+            linked_path = linked.get("path")
+            if isinstance(linked_path, str):
+                review_text = _read_text(self.bundle_dir / "evidence" / linked_path)
+        detail = _lifecycle_incoherence(
+            finding, status, linked, tracker_text, review_text
+        )
+        if detail is None:
+            return
+        report.status = "invalid"
+        report.reasons.append(
+            {"reason": "schema-violation", "target": target, "detail": detail}
+        )
+
     def validate(self) -> ValidationReport:
         report = ValidationReport("valid", proof_path=str(self.proof_path))
         try:
@@ -1988,7 +2429,28 @@ class BundleValidator:
                             f"Included evidence matches the profile secret class {match!r}.",
                         )
             elif status == "truncated":
-                report.warnings.append({"target": relative, "detail": "Evidence is truncated by its export profile."})
+                # Derived from the item itself, not from the compiler's
+                # warning list. Reading `truncated-evidence` out of
+                # integrity.compile_warnings meant a hand-edited Bundle could
+                # declare an item truncated, drop the warning, and verify
+                # `valid` -- the exporter's own account of itself was the only
+                # thing being checked. Spec section J makes truncation an
+                # incomplete Bundle regardless of what the producer recorded.
+                #
+                # The status has to be set here too: recording the reason alone
+                # left a re-hashed Bundle reporting `valid` at exit 0 while
+                # listing truncated-evidence, which is the same trust in the
+                # producer wearing a different hat. `invalid` outranks
+                # `incomplete`, so an independently invalid Bundle keeps that.
+                if report.status != "invalid":
+                    report.status = "incomplete"
+                report.reasons.append(
+                    {
+                        "reason": "truncated-evidence",
+                        "target": relative,
+                        "detail": "Evidence is truncated, so the Bundle is incomplete.",
+                    }
+                )
 
         def require_evidence(
             identifier: str, target: str, included_only: bool = False
@@ -2010,6 +2472,50 @@ class BundleValidator:
         for finding in bundle.get("findings", []):
             for identifier in finding.get("evidence_refs", []):
                 require_evidence(identifier, f"finding:{finding.get('id', '?')}")
+            # A lifecycle status that clears a finding has to carry the link
+            # that justifies it, pointing at evidence the Bundle actually
+            # includes. Without this a hand-edited Bundle could claim every
+            # finding `resolved` with no re-review to show for it and still
+            # verify clean -- the Explorer already refuses to display such a
+            # claim as resolved, and the verifier should agree.
+            status = finding.get("status")
+            # The link must also be the right *kind* of evidence. Checking only
+            # that it resolves to an included item let a resolved finding point
+            # at plan.md: a plan cannot substantiate a re-review, and a review
+            # result cannot substantiate a waiver.
+            link_rule = {
+                "resolved": ("re_review_ref", "round_review_result"),
+                "waived": ("waived_ref", "goal_tracker"),
+            }.get(status)
+            if link_rule is not None:
+                link_field, required_kind = link_rule
+                target = f"finding:{finding.get('id', '?')}"
+                link = finding.get(link_field)
+                if not isinstance(link, str) or not link:
+                    report.status = "invalid"
+                    report.reasons.append(
+                        {
+                            "reason": "schema-violation",
+                            "target": target,
+                            "detail": f"A {status!r} finding must carry {link_field!r}.",
+                        }
+                    )
+                else:
+                    require_evidence(link, target, included_only=True)
+                    linked = ids.get(link)
+                    if linked is not None and linked.get("kind") != required_kind:
+                        report.status = "invalid"
+                        report.reasons.append(
+                            {
+                                "reason": "schema-violation",
+                                "target": target,
+                                "detail": f"{link_field!r} must reference {required_kind!r} evidence, not {linked.get('kind')!r}.",
+                            }
+                        )
+                    elif linked is not None:
+                        self._check_lifecycle_coherence(
+                            report, finding, status, linked, target
+                        )
             for ac_id in finding.get("ac_refs", []):
                 if ac_id not in ac_ids:
                     report.status = "invalid"
@@ -2116,6 +2622,24 @@ class BundleValidator:
                     report.status = "incomplete"
                 report.reasons.append({"reason": "profile-required-evidence-missing", "target": required_kind, "detail": f"Required evidence kind {required_kind!r} is absent."})
 
+        # Round coverage is derived here from the same rule the compiler used,
+        # not read out of integrity.compile_warnings below. Trusting those
+        # warnings meant deleting one and re-hashing made the gap disappear:
+        # a three-round Bundle whose middle round held only a contract then
+        # verified `valid`. The producer's account of itself cannot be the only
+        # thing checked.
+        for gap in round_coverage_gaps(
+            bundle.get("run", {}).get("rounds", []),
+            {
+                item.get("path", ""): item.get("status", "")
+                for item in items
+                if isinstance(item, Mapping)
+            },
+        ):
+            if report.status == "valid":
+                report.status = "incomplete"
+            report.reasons.append(gap)
+
         for warning in bundle.get("integrity", {}).get("compile_warnings", []):
             report.warnings.append({"target": warning.get("target", ""), "detail": warning.get("detail", ""), "reason": warning.get("reason", "")})
             if (
@@ -2215,6 +2739,86 @@ def export_run(
     return ExportResult(
         write_bundle(bundle, evidence, _output_outside_run(run_dir, destination)), bundle
     )
+
+
+def _lifecycle_incoherence(
+    finding: Mapping[str, Any],
+    status: str,
+    linked: Mapping[str, Any],
+    tracker_text: Optional[str],
+    review_text: Optional[str] = None,
+) -> Optional[str]:
+    """Return why a cleared finding's link fails to substantiate it, or None.
+
+    Checking that the link resolves to included evidence of the right kind is
+    not enough. A `resolved` finding could point at the very review that raised
+    it, and a `waived` finding could point at a Goal Tracker holding no such
+    record; both verified clean. The Bundle carries the evidence, so these
+    claims can be checked against it rather than taken on trust.
+
+    This is not tamper-proofing. Anyone who rewrites proof.json can rewrite the
+    evidence and its hashes too; the anchor against that is comparing proof_id
+    with the value the producer published, not any check inside the Bundle.
+    What this does is make the Bundle internally coherent, so a claim it makes
+    is answerable from what it contains.
+    """
+    found_round = finding.get("found_round")
+    if status == "resolved":
+        fix_round = finding.get("fix_round")
+        if not isinstance(fix_round, int):
+            return "A 'resolved' finding must record the round that fixed it."
+        if isinstance(found_round, int) and fix_round <= found_round:
+            return (
+                f"A finding found in round {found_round} cannot be resolved by "
+                f"round {fix_round}."
+            )
+        expected = f"round-{fix_round}-review-result.md"
+        if linked.get("path") != expected:
+            return (
+                f"'re_review_ref' must reference {expected!r}, the review for "
+                f"the recorded fix round, not {linked.get('path')!r}."
+            )
+        # Naming the right file is not the same as that file saying the right
+        # thing. Spec section G resolves a finding when a later parseable
+        # review no longer names it, so the review has to be read: a Bundle
+        # could otherwise point at the correct later review while that review
+        # still carries the original marker.
+        facts = parse_review_result(review_text)
+        # Spec section G resolves a finding against a later *parseable* review.
+        # Checking only for the marker's absence accepted an empty review and
+        # one whose markers are malformed as proof the finding went away --
+        # in both cases nothing was read, which is not the same as reading
+        # that the finding is gone. The compiler calls those `unverifiable`;
+        # the validator has to agree rather than let them stand as `resolved`.
+        if not facts.present:
+            return (
+                f"{expected!r} is empty or unreadable, so it cannot show the "
+                "finding was resolved."
+            )
+        if facts.malformed_markers:
+            return (
+                f"{expected!r} has malformed finding markers ("
+                + ", ".join(facts.malformed_markers)
+                + "), so it cannot show the finding was resolved."
+            )
+        if finding.get("id") in facts.finding_ids(found_round):
+            return (
+                f"{expected!r} still records this finding, so it is not resolved."
+            )
+        return None
+
+    # waived: the Goal Tracker has to carry the record spec section G requires.
+    if not isinstance(found_round, int):
+        return "A 'waived' finding must record the round it was found in."
+    severity = finding.get("severity")
+    if tracker_text is None:
+        return "The referenced Goal Tracker could not be read to confirm the waiver."
+    if (severity, found_round) not in _waiver_targets(tracker_text):
+        return (
+            f"The referenced Goal Tracker carries no Queued or Deferred record "
+            f"for {severity} in round {found_round}."
+        )
+    return None
 
 
 def validate_bundle(bundle_path: Union[str, os.PathLike[str]]) -> ValidationReport:

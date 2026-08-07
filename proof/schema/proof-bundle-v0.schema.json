@@ -434,6 +434,18 @@
             "description": "The zero-based round ordinal in which the finding was recorded.",
             "type": "integer"
           },
+          "fix_round": {
+            "description": "The round ordinal whose review result no longer named the finding. Present only on a resolved finding.",
+            "type": "integer"
+          },
+          "re_review_ref": {
+            "description": "The evidence identifier of the review result that no longer named the finding. Present only on a resolved finding.",
+            "type": "string"
+          },
+          "waived_ref": {
+            "description": "The evidence identifier of the Goal Tracker recording the queue or deferral. Present only on a waived finding.",
+            "type": "string"
+          },
           "evidence_refs": {
             "description": "Evidence identifiers supporting or contextualizing this finding.",
             "type": "array",

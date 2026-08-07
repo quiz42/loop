@@ -140,8 +140,23 @@ import sys
 from copy import deepcopy
 from pathlib import Path
 
-sys.path.insert(0, sys.argv[1])
-from proof.contract import compute_proof_id
+def proof_id_of(document):
+    """Recompute the Bundle identity without importing the product.
+
+    The spec's Testing Decisions keep the CLI subprocess as the only seam these
+    suites touch, so the identity is recomputed here rather than imported --
+    which also makes this an independent check of the rule rather than a
+    comparison of the implementation with itself.
+    """
+    payload = dict(document)
+    payload.pop("proof_id", None)
+    payload.pop("transport", None)
+    return "sha256:" + hashlib.sha256(
+        json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+
 
 proof = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
 display_path = Path(sys.argv[3])
@@ -162,10 +177,10 @@ for name, path in {
     "styles.css": Path(sys.argv[6]),
 }.items():
     assert asset_hashes[name] == "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
-assert compute_proof_id(proof) == proof["proof_id"]
+assert proof_id_of(proof) == proof["proof_id"]
 asset_mutation = deepcopy(proof)
 asset_mutation["explorer"]["assets"]["index.html"] = "sha256:" + "0" * 64
-assert compute_proof_id(asset_mutation) != proof["proof_id"]
+assert proof_id_of(asset_mutation) != proof["proof_id"]
 assert '<script src="proof-data.js"></script>' in index
 assert '<script src="app.js"></script>' in index
 assert 'window.PROOF' in app
@@ -303,14 +318,30 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, sys.argv[1])
-from proof.contract import compute_proof_id
+import hashlib
+def proof_id_of(document):
+    """Recompute the Bundle identity without importing the product.
+
+    The spec's Testing Decisions keep the CLI subprocess as the only seam these
+    suites touch, so the identity is recomputed here rather than imported --
+    which also makes this an independent check of the rule rather than a
+    comparison of the implementation with itself.
+    """
+    payload = dict(document)
+    payload.pop("proof_id", None)
+    payload.pop("transport", None)
+    return "sha256:" + hashlib.sha256(
+        json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+
 
 bundle_dir = Path(sys.argv[2])
 proof_path = bundle_dir / "proof.json"
 bundle = json.loads(proof_path.read_text(encoding="utf-8"))
 bundle.pop("explorer")
-bundle["proof_id"] = compute_proof_id(bundle)
+bundle["proof_id"] = proof_id_of(bundle)
 proof_path.write_text(
     json.dumps(bundle, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
     encoding="utf-8",
@@ -987,6 +1018,9 @@ RESOLVED_FINDING_DIR="$TEST_DIR/resolved-finding-run"
 cp -R "$PROJECT_ROOT/tests/fixtures/proof/runs/clean-complete" "$RESOLVED_FINDING_DIR"
 printf '\n- [P1] AC1 had a synthetic regression.\n' >> "$RESOLVED_FINDING_DIR/round-0-review-result.md"
 printf 'No P0-P9 findings remain.\n' > "$RESOLVED_FINDING_DIR/round-1-review-result.md"
+# A round carries both a summary and a review result; spec section J counts
+# each round's summary as required evidence.
+cp "$RESOLVED_FINDING_DIR/round-0-summary.md" "$RESOLVED_FINDING_DIR/round-1-summary.md"
 loop proof export --run "$RESOLVED_FINDING_DIR" --out "$TEST_DIR/resolved-finding-bundle" >/dev/null 2>&1
 resolved_finding_status=$?
 assert_exit "complete Run with a resolved finding exports" 0 "$resolved_finding_status"
@@ -1017,6 +1051,7 @@ MIXED_FINDING_DIR="$TEST_DIR/mixed-finding-run"
 cp -R "$PROJECT_ROOT/tests/fixtures/proof/runs/clean-complete" "$MIXED_FINDING_DIR"
 printf '\n- [P1] AC1 had a synthetic regression.\n' >> "$MIXED_FINDING_DIR/round-0-review-result.md"
 printf '%s\n' '- [P2] AC2 has a different synthetic regression.' > "$MIXED_FINDING_DIR/round-1-review-result.md"
+cp "$MIXED_FINDING_DIR/round-0-summary.md" "$MIXED_FINDING_DIR/round-1-summary.md"
 loop proof export --run "$MIXED_FINDING_DIR" --out "$TEST_DIR/mixed-finding-bundle" >/dev/null 2>&1
 mixed_finding_status=$?
 assert_exit "complete Run with replaced review findings exports" 0 "$mixed_finding_status"
@@ -1280,6 +1315,14 @@ from pathlib import Path
 
 run_dir = Path(sys.argv[1])
 limit = 10485760
+# Written before the padding is sized so its bytes are inside the budget: the
+# assertion below pins the published total exactly. The padding rounds are
+# still rounds, and spec section J counts the final round's review result as
+# required evidence, so without this the Bundle would be `incomplete` for a
+# reason unrelated to the size budget under test.
+(run_dir / "round-10-review-result.md").write_text(
+    "No P0-P9 findings remain.\n", encoding="utf-8"
+)
 existing_bytes = sum(path.stat().st_size for path in run_dir.rglob("*") if path.is_file())
 remaining_bytes = limit - existing_bytes
 assert remaining_bytes > 0

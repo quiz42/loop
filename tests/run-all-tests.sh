@@ -186,6 +186,8 @@ TEST_SUITES=(
     "test-proof-contract.sh"
     "test-proof-export.sh"
     "test-proof-verify.sh"
+    "test-proof-verdict.sh"
+    "test-proof-compatibility.sh"
     # Robustness tests
     "robustness/test-state-file-robustness.sh"
     "robustness/test-session-robustness.sh"
