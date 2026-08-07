@@ -54,6 +54,10 @@ exporter as of `68c756b`; "after" is this branch.
 Leakage stayed at its target of zero in every Bundle, measured independently of
 the exporter's own claim by rescanning the written bytes.
 
+The linkage row's denominator grows because public Bundles now list findings at
+all; the three linked findings are the same three, and all of them are in one
+Run. Observation 4 explains why that number cannot yet be higher.
+
 ### 1. A wrapped acceptance criterion lost everything after its first line
 
 Every real plan hard-wraps. The Goal Tracker's IMMUTABLE section therefore holds
