@@ -754,9 +754,30 @@ else
     fail "withheld summary export" "a bundle" "export failed"
 fi
 
-# An intermediate round without a review is normal: work summarized in round N
-# and reviewed in round N+1 is reviewed work. cancel-after-review is a real Run
-# shaped exactly that way.
+# A recorded round with neither a summary nor a review result carries no
+# evidence of what happened in it. The required-evidence check counts kinds
+# across the Bundle, so a middle round holding only a contract used to leave
+# `accept` at integrity `valid`.
+EMPTY_ROUND_RUN=$(make_run empty-round)
+cp "$EMPTY_ROUND_RUN/round-0-summary.md" "$EMPTY_ROUND_RUN/round-2-summary.md"
+cp "$EMPTY_ROUND_RUN/round-0-review-result.md" "$EMPTY_ROUND_RUN/round-2-review-result.md"
+cp "$EMPTY_ROUND_RUN/round-0-contract.md" "$EMPTY_ROUND_RUN/round-1-contract.md"
+
+EMPTY_ROUND_BUNDLE=$(export_run "$EMPTY_ROUND_RUN" empty-round public-v0)
+if [[ -n "$EMPTY_ROUND_BUNDLE" ]]; then
+    assert_equals "a round with no summary and no review does not derive accept" \
+        "unverifiable" "$(probe "$EMPTY_ROUND_BUNDLE" decision)"
+    assert_equals "and the Bundle is incomplete" "incomplete" \
+        "$(probe "$EMPTY_ROUND_BUNDLE" integrity)"
+else
+    fail "empty round export" "a bundle" "export failed"
+fi
+
+# An intermediate round without a *review* is still normal: work summarized in
+# round N and reviewed in round N+1 is reviewed work, and cancel-after-review
+# is a real Run shaped exactly that way. Whether that N+1 rule is the intended
+# product contract is a spec question, tracked separately; the check above is
+# deliberately narrower and only rejects a round with nothing at all.
 INTERMEDIATE_RUN=$(make_run intermediate cancel-after-review)
 INTERMEDIATE_BUNDLE=$(export_run "$INTERMEDIATE_RUN" intermediate)
 if [[ -n "$INTERMEDIATE_BUNDLE" ]]; then

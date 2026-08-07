@@ -139,7 +139,9 @@ import sys
 
 path, mutation = sys.argv[1], sys.argv[2]
 bundle = json.load(open(path, encoding="utf-8"))
-exec(mutation, {"bundle": bundle})
+# `path` is exposed so a mutation can also touch the evidence files next to the
+# manifest and re-derive their identities.
+exec(mutation, {"bundle": bundle, "path": path})
 payload = dict(bundle)
 payload.pop("proof_id", None)
 payload.pop("transport", None)
@@ -465,6 +467,68 @@ for finding in bundle["findings"]:
 PY
     assert_equals "a resolved finding with no fix round is invalid" "3|invalid" \
         "$(verify_run "$NO_FIX_ROUND_BUNDLE")"
+
+    # Naming the right review is not the same as that review saying the right
+    # thing. Rewriting the linked review so it still carries the original
+    # marker -- and re-hashing the evidence entry, its ID and the manifest so
+    # nothing else is wrong -- must be rejected on the review's contents.
+    REPEATED_BUNDLE="$TEST_DIR/bundles/link-repeated"
+    cp -R "$LINK_BUNDLE" "$REPEATED_BUNDLE"
+    # Byte-identical to the marker line the round-0 review raised: the finding
+    # key is derived from the marker's summary, so a paraphrase would mint a
+    # different identity and the assertion would pass without proving anything.
+    cp "$REPEATED_BUNDLE/evidence/round-0-review-result.md" \
+        "$REPEATED_BUNDLE/evidence/round-1-review-result.md"
+    rehash_bundle "$REPEATED_BUNDLE/proof.json" <<'PY'
+import hashlib
+import json
+import os
+
+target = "round-1-review-result.md"
+data = open(
+    os.path.join(os.path.dirname(path), "evidence", target), "rb"
+).read()
+digest = hashlib.sha256(data).hexdigest()
+
+
+def canonical(value):
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+
+
+new_id = hashlib.sha256(
+    canonical({"path": target, "sha256": digest})
+).hexdigest()[:16]
+old_id = None
+for item in bundle["evidence"]:
+    if item["path"] == target:
+        old_id = item["id"]
+        item["sha256"] = digest
+        item["bytes"] = len(data)
+        item["id"] = new_id
+
+
+def swap(node):
+    if isinstance(node, list):
+        return [swap(child) for child in node]
+    if isinstance(node, dict):
+        return {key: swap(child) for key, child in node.items()}
+    return new_id if node == old_id else node
+
+
+replacement = swap(dict(bundle))
+bundle.clear()
+bundle.update(replacement)
+PY
+    REPEATED_REASONS=$(verify_reasons "$REPEATED_BUNDLE")
+    if [[ "$REPEATED_REASONS" != *hash-mismatch* && "$REPEATED_REASONS" != *proof-id-mismatch* ]]; then
+        pass "the repeated-finding Bundle is coherent, so its contents are what is under test"
+    else
+        fail "repeated-finding rehash" "no hash or id mismatch" "$REPEATED_REASONS"
+    fi
+    assert_equals "a review that still records the finding is not a resolution" "3|invalid" \
+        "$(verify_run "$REPEATED_BUNDLE")"
 
     # A waiver has to be backed by the record spec section G requires, not
     # merely by pointing at a Goal Tracker.

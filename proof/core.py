@@ -1207,6 +1207,31 @@ def _finding_key(severity: str, summary: str) -> str:
     return f"{severity}:{normalized}"
 
 
+def _finding_id(round_index: int, severity: str, key: str) -> str:
+    """Return the stable identity of a finding first seen in a given round.
+
+    Shared by the compiler, which mints these, and the validator, which
+    re-derives them to check a lifecycle claim against the review it points at.
+    A second copy of this rule would let the two disagree silently.
+    """
+    return "finding-" + hashlib.sha256(
+        canonical_json_bytes({"round": round_index, "severity": severity, "key": key})
+    ).hexdigest()[:16]
+
+
+def _finding_ids_in(review_text: str, found_round: int) -> set:
+    """Return the identities a review's markers would mint for a given round."""
+    identities = set()
+    for marker in _FINDING_MARKER.finditer(review_text):
+        severity = f"P{marker.group('severity')}"
+        identities.add(
+            _finding_id(
+                found_round, severity, _finding_key(severity, marker.group("summary"))
+            )
+        )
+    return identities
+
+
 def _waiver_targets(goal_tracker: Optional[str]) -> List[Tuple[str, int]]:
     """Return (severity, round) pairs the Goal Tracker explicitly queued.
 
@@ -1409,15 +1434,7 @@ def _derive_findings(
             for key, (severity, ac_refs) in current.items():
                 finding = active.get(key)
                 if finding is None:
-                    identifier = "finding-" + hashlib.sha256(
-                        canonical_json_bytes(
-                            {
-                                "round": round_index,
-                                "severity": severity,
-                                "key": key,
-                            }
-                        )
-                    ).hexdigest()[:16]
+                    identifier = _finding_id(round_index, severity, key)
                     finding = {
                         "id": identifier,
                         "severity": severity,
@@ -1771,6 +1788,43 @@ class BundleCompiler:
         # its review result is: a Run cannot have delivered work in a round it
         # never summarized. _derive_findings only walks review results, so the
         # summary side is checked here.
+        # A recorded round with neither its summary nor its review result
+        # included carries no evidence of what happened in it, and a three-round
+        # Run whose middle round held only a contract still derived `accept` at
+        # integrity `valid`, because the required-evidence check counts kinds
+        # across the Bundle rather than per round.
+        #
+        # This is deliberately weaker than the per-round rule in spec section H:
+        # it requires *some* evidence per round, not both artifacts for every
+        # round. Requiring both would reject cancel-after-review, a real
+        # captured Run whose round 0 is summarized and reviewed in round 1.
+        # Whether "review N+1 covers round N" is the intended product rule is a
+        # spec question, not one to settle inside this check; until it is
+        # settled this closes the case where a round has nothing at all.
+        for round_data in run.rounds:
+            index = round_data["index"]
+            covered = False
+            for relative in (
+                f"round-{index}-summary.md",
+                f"round-{index}-review-result.md",
+            ):
+                item = evidence_by_path.get(relative)
+                if item is not None and item.get("status") == "included":
+                    covered = True
+                    break
+            if not covered:
+                findings_parseable = False
+                warnings.append(
+                    {
+                        "reason": "profile-required-evidence-missing",
+                        "target": f"round-{index}",
+                        "detail": "Round "
+                        + str(index)
+                        + " has neither a summary nor a review result in this "
+                        "Bundle, so what happened in it is unrecorded.",
+                    }
+                )
+
         final_round = max(
             (round_data["index"] for round_data in run.rounds), default=None
         )
@@ -2187,9 +2241,16 @@ class BundleValidator:
     ) -> None:
         """Fail a cleared finding whose link does not substantiate the claim."""
         tracker_text: Optional[str] = None
+        review_text: Optional[str] = None
         if status == "waived":
             tracker_text = _read_text(self.bundle_dir / "evidence" / "goal-tracker.md")
-        detail = _lifecycle_incoherence(finding, status, linked, tracker_text)
+        else:
+            linked_path = linked.get("path")
+            if isinstance(linked_path, str):
+                review_text = _read_text(self.bundle_dir / "evidence" / linked_path)
+        detail = _lifecycle_incoherence(
+            finding, status, linked, tracker_text, review_text
+        )
         if detail is None:
             return
         report.status = "invalid"
@@ -2645,6 +2706,7 @@ def _lifecycle_incoherence(
     status: str,
     linked: Mapping[str, Any],
     tracker_text: Optional[str],
+    review_text: Optional[str] = None,
 ) -> Optional[str]:
     """Return why a cleared finding's link fails to substantiate it, or None.
 
@@ -2675,6 +2737,17 @@ def _lifecycle_incoherence(
             return (
                 f"'re_review_ref' must reference {expected!r}, the review for "
                 f"the recorded fix round, not {linked.get('path')!r}."
+            )
+        # Naming the right file is not the same as that file saying the right
+        # thing. Spec section G resolves a finding when a later parseable
+        # review no longer names it, so the review has to be read: a Bundle
+        # could otherwise point at the correct later review while that review
+        # still carries the original marker.
+        if review_text is None:
+            return "The referenced review result could not be read to confirm the fix."
+        if finding.get("id") in _finding_ids_in(review_text, found_round):
+            return (
+                f"{expected!r} still records this finding, so it is not resolved."
             )
         return None
 
