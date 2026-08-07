@@ -1219,17 +1219,128 @@ def _finding_id(round_index: int, severity: str, key: str) -> str:
     ).hexdigest()[:16]
 
 
-def _finding_ids_in(review_text: str, found_round: int) -> set:
-    """Return the identities a review's markers would mint for a given round."""
-    identities = set()
-    for marker in _FINDING_MARKER.finditer(review_text):
-        severity = f"P{marker.group('severity')}"
-        identities.add(
-            _finding_id(
-                found_round, severity, _finding_key(severity, marker.group("summary"))
-            )
+@dataclass(frozen=True)
+class ReviewFacts:
+    """What one round-review artifact says, parsed once for both readers.
+
+    The compiler decides a finding's lifecycle from these facts and the
+    validator re-checks a lifecycle claim against them, so they are derived
+    here rather than in each. When only the compiler knew how to parse a
+    review, the validator could confirm a `resolved` claim against an empty or
+    malformed review -- neither of which is the "later parseable review result"
+    spec section G requires.
+    """
+
+    present: bool
+    malformed_markers: Tuple[str, ...]
+    markers: Tuple[Tuple[str, str], ...]
+
+    @property
+    def parseable(self) -> bool:
+        """Whether this review can support a lifecycle conclusion at all."""
+        return self.present and not self.malformed_markers
+
+    def finding_ids(self, found_round: int) -> set:
+        """The identities these markers would mint for a given found round."""
+        return {
+            _finding_id(found_round, severity, _finding_key(severity, summary))
+            for severity, summary in self.markers
+        }
+
+
+def parse_review_result(text: Optional[str]) -> ReviewFacts:
+    """Read a round review result into the facts both readers need."""
+    if text is None or not text.strip():
+        return ReviewFacts(present=False, malformed_markers=(), markers=())
+
+    matches = list(_FINDING_MARKER.finditer(text))
+    valid_spans = {(m.start("marker"), m.end("marker")) for m in matches}
+    malformed: List[str] = []
+    for attempt in _FINDING_MARKER_ATTEMPT.finditer(text):
+        token = attempt.group("marker")
+        span = (attempt.start("marker"), attempt.end("marker"))
+        if span not in valid_spans and token not in malformed:
+            malformed.append(token)
+
+    markers = tuple(
+        (f"P{m.group('severity')}", m.group("summary")) for m in matches
+    )
+    return ReviewFacts(
+        present=True, malformed_markers=tuple(malformed), markers=markers
+    )
+
+
+def round_coverage_gaps(
+    rounds: Sequence[Mapping[str, Any]],
+    status_by_path: Mapping[str, str],
+) -> List[Dict[str, str]]:
+    """Return the round-evidence gaps in a Bundle, as reason records.
+
+    Evaluated from the recorded rounds and each artifact's status, so the
+    compiler and the validator reach the same conclusion from the same inputs.
+    The validator previously read this off ``integrity.compile_warnings``,
+    which meant deleting a warning and re-hashing made the gap disappear: the
+    producer's account of itself was the only thing being checked.
+
+    ``status_by_path`` maps an evidence path to its status; a path absent from
+    the mapping was never collected, and one whose status is not ``included``
+    is in the Bundle in name only.
+
+    Two rules, both narrower than spec section H's "each round's summary and
+    review_result". See issue #30: applying H literally rejects
+    cancel-after-review, a real captured Run, so the stricter reading needs a
+    product decision before it can be enforced.
+    """
+    gaps: List[Dict[str, str]] = []
+    indices = [round_data["index"] for round_data in rounds]
+    if not indices:
+        return gaps
+
+    def included(path: str) -> bool:
+        return status_by_path.get(path) == "included"
+
+    # Every recorded round needs some evidence of what happened in it.
+    for index in indices:
+        summary = f"round-{index}-summary.md"
+        review = f"round-{index}-review-result.md"
+        if included(summary) or included(review):
+            continue
+        gaps.append(
+            {
+                "reason": "profile-required-evidence-missing",
+                "target": f"round-{index}",
+                "detail": "Round "
+                + str(index)
+                + " has neither a summary nor a review result in this Bundle, "
+                "so what happened in it is unrecorded.",
+            }
         )
-    return identities
+
+    # The final round needs both: it delivered the work, and a Run cannot have
+    # exited the loop as complete without that work being summarized and
+    # reviewed.
+    final_index = max(indices)
+    for path, missing in (
+        (f"round-{final_index}-summary.md", "summary"),
+        (f"round-{final_index}-review-result.md", "review result"),
+    ):
+        if included(path):
+            continue
+        state = "absent" if path not in status_by_path else "omitted or truncated"
+        gaps.append(
+            {
+                "reason": "profile-required-evidence-missing",
+                "target": path,
+                "detail": "Final round "
+                + str(final_index)
+                + " "
+                + missing
+                + " is "
+                + state
+                + "; the delivered work is unrecorded in this Bundle.",
+            }
+        )
+    return gaps
 
 
 def _waiver_targets(goal_tracker: Optional[str]) -> List[Tuple[str, int]]:
@@ -1301,7 +1412,6 @@ def _derive_findings(
         )
         for round_data in run.rounds
     ]
-    final_round_index = max((index for index, _, _ in review_paths), default=None)
 
     for round_index, relative, path in sorted(review_paths):
         item = evidence_by_path.get(relative)
@@ -1313,31 +1423,11 @@ def _derive_findings(
                 # An intermediate round can legitimately lack one: work
                 # summarized in round N and reviewed in round N+1 is reviewed
                 # work, and cancel-after-review is a real Run shaped exactly
-                # that way. The *final* round is different -- a Run cannot have
-                # exited the loop as `complete` without its last round being
-                # reviewed, so a missing review there means the delivered work
-                # was never reviewed at all. Without this a Run with a round-1
-                # summary and no round-1 review result reported no problem and
-                # derived `accept`.
-                #
-                # Spec section J lists each round's summary and review_result
-                # as required evidence, missing -> `incomplete`, so this is a
-                # profile-required-evidence gap and does downgrade integrity.
-                # An earlier version of this fix argued the Bundle was
-                # undamaged and kept integrity `valid`; the profile contract is
-                # the authority on what a complete Bundle contains, not that
-                # intuition.
-                if round_index == final_round_index:
-                    parseable = False
-                    warnings.append(
-                        {
-                            "reason": "profile-required-evidence-missing",
-                            "target": relative,
-                            "detail": "Final round "
-                            + str(round_index)
-                            + " has no review result; the delivered work is unreviewed.",
-                        }
-                    )
+                # that way. Whether the round that lacks one is required to
+                # have it is decided by round_coverage_gaps, which both the
+                # compiler and the validator consult; this branch only declines
+                # to read a lifecycle conclusion out of a review that is not
+                # there.
                 continue
             # A profile cannot use source content it did not retain to make a
             # finding judgment. One included review result of the required kind
@@ -1360,8 +1450,8 @@ def _derive_findings(
                     _append_unique(finding["evidence_refs"], item["id"])
             active = {}
             continue
-        text = _read_text(path)
-        if text is None or not text.strip():
+        facts = parse_review_result(_read_text(path))
+        if not facts.present:
             parseable = False
             warnings.append(
                 {
@@ -1376,16 +1466,7 @@ def _derive_findings(
             active = {}
             continue
 
-        marker_matches = list(_FINDING_MARKER.finditer(text))
-        valid_marker_spans = {
-            (match.start("marker"), match.end("marker")) for match in marker_matches
-        }
-        malformed_markers = []
-        for marker in _FINDING_MARKER_ATTEMPT.finditer(text):
-            token = marker.group("marker")
-            span = (marker.start("marker"), marker.end("marker"))
-            if span not in valid_marker_spans and token not in malformed_markers:
-                malformed_markers.append(token)
+        malformed_markers = list(facts.malformed_markers)
         if malformed_markers:
             parseable = False
             warnings.append(
@@ -1399,11 +1480,9 @@ def _derive_findings(
             )
 
         current: Dict[str, Tuple[str, List[str]]] = {}
-        for marker in marker_matches:
-            severity = f"P{marker.group('severity')}"
-            summary = marker.group("summary")
+        for severity, summary in facts.markers:
             key = _finding_key(severity, summary)
-            ac_refs = [identifier for identifier in _ac_ids(marker.group(0)) if identifier in known_ac_ids]
+            ac_refs = [identifier for identifier in _ac_ids(summary) if identifier in known_ac_ids]
             if key not in current:
                 current[key] = (severity, ac_refs)
             else:
@@ -1784,76 +1863,20 @@ class BundleCompiler:
             for finding in findings:
                 finding["ac_refs"] = []
         warnings.extend(finding_warnings)
-        # The final round's summary is required evidence for the same reason
-        # its review result is: a Run cannot have delivered work in a round it
-        # never summarized. _derive_findings only walks review results, so the
-        # summary side is checked here.
-        # A recorded round with neither its summary nor its review result
-        # included carries no evidence of what happened in it, and a three-round
-        # Run whose middle round held only a contract still derived `accept` at
-        # integrity `valid`, because the required-evidence check counts kinds
-        # across the Bundle rather than per round.
-        #
-        # This is deliberately weaker than the per-round rule in spec section H:
-        # it requires *some* evidence per round, not both artifacts for every
-        # round. Requiring both would reject cancel-after-review, a real
-        # captured Run whose round 0 is summarized and reviewed in round 1.
-        # Whether "review N+1 covers round N" is the intended product rule is a
-        # spec question, not one to settle inside this check; until it is
-        # settled this closes the case where a round has nothing at all.
-        for round_data in run.rounds:
-            index = round_data["index"]
-            covered = False
-            for relative in (
-                f"round-{index}-summary.md",
-                f"round-{index}-review-result.md",
-            ):
-                item = evidence_by_path.get(relative)
-                if item is not None and item.get("status") == "included":
-                    covered = True
-                    break
-            if not covered:
-                findings_parseable = False
-                warnings.append(
-                    {
-                        "reason": "profile-required-evidence-missing",
-                        "target": f"round-{index}",
-                        "detail": "Round "
-                        + str(index)
-                        + " has neither a summary nor a review result in this "
-                        "Bundle, so what happened in it is unrecorded.",
-                    }
-                )
-
-        final_round = max(
-            (round_data["index"] for round_data in run.rounds), default=None
+        # Round-evidence coverage, evaluated by the shared rule so the
+        # validator reaches the same conclusion from the same inputs rather
+        # than trusting the warnings recorded here.
+        coverage_gaps = round_coverage_gaps(
+            run.rounds,
+            {
+                path: item.get("status", "")
+                for path, item in evidence_by_path.items()
+            },
         )
-        if final_round is not None:
-            summary_relative = f"round-{final_round}-summary.md"
-            summary_item = evidence_by_path.get(summary_relative)
-            # Present-but-withheld is not present. Testing only for None let a
-            # public export omit the final summary for an absolute path while
-            # an earlier round's summary kept the kind-level check satisfied,
-            # and the Run still derived `accept`. Required evidence has to be
-            # evidence a reader of *this* Bundle can actually see.
-            if summary_item is None or summary_item.get("status") != "included":
-                findings_parseable = False
-                withheld = (
-                    "omitted or truncated"
-                    if summary_item is not None
-                    else "absent"
-                )
-                warnings.append(
-                    {
-                        "reason": "profile-required-evidence-missing",
-                        "target": summary_relative,
-                        "detail": "Final round "
-                        + str(final_round)
-                        + " summary is "
-                        + withheld
-                        + "; the delivered work is unrecorded in this Bundle.",
-                    }
-                )
+        if coverage_gaps:
+            findings_parseable = False
+            warnings.extend(coverage_gaps)
+
         open_finding_refs: Dict[str, List[str]] = {}
         unverifiable_finding_refs: Dict[str, List[str]] = {}
         for finding in findings:
@@ -2600,6 +2623,24 @@ class BundleValidator:
                     report.status = "incomplete"
                 report.reasons.append({"reason": "profile-required-evidence-missing", "target": required_kind, "detail": f"Required evidence kind {required_kind!r} is absent."})
 
+        # Round coverage is derived here from the same rule the compiler used,
+        # not read out of integrity.compile_warnings below. Trusting those
+        # warnings meant deleting one and re-hashing made the gap disappear:
+        # a three-round Bundle whose middle round held only a contract then
+        # verified `valid`. The producer's account of itself cannot be the only
+        # thing checked.
+        for gap in round_coverage_gaps(
+            bundle.get("run", {}).get("rounds", []),
+            {
+                item.get("path", ""): item.get("status", "")
+                for item in items
+                if isinstance(item, Mapping)
+            },
+        ):
+            if report.status == "valid":
+                report.status = "incomplete"
+            report.reasons.append(gap)
+
         for warning in bundle.get("integrity", {}).get("compile_warnings", []):
             report.warnings.append({"target": warning.get("target", ""), "detail": warning.get("detail", ""), "reason": warning.get("reason", "")})
             if (
@@ -2743,9 +2784,25 @@ def _lifecycle_incoherence(
         # review no longer names it, so the review has to be read: a Bundle
         # could otherwise point at the correct later review while that review
         # still carries the original marker.
-        if review_text is None:
-            return "The referenced review result could not be read to confirm the fix."
-        if finding.get("id") in _finding_ids_in(review_text, found_round):
+        facts = parse_review_result(review_text)
+        # Spec section G resolves a finding against a later *parseable* review.
+        # Checking only for the marker's absence accepted an empty review and
+        # one whose markers are malformed as proof the finding went away --
+        # in both cases nothing was read, which is not the same as reading
+        # that the finding is gone. The compiler calls those `unverifiable`;
+        # the validator has to agree rather than let them stand as `resolved`.
+        if not facts.present:
+            return (
+                f"{expected!r} is empty or unreadable, so it cannot show the "
+                "finding was resolved."
+            )
+        if facts.malformed_markers:
+            return (
+                f"{expected!r} has malformed finding markers ("
+                + ", ".join(facts.malformed_markers)
+                + "), so it cannot show the finding was resolved."
+            )
+        if finding.get("id") in facts.finding_ids(found_round):
             return (
                 f"{expected!r} still records this finding, so it is not resolved."
             )

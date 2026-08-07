@@ -530,6 +530,64 @@ PY
     assert_equals "a review that still records the finding is not a resolution" "3|invalid" \
         "$(verify_run "$REPEATED_BUNDLE")"
 
+    # Spec section G resolves a finding against a later *parseable* review.
+    # Checking only for the marker's absence accepted a review where nothing
+    # could be read at all -- which is not the same as reading that the finding
+    # is gone. The compiler calls these `unverifiable`; the validator must too.
+    for review_case in "blank: " "malformed:- [Pbad] unparseable marker"; do
+        review_label="${review_case%%:*}"
+        review_body="${review_case#*:}"
+        UNREADABLE_BUNDLE="$TEST_DIR/bundles/link-$review_label"
+        cp -R "$LINK_BUNDLE" "$UNREADABLE_BUNDLE"
+        printf '%s' "$review_body" > "$UNREADABLE_BUNDLE/evidence/round-1-review-result.md"
+        rehash_bundle "$UNREADABLE_BUNDLE/proof.json" <<'PY'
+import hashlib
+import json
+import os
+
+target = "round-1-review-result.md"
+data = open(os.path.join(os.path.dirname(path), "evidence", target), "rb").read()
+digest = hashlib.sha256(data).hexdigest()
+
+
+def canonical(value):
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+
+
+new_id = hashlib.sha256(canonical({"path": target, "sha256": digest})).hexdigest()[:16]
+old_id = None
+for item in bundle["evidence"]:
+    if item["path"] == target:
+        old_id = item["id"]
+        item["sha256"] = digest
+        item["bytes"] = len(data)
+        item["id"] = new_id
+
+
+def swap(node):
+    if isinstance(node, list):
+        return [swap(child) for child in node]
+    if isinstance(node, dict):
+        return {key: swap(child) for key, child in node.items()}
+    return new_id if node == old_id else node
+
+
+replacement = swap(dict(bundle))
+bundle.clear()
+bundle.update(replacement)
+PY
+        UNREADABLE_REASONS=$(verify_reasons "$UNREADABLE_BUNDLE")
+        if [[ "$UNREADABLE_REASONS" != *hash-mismatch* && "$UNREADABLE_REASONS" != *proof-id-mismatch* ]]; then
+            pass "the $review_label re-review Bundle is coherent, so its contents are what is under test"
+        else
+            fail "$review_label re-review rehash" "no hash or id mismatch" "$UNREADABLE_REASONS"
+        fi
+        assert_equals "a $review_label re-review cannot resolve a finding" "3|invalid" \
+            "$(verify_run "$UNREADABLE_BUNDLE")"
+    done
+
     # A waiver has to be backed by the record spec section G requires, not
     # merely by pointing at a Goal Tracker.
     FAKE_WAIVER_BUNDLE="$TEST_DIR/bundles/fake-waiver"
@@ -638,7 +696,52 @@ else
 fi
 
 echo ""
-echo "Section 7: A reviewed commit behind head withholds the badge (D8)"
+echo "Section 7: Round coverage is derived by the verifier, not read off the producer"
+
+# The compiler records a coverage gap as a warning. If the validator only
+# replayed those warnings, deleting one and re-hashing would make the gap
+# disappear -- the producer's account of itself would be the only thing checked.
+COVERAGE_RUN=$(make_run coverage clean-complete)
+cp "$COVERAGE_RUN/round-0-summary.md" "$COVERAGE_RUN/round-2-summary.md"
+cp "$COVERAGE_RUN/round-0-review-result.md" "$COVERAGE_RUN/round-2-review-result.md"
+cp "$COVERAGE_RUN/round-0-contract.md" "$COVERAGE_RUN/round-1-contract.md"
+
+COVERAGE_BUNDLE=$(export_run "$COVERAGE_RUN" coverage)
+if [[ -n "$COVERAGE_BUNDLE" ]]; then
+    assert_equals "a round with no summary or review is incomplete with exit 2" \
+        "2|incomplete" "$(verify_run "$COVERAGE_BUNDLE")"
+
+    SILENCED_COVERAGE="$TEST_DIR/bundles/coverage-silenced"
+    cp -R "$COVERAGE_BUNDLE" "$SILENCED_COVERAGE"
+    rehash_bundle "$SILENCED_COVERAGE/proof.json" <<'PY'
+integrity = bundle["integrity"]
+integrity["compile_warnings"] = [
+    warning
+    for warning in integrity["compile_warnings"]
+    if warning.get("target") != "round-1"
+]
+integrity["status"] = "valid"
+bundle["verdict"]["decision"] = "accept"
+PY
+    SILENCED_REASONS=$(verify_reasons "$SILENCED_COVERAGE")
+    if [[ "$SILENCED_REASONS" != *proof-id-mismatch* ]]; then
+        pass "the silenced coverage Bundle re-hashed cleanly, so the rule is what is under test"
+    else
+        fail "silenced coverage rehash" "no proof-id-mismatch" "$SILENCED_REASONS"
+    fi
+    if [[ "$SILENCED_REASONS" == *profile-required-evidence-missing* ]]; then
+        pass "the verifier derives the coverage gap without the compiler's warning"
+    else
+        fail "independent coverage check" "profile-required-evidence-missing" "$SILENCED_REASONS"
+    fi
+    assert_equals "and declaring it valid is caught as a status mismatch" "3|invalid" \
+        "$(verify_run "$SILENCED_COVERAGE")"
+else
+    fail "coverage export" "a bundle" "export failed"
+fi
+
+echo ""
+echo "Section 8: A reviewed commit behind head withholds the badge (D8)"
 
 # Reviewing an earlier commit than the one delivered is not a defect in the
 # Bundle -- the evidence is intact and internally consistent -- so integrity
