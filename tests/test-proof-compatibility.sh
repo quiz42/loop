@@ -113,6 +113,45 @@ verify_reasons() {
         | grep -v '^status$' | sort -u | tr '\n' ',' | sed 's/,$//'
 }
 
+# Apply a mutation to a Bundle's proof.json and recompute its proof_id, so the
+# only thing wrong with the result is the mutation.
+#
+# Without the recomputation every tamper case fails as `proof-id-mismatch`,
+# which makes the assertion pass no matter what the check under test does --
+# that mistake made an earlier version of the lifecycle-link test vacuous.
+#
+# The hash is recomputed here with hashlib rather than by importing
+# proof.contract, because the spec's Testing Decisions keep the CLI subprocess
+# as the only seam these suites touch. tests/test-proof-verify.sh recomputes it
+# the same way.
+#
+# Usage: rehash_bundle <proof.json> <<'PY'
+#        <python statements mutating the `bundle` dict>
+#        PY
+rehash_bundle() {
+    local path="$1"
+    local mutation
+    mutation=$(cat)
+    python3 - "$path" "$mutation" <<'PY'
+import hashlib
+import json
+import sys
+
+path, mutation = sys.argv[1], sys.argv[2]
+bundle = json.load(open(path, encoding="utf-8"))
+exec(mutation, {"bundle": bundle})
+payload = dict(bundle)
+payload.pop("proof_id", None)
+payload.pop("transport", None)
+bundle["proof_id"] = "sha256:" + hashlib.sha256(
+    json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+).hexdigest()
+json.dump(bundle, open(path, "w", encoding="utf-8"), ensure_ascii=False, sort_keys=True)
+PY
+}
+
 warnings_of() {
     python3 - "$1" <<'PY'
 import json
@@ -358,18 +397,9 @@ if [[ -n "$LINK_BUNDLE" ]]; then
     # this assertion pass no matter what the finding check does.
     STRIPPED_BUNDLE="$TEST_DIR/bundles/link-stripped"
     cp -R "$LINK_BUNDLE" "$STRIPPED_BUNDLE"
-    PYTHONPATH="$PROJECT_ROOT" python3 - "$STRIPPED_BUNDLE/proof.json" <<'PY'
-import json
-import sys
-
-from proof.contract import compute_proof_id
-
-path = sys.argv[1]
-bundle = json.load(open(path, encoding="utf-8"))
+    rehash_bundle "$STRIPPED_BUNDLE/proof.json" <<'PY'
 for finding in bundle["findings"]:
     finding.pop("re_review_ref", None)
-bundle["proof_id"] = compute_proof_id(bundle)
-json.dump(bundle, open(path, "w", encoding="utf-8"), ensure_ascii=False, sort_keys=True)
 PY
     STRIPPED_REASONS=$(verify_reasons "$STRIPPED_BUNDLE")
     if [[ "$STRIPPED_REASONS" != *proof-id-mismatch* ]]; then
@@ -384,22 +414,30 @@ PY
     # unverifiable.
     DANGLING_LINK_BUNDLE="$TEST_DIR/bundles/link-dangling"
     cp -R "$LINK_BUNDLE" "$DANGLING_LINK_BUNDLE"
-    PYTHONPATH="$PROJECT_ROOT" python3 - "$DANGLING_LINK_BUNDLE/proof.json" <<'PY'
-import json
-import sys
-
-from proof.contract import compute_proof_id
-
-path = sys.argv[1]
-bundle = json.load(open(path, encoding="utf-8"))
+    rehash_bundle "$DANGLING_LINK_BUNDLE/proof.json" <<'PY'
 for finding in bundle["findings"]:
     if "re_review_ref" in finding:
         finding["re_review_ref"] = "0123456789abcdef"
-bundle["proof_id"] = compute_proof_id(bundle)
-json.dump(bundle, open(path, "w", encoding="utf-8"), ensure_ascii=False, sort_keys=True)
 PY
     assert_equals "a re-review link pointing nowhere is invalid" "3|invalid" \
         "$(verify_run "$DANGLING_LINK_BUNDLE")"
+
+    # A link that resolves to included evidence of the wrong kind is just as
+    # unverifiable: a plan cannot substantiate a re-review.
+    WRONG_KIND_BUNDLE="$TEST_DIR/bundles/link-wrong-kind"
+    cp -R "$LINK_BUNDLE" "$WRONG_KIND_BUNDLE"
+    rehash_bundle "$WRONG_KIND_BUNDLE/proof.json" <<'PY'
+plan = next(
+    item
+    for item in bundle["evidence"]
+    if item["path"] == "plan.md" and item["status"] == "included"
+)
+for finding in bundle["findings"]:
+    if "re_review_ref" in finding:
+        finding["re_review_ref"] = plan["id"]
+PY
+    assert_equals "a re-review link pointing at the plan is invalid" "3|invalid" \
+        "$(verify_run "$WRONG_KIND_BUNDLE")"
 else
     fail "link export" "a bundle" "export failed"
 fi
@@ -410,36 +448,56 @@ echo "Section 6: Truncation is derived from the Bundle, not from its own warning
 # The compiler records `truncated-evidence` in compile_warnings, but verify
 # must not depend on that: a producer that declares an item truncated and drops
 # the warning would otherwise verify `valid`.
-if [[ -n "$TRUNCATED_BUNDLE" ]]; then
-    SILENT_BUNDLE="$TEST_DIR/bundles/truncated-silent"
-    cp -R "$TRUNCATED_BUNDLE" "$SILENT_BUNDLE"
-    python3 - "$SILENT_BUNDLE/proof.json" <<'PY'
-import json
+# An *optional* evidence kind is used so the Bundle has nothing else wrong with
+# it: truncating a required kind would independently produce
+# profile-required-evidence-missing and mask whether the truncation check works.
+SILENT_RUN=$(make_run silent clean-complete)
+python3 -c "
 import sys
+open(sys.argv[1], 'w', encoding='utf-8').write('# Padded prompt\n' + 'x' * 1200000 + '\n')
+" "$SILENT_RUN/round-0-prompt.md"
+SILENT_SOURCE=$(export_run "$SILENT_RUN" silent-source)
+if [[ -n "$SILENT_SOURCE" ]]; then
+    assert_equals "a truncated optional item alone is incomplete with exit 2" "2|incomplete" \
+        "$(verify_run "$SILENT_SOURCE")"
 
-path = sys.argv[1]
-bundle = json.load(open(path, encoding="utf-8"))
+    SILENT_BUNDLE="$TEST_DIR/bundles/truncated-silent"
+    cp -R "$SILENT_SOURCE" "$SILENT_BUNDLE"
+    # Only the warning is removed. Flipping the declared status too would make
+    # the Bundle `invalid` on integrity-status-mismatch, which is a different
+    # check passing and would hide whether truncation is derived at all.
+    rehash_bundle "$SILENT_BUNDLE/proof.json" <<'PY'
 integrity = bundle["integrity"]
 integrity["compile_warnings"] = [
     warning
     for warning in integrity["compile_warnings"]
     if warning["reason"] != "truncated-evidence"
 ]
-integrity["status"] = "valid"
-json.dump(bundle, open(path, "w", encoding="utf-8"))
 PY
     SILENT_REASONS=$(verify_reasons "$SILENT_BUNDLE")
+    if [[ "$SILENT_REASONS" != *proof-id-mismatch* ]]; then
+        pass "the silenced Bundle re-hashed cleanly, so truncation is what is under test"
+    else
+        fail "silenced Bundle rehash" "no proof-id-mismatch" "$SILENT_REASONS"
+    fi
     if [[ "$SILENT_REASONS" == *truncated-evidence* ]]; then
         pass "verify derives truncated-evidence without the compiler's warning"
     else
         fail "independent truncation check" "truncated-evidence" "$SILENT_REASONS"
     fi
-    SILENT_RESULT=$(verify_run "$SILENT_BUNDLE")
-    if [[ "$SILENT_RESULT" != "0|valid" ]]; then
-        pass "and it does not verify clean ($SILENT_RESULT)"
-    else
-        fail "silent truncation verdict" "not 0|valid" "$SILENT_RESULT"
-    fi
+    assert_equals "and a re-hashed silenced Bundle is still incomplete" "2|incomplete" \
+        "$(verify_run "$SILENT_BUNDLE")"
+
+    # Claiming `valid` on top of it is then caught as a status mismatch.
+    LYING_BUNDLE="$TEST_DIR/bundles/truncated-lying"
+    cp -R "$SILENT_BUNDLE" "$LYING_BUNDLE"
+    rehash_bundle "$LYING_BUNDLE/proof.json" <<'PY'
+bundle["integrity"]["status"] = "valid"
+PY
+    assert_equals "declaring it valid is invalid, not accepted" "3|invalid" \
+        "$(verify_run "$LYING_BUNDLE")"
+else
+    fail "silent truncation export" "a bundle" "export failed"
 fi
 
 echo ""

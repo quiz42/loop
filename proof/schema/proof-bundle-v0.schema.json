@@ -584,7 +584,6 @@
                   "head-commit-unknown",
                   "reviewed-commit-unknown",
                   "reviewed-commit-behind-head",
-            "round-review-missing",
                   "redacted-by-profile",
                   "size-budget-exceeded"
                 ]

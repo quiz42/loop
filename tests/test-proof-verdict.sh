@@ -533,6 +533,32 @@ else
     fail "pending fixture setup" "a pending Verified Round" "the rewrite did not apply"
 fi
 
+# A Verified Round only verifies something if the Run recorded that round.
+# "999" parses as a round and names none.
+UNRECORDED_RUN=$(make_run unrecorded)
+python3 - "$UNRECORDED_RUN/goal-tracker.md" <<'PY'
+import re
+import sys
+
+path = sys.argv[1]
+text = open(path, encoding="utf-8").read()
+text = re.sub(r"^(\| AC[^|]*\|[^|]*\| 0 \|) 0 \|", r"\1 999 |", text, flags=re.MULTILINE)
+open(path, "w", encoding="utf-8").write(text)
+PY
+UNRECORDED_BUNDLE=$(export_run "$UNRECORDED_RUN" unrecorded)
+if [[ -n "$UNRECORDED_BUNDLE" ]]; then
+    UNRECORDED_STATUSES=$(probe "$UNRECORDED_BUNDLE" statuses)
+    if [[ "$UNRECORDED_STATUSES" != *met* ]]; then
+        pass "a Verified Round the Run never recorded does not derive met (statuses: $UNRECORDED_STATUSES)"
+    else
+        fail "unrecorded Verified Round" "no met status" "$UNRECORDED_STATUSES"
+    fi
+    assert_equals "and it does not derive accept" "unverifiable" \
+        "$(probe "$UNRECORDED_BUNDLE" decision)"
+else
+    fail "unrecorded round export" "a bundle" "export failed"
+fi
+
 echo ""
 echo "Section 10: A deferral must be authorized for that criterion"
 
@@ -553,6 +579,24 @@ if [[ -n "$UNRELATED_BUNDLE" ]]; then
         "$(probe "$UNRELATED_BUNDLE" decision)"
 else
     fail "unrelated deferral export" "a bundle" "export failed"
+fi
+
+# An AC token that lands in a Change or Reason cell is prose, not a declared
+# impact. Only the Impact on AC column authorizes.
+INCIDENTAL_RUN=$(make_run incidental)
+append_table_row "$INCIDENTAL_RUN/goal-tracker.md" "Plan Evolution Log" \
+    "| 1 | Reworded notes mentioning AC5 | tidy up | - |"
+append_table_row "$INCIDENTAL_RUN/goal-tracker.md" "Explicitly Deferred" \
+    "| Skip the scope limit | AC5 | 1 | authorized only by a prose mention | later |"
+
+INCIDENTAL_BUNDLE=$(export_run "$INCIDENTAL_RUN" incidental)
+if [[ -n "$INCIDENTAL_BUNDLE" ]]; then
+    assert_equals "an AC named only in a Change cell does not authorize a deferral" \
+        "unverifiable" "$(probe "$INCIDENTAL_BUNDLE" ac:ac-5)"
+    assert_equals "the criterion stays required" "ac-1,ac-2,ac-3,ac-4,ac-5" \
+        "$(probe "$INCIDENTAL_BUNDLE" required_set)"
+else
+    fail "incidental mention export" "a bundle" "export failed"
 fi
 
 # A replan row that names a different criterion at the same round must not
@@ -608,16 +652,38 @@ if [[ -n "$UNREVIEWED_BUNDLE" ]]; then
     assert_equals "an unreviewed final round does not derive accept" "unverifiable" \
         "$(probe "$UNREVIEWED_BUNDLE" decision)"
     UNREVIEWED_WARNINGS=$(probe "$UNREVIEWED_BUNDLE" warning_reasons)
-    if [[ "$UNREVIEWED_WARNINGS" == *round-review-missing* ]]; then
-        pass "and it warns round-review-missing"
+    if [[ "$UNREVIEWED_WARNINGS" == *profile-required-evidence-missing* ]]; then
+        pass "and it warns profile-required-evidence-missing"
     else
-        fail "unreviewed final round warning" "round-review-missing" "$UNREVIEWED_WARNINGS"
+        fail "unreviewed final round warning" "profile-required-evidence-missing" "$UNREVIEWED_WARNINGS"
     fi
-    # The Bundle itself is intact; only the Run is missing a review.
-    assert_equals "the Bundle's integrity is not downgraded" "valid" \
+    # Spec section J lists each round's review result as required evidence and
+    # maps missing required evidence to `incomplete`.
+    assert_equals "the Bundle is incomplete, not valid" "incomplete" \
         "$(probe "$UNREVIEWED_BUNDLE" integrity)"
 else
     fail "unreviewed export" "a bundle" "export failed"
+fi
+
+# The summary side of the same contract: a Run cannot have delivered work in a
+# round it never summarized, and spec section J lists each round's summary as
+# required evidence too.
+NO_SUMMARY_RUN=$(make_run no-summary)
+cp "$NO_SUMMARY_RUN/round-0-review-result.md" "$NO_SUMMARY_RUN/round-1-review-result.md"
+
+NO_SUMMARY_BUNDLE=$(export_run "$NO_SUMMARY_RUN" no-summary)
+if [[ -n "$NO_SUMMARY_BUNDLE" ]]; then
+    assert_equals "a final round with no summary does not derive accept" "unverifiable" \
+        "$(probe "$NO_SUMMARY_BUNDLE" decision)"
+    NO_SUMMARY_WARNINGS=$(probe "$NO_SUMMARY_BUNDLE" warning_reasons)
+    if [[ "$NO_SUMMARY_WARNINGS" == *profile-required-evidence-missing* ]]; then
+        pass "and it warns profile-required-evidence-missing"
+    else
+        fail "missing final summary warning" "profile-required-evidence-missing" \
+            "$NO_SUMMARY_WARNINGS"
+    fi
+else
+    fail "no-summary export" "a bundle" "export failed"
 fi
 
 # An intermediate round without a review is normal: work summarized in round N
@@ -627,10 +693,10 @@ INTERMEDIATE_RUN=$(make_run intermediate cancel-after-review)
 INTERMEDIATE_BUNDLE=$(export_run "$INTERMEDIATE_RUN" intermediate)
 if [[ -n "$INTERMEDIATE_BUNDLE" ]]; then
     INTERMEDIATE_WARNINGS=$(probe "$INTERMEDIATE_BUNDLE" warning_reasons)
-    if [[ "$INTERMEDIATE_WARNINGS" != *round-review-missing* ]]; then
+    if [[ "$INTERMEDIATE_WARNINGS" != *profile-required-evidence-missing* ]]; then
         pass "an unreviewed intermediate round is not flagged (warnings: ${INTERMEDIATE_WARNINGS:-none})"
     else
-        fail "intermediate round" "no round-review-missing" "$INTERMEDIATE_WARNINGS"
+        fail "intermediate round" "no profile-required-evidence-missing" "$INTERMEDIATE_WARNINGS"
     fi
 else
     fail "intermediate export" "a bundle" "export failed"
