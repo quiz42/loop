@@ -488,7 +488,7 @@ Not in this MVP, left to P1 and beyond:
 - **Milestone 1**: both JSON Schemas, canonicalization, the `run_id`/`proof_id` algorithms with test vectors, and the hand-written schema validator;
 - **Milestone 2**: Run Adapter + Compiler + Validator + CLI integration, with `test-proof-export.sh` / `test-proof-verify.sh` fully green;
 - **Milestone 3**: the Explorer's five views + `proof open` + manual walkthrough over the three golden Runs;
-- **Milestone 4**: dogfood on 5-10 public tasks, and revise `public-v0` and the schema accordingly.
+- **Milestone 4**: dogfood on 5-10 public tasks, and revise `public-v0` and the schema accordingly. What that dogfood found is recorded in [`proof-of-loop-m4-dogfood.md`](proof-of-loop-m4-dogfood.md).
 
 ### Acceptance criteria (Draft §10 calibrated by the decision appendix)
 
