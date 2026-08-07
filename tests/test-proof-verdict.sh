@@ -891,6 +891,27 @@ else
     fail "wrapped-ac export" "a bundle" "export failed"
 fi
 
+# `codex review` cites the file it faults by absolute path, so `public-v0`
+# withholds exactly the review results that carry findings. The findings
+# themselves must survive that: their absence read as "this Run found nothing".
+WITHHELD_RUN=$(make_run withheld-review path-cited-review-complete)
+WITHHELD_LOCAL=$(export_run "$WITHHELD_RUN" "withheld-review-local" local-v0)
+WITHHELD_PUBLIC=$(export_run "$WITHHELD_RUN" "withheld-review-public" public-v0)
+if [[ -n "$WITHHELD_LOCAL" && -n "$WITHHELD_PUBLIC" ]]; then
+    assert_equals "the review result is retained under local-v0" \
+        "4" "$(probe "$WITHHELD_LOCAL" finding_count)"
+    assert_equals "a withheld review result still reports the findings it raised" \
+        "4" "$(probe "$WITHHELD_PUBLIC" finding_count)"
+    assert_equals "a finding from a withheld review is unverifiable, never open" \
+        "unverifiable,unverifiable,unverifiable,unverifiable" \
+        "$(probe "$WITHHELD_PUBLIC" finding_statuses)"
+    assert_equals "withholding the review does not change which findings exist" \
+        "$(probe "$WITHHELD_LOCAL" finding_field:id)" \
+        "$(probe "$WITHHELD_PUBLIC" finding_field:id)"
+else
+    fail "withheld-review export" "two bundles" "export failed"
+fi
+
 echo ""
 echo "========================================"
 echo "Proof Verdict Test Summary"

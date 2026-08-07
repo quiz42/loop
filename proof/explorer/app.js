@@ -146,6 +146,17 @@
     return index;
   }
 
+  function withheldReviewResults() {
+    var items = object(proof) ? list(proof.evidence) : [];
+    var paths = [];
+    items.forEach(function (item) {
+      if (object(item) && item.kind === "round_review_result" && item.status !== "included") {
+        paths.push(string(item.path, "a review result"));
+      }
+    });
+    return paths;
+  }
+
   function isLinkableEvidence(identifier, index) {
     var item = index[identifier];
     return object(item) && item.status === "included" && !!safeEvidencePath(item.path);
@@ -524,7 +535,20 @@
     var findings = list(proof.findings);
     var index = evidenceById();
     if (!findings.length) {
-      append(content, empty("No structured findings were recorded for this Run."));
+      // "None recorded" and "none shown here" are different claims, and only
+      // the manifest knows which one holds. When a review result this profile
+      // withheld is the reason the list is empty, saying the Run recorded no
+      // findings states the opposite of what happened.
+      append(
+        content,
+        empty(
+          withheldReviewResults().length
+            ? "No findings can be shown: this profile withheld " +
+              withheldReviewResults().join(", ") +
+              ", so what those reviews reported is not in this Bundle."
+            : "No structured findings were recorded for this Run."
+        )
+      );
       return content;
     }
     var grid = element("div", "finding-grid");
