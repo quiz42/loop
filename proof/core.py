@@ -358,23 +358,29 @@ def _expand_ac_ranges(raw: str) -> Tuple[List[str], str]:
     return identifiers, " ".join(remainder)
 
 
-def _ac_ids(raw: str) -> List[str]:
-    """Return stable criterion IDs explicitly named in free-form table text."""
+def _ac_ids_and_remainder(raw: str) -> Tuple[List[str], str]:
+    """Return every criterion ID the text names, and the text ranges left over.
+
+    Ranges are consumed first so the malformed-reference scan never sees a
+    range it would report; what it does see is everything a range did not
+    explain.
+    """
     identifiers, remainder = _expand_ac_ranges(raw)
     for match in _AC_REFERENCE.finditer(remainder):
         identifier = _ac_id(match.group(1))
         if identifier not in identifiers:
             identifiers.append(identifier)
-    return identifiers
+    return identifiers, remainder
+
+
+def _ac_ids(raw: str) -> List[str]:
+    """Return stable criterion IDs explicitly named in free-form table text."""
+    return _ac_ids_and_remainder(raw)[0]
 
 
 def _ac_references(raw: str) -> Tuple[List[str], List[str]]:
     """Return valid AC IDs and any malformed AC-like references in the text."""
-    identifiers, remainder = _expand_ac_ranges(raw)
-    for match in _AC_REFERENCE.finditer(remainder):
-        identifier = _ac_id(match.group(1))
-        if identifier not in identifiers:
-            identifiers.append(identifier)
+    identifiers, remainder = _ac_ids_and_remainder(raw)
     malformed: List[str] = []
     for match in _AC_REFERENCE_ATTEMPT.finditer(remainder):
         token = match.group(0)
