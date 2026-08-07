@@ -133,6 +133,14 @@ elif query.startswith("finding_field:"):
     print(",".join(str(item.get(field, "absent")) for item in findings))
 elif query == "deferred_ac_ids":
     print(",".join(item["ac_id"] for item in verdict.get("deferred", [])))
+elif query == "warning_reasons":
+    print(
+        ",".join(
+            sorted({w["reason"] for w in bundle["integrity"]["compile_warnings"]})
+        )
+    )
+elif query == "integrity":
+    print(bundle["integrity"]["status"])
 elif query == "deferred_has_replan_ref":
     entries = verdict.get("deferred", [])
     print(
@@ -488,7 +496,168 @@ else
 fi
 
 echo ""
-echo "Section 9: reject is never derived"
+echo "Section 9: met requires a recorded Verified Round"
+
+# Spec section G: `met` means the row is in Completed and Verified *with a
+# Verified Round*. The column was not read at all, so a row still reading
+# "pending" -- the literal value the tracker template writes while a round
+# awaits review -- produced `met` and `accept` on an unreviewed Run.
+PENDING_RUN=$(make_run pending)
+python3 - "$PENDING_RUN/goal-tracker.md" <<'PY'
+import re
+import sys
+
+path = sys.argv[1]
+text = open(path, encoding="utf-8").read()
+# Completed Round stays 0; only Verified Round becomes pending.
+text = re.sub(
+    r"^(\| AC[^|]*\|[^|]*\| 0 \|) 0 \|", r"\1 pending |", text, flags=re.MULTILINE
+)
+open(path, "w", encoding="utf-8").write(text)
+PY
+if grep -q 'pending' "$PENDING_RUN/goal-tracker.md"; then
+    PENDING_BUNDLE=$(export_run "$PENDING_RUN" pending)
+    if [[ -n "$PENDING_BUNDLE" ]]; then
+        PENDING_STATUSES=$(probe "$PENDING_BUNDLE" statuses)
+        if [[ "$PENDING_STATUSES" != *met* ]]; then
+            pass "a pending Verified Round never derives met (statuses: $PENDING_STATUSES)"
+        else
+            fail "pending Verified Round" "no met status" "$PENDING_STATUSES"
+        fi
+        assert_equals "and the Run does not derive accept" "unverifiable" \
+            "$(probe "$PENDING_BUNDLE" decision)"
+    else
+        fail "pending export" "a bundle" "export failed"
+    fi
+else
+    fail "pending fixture setup" "a pending Verified Round" "the rewrite did not apply"
+fi
+
+echo ""
+echo "Section 10: A deferral must be authorized for that criterion"
+
+# Every Run opens with a "| 0 | Initial plan |" Plan Evolution row, so matching
+# a deferral on the round alone let any deferral citing round 0 through. The
+# replan row has to name the criterion being dropped.
+UNRELATED_RUN=$(make_run unrelated)
+append_table_row "$UNRELATED_RUN/goal-tracker.md" "Explicitly Deferred" \
+    "| Skip the scope limit | AC5 | 0 | authorized only by the initial-plan row | later |"
+
+UNRELATED_BUNDLE=$(export_run "$UNRELATED_RUN" unrelated)
+if [[ -n "$UNRELATED_BUNDLE" ]]; then
+    assert_equals "an unrelated round-0 replan row does not authorize a deferral" \
+        "unverifiable" "$(probe "$UNRELATED_BUNDLE" ac:ac-5)"
+    assert_equals "the criterion stays in the required set" "ac-1,ac-2,ac-3,ac-4,ac-5" \
+        "$(probe "$UNRELATED_BUNDLE" required_set)"
+    assert_equals "and no accept is manufactured" "unverifiable" \
+        "$(probe "$UNRELATED_BUNDLE" decision)"
+else
+    fail "unrelated deferral export" "a bundle" "export failed"
+fi
+
+# A replan row that names a different criterion at the same round must not
+# authorize this one either. Matching the round and requiring *some* named
+# criterion is not enough; the row has to name the criterion being dropped.
+WRONG_AC_RUN=$(make_run wrong-ac)
+append_table_row "$WRONG_AC_RUN/goal-tracker.md" "Plan Evolution Log" \
+    "| 1 | Reworded the test criterion | Clarity | AC2 wording updated |"
+append_table_row "$WRONG_AC_RUN/goal-tracker.md" "Explicitly Deferred" \
+    "| Skip the scope limit | AC5 | 1 | the round-1 replan names AC2, not AC5 | later |"
+
+WRONG_AC_BUNDLE=$(export_run "$WRONG_AC_RUN" wrong-ac)
+if [[ -n "$WRONG_AC_BUNDLE" ]]; then
+    assert_equals "a replan naming another criterion does not authorize this one" \
+        "unverifiable" "$(probe "$WRONG_AC_BUNDLE" ac:ac-5)"
+    assert_equals "it stays in the required set" "ac-1,ac-2,ac-3,ac-4,ac-5" \
+        "$(probe "$WRONG_AC_BUNDLE" required_set)"
+else
+    fail "wrong-AC deferral export" "a bundle" "export failed"
+fi
+
+# AC tokens in the Task prose must not defer additional criteria: only the
+# Original AC column says what was deferred.
+PROSE_RUN=$(make_run prose)
+append_table_row "$PROSE_RUN/goal-tracker.md" "Plan Evolution Log" \
+    "| 1 | Deferred the scope limit | Out of scope after review | AC5 leaves the required set |"
+append_table_row "$PROSE_RUN/goal-tracker.md" "Explicitly Deferred" \
+    "| Defer AC4 work as well | AC5 | 1 | the task text names a second criterion | later |"
+
+PROSE_BUNDLE=$(export_run "$PROSE_RUN" prose)
+if [[ -n "$PROSE_BUNDLE" ]]; then
+    assert_equals "the criterion in Original AC is deferred" "deferred" \
+        "$(probe "$PROSE_BUNDLE" ac:ac-5)"
+    assert_equals "the criterion named only in the task prose is not" "met" \
+        "$(probe "$PROSE_BUNDLE" ac:ac-4)"
+    assert_equals "so only the cited criterion leaves the required set" "ac-1,ac-2,ac-3,ac-4" \
+        "$(probe "$PROSE_BUNDLE" required_set)"
+else
+    fail "prose deferral export" "a bundle" "export failed"
+fi
+
+echo ""
+echo "Section 11: The final round must have been reviewed"
+
+# A Run cannot have exited the loop as `complete` without its last round being
+# reviewed, so a missing review there means the delivered work was never
+# reviewed at all -- which previously produced no warning and derived accept.
+UNREVIEWED_RUN=$(make_run unreviewed)
+cp "$UNREVIEWED_RUN/round-0-summary.md" "$UNREVIEWED_RUN/round-1-summary.md"
+
+UNREVIEWED_BUNDLE=$(export_run "$UNREVIEWED_RUN" unreviewed)
+if [[ -n "$UNREVIEWED_BUNDLE" ]]; then
+    assert_equals "an unreviewed final round does not derive accept" "unverifiable" \
+        "$(probe "$UNREVIEWED_BUNDLE" decision)"
+    UNREVIEWED_WARNINGS=$(probe "$UNREVIEWED_BUNDLE" warning_reasons)
+    if [[ "$UNREVIEWED_WARNINGS" == *round-review-missing* ]]; then
+        pass "and it warns round-review-missing"
+    else
+        fail "unreviewed final round warning" "round-review-missing" "$UNREVIEWED_WARNINGS"
+    fi
+    # The Bundle itself is intact; only the Run is missing a review.
+    assert_equals "the Bundle's integrity is not downgraded" "valid" \
+        "$(probe "$UNREVIEWED_BUNDLE" integrity)"
+else
+    fail "unreviewed export" "a bundle" "export failed"
+fi
+
+# An intermediate round without a review is normal: work summarized in round N
+# and reviewed in round N+1 is reviewed work. cancel-after-review is a real Run
+# shaped exactly that way.
+INTERMEDIATE_RUN=$(make_run intermediate cancel-after-review)
+INTERMEDIATE_BUNDLE=$(export_run "$INTERMEDIATE_RUN" intermediate)
+if [[ -n "$INTERMEDIATE_BUNDLE" ]]; then
+    INTERMEDIATE_WARNINGS=$(probe "$INTERMEDIATE_BUNDLE" warning_reasons)
+    if [[ "$INTERMEDIATE_WARNINGS" != *round-review-missing* ]]; then
+        pass "an unreviewed intermediate round is not flagged (warnings: ${INTERMEDIATE_WARNINGS:-none})"
+    else
+        fail "intermediate round" "no round-review-missing" "$INTERMEDIATE_WARNINGS"
+    fi
+else
+    fail "intermediate export" "a bundle" "export failed"
+fi
+
+echo ""
+echo "Section 12: A finding queued in Explicitly Deferred is waived too"
+
+# Spec section G names the Queued *and* Deferred tables; only Queued was read.
+DEFERRED_WAIVER_RUN=$(make_run deferred-waiver)
+cat > "$DEFERRED_WAIVER_RUN/round-0-review-result.md" <<'REVIEW_EOF'
+- [P3] Tidy the module docstring - greeting.py:1-1
+  Cosmetic only.
+REVIEW_EOF
+append_table_row "$DEFERRED_WAIVER_RUN/goal-tracker.md" "Explicitly Deferred" \
+    "| [P3] Tidy the module docstring | - | 0 | cosmetic, parked deliberately | Next docs pass |"
+
+DEFERRED_WAIVER_BUNDLE=$(export_run "$DEFERRED_WAIVER_RUN" deferred-waiver)
+if [[ -n "$DEFERRED_WAIVER_BUNDLE" ]]; then
+    assert_equals "a finding parked in Explicitly Deferred is waived" "waived" \
+        "$(probe "$DEFERRED_WAIVER_BUNDLE" finding_statuses)"
+else
+    fail "deferred waiver export" "a bundle" "export failed"
+fi
+
+echo ""
+echo "Section 13: reject is never derived"
 
 REJECT_SEEN=""
 for bundle in "$CONTROL_BUNDLE" "$PLACEHOLDER_BUNDLE" "$RESOLVED_BUNDLE" \

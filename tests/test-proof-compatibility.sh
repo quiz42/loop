@@ -332,7 +332,118 @@ else
 fi
 
 echo ""
-echo "Section 5: A reviewed commit behind head withholds the badge (D8)"
+echo "Section 5: Cleared findings must carry the link that justifies them"
+
+# The verifier's job is to check the Bundle, not to take the producer's word
+# for it. A hand-edited Bundle that promotes findings to `resolved` or `waived`
+# without the corresponding link is claiming a lifecycle it cannot show -- the
+# Explorer already refuses to render it as resolved, and verify must agree.
+LINK_RUN=$(make_run link clean-complete)
+cat > "$LINK_RUN/round-0-review-result.md" <<'REVIEW_EOF'
+- [P1] Handle the empty-string case - greeting.py:6-6
+  The helper returns None for an empty input.
+REVIEW_EOF
+cp "$LINK_RUN/round-0-summary.md" "$LINK_RUN/round-1-summary.md"
+cat > "$LINK_RUN/round-1-review-result.md" <<'REVIEW_EOF'
+No blocking issues remain.
+REVIEW_EOF
+LINK_BUNDLE=$(export_run "$LINK_RUN" link)
+if [[ -n "$LINK_BUNDLE" ]]; then
+    assert_equals "a genuinely resolved finding verifies valid with exit 0" "0|valid" \
+        "$(verify_run "$LINK_BUNDLE")"
+
+    # Strip the link but keep the status, and **re-hash**: without that the
+    # proof_id no longer matches and `proof-id-mismatch` fails the Bundle for
+    # a reason that has nothing to do with the missing link, which would make
+    # this assertion pass no matter what the finding check does.
+    STRIPPED_BUNDLE="$TEST_DIR/bundles/link-stripped"
+    cp -R "$LINK_BUNDLE" "$STRIPPED_BUNDLE"
+    PYTHONPATH="$PROJECT_ROOT" python3 - "$STRIPPED_BUNDLE/proof.json" <<'PY'
+import json
+import sys
+
+from proof.contract import compute_proof_id
+
+path = sys.argv[1]
+bundle = json.load(open(path, encoding="utf-8"))
+for finding in bundle["findings"]:
+    finding.pop("re_review_ref", None)
+bundle["proof_id"] = compute_proof_id(bundle)
+json.dump(bundle, open(path, "w", encoding="utf-8"), ensure_ascii=False, sort_keys=True)
+PY
+    STRIPPED_REASONS=$(verify_reasons "$STRIPPED_BUNDLE")
+    if [[ "$STRIPPED_REASONS" != *proof-id-mismatch* ]]; then
+        pass "the stripped Bundle re-hashed cleanly, so the link is what is under test"
+    else
+        fail "stripped Bundle rehash" "no proof-id-mismatch" "$STRIPPED_REASONS"
+    fi
+    assert_equals "a resolved finding with no re-review link is invalid" "3|invalid" \
+        "$(verify_run "$STRIPPED_BUNDLE")"
+
+    # Pointing the link at evidence the Bundle does not include is equally
+    # unverifiable.
+    DANGLING_LINK_BUNDLE="$TEST_DIR/bundles/link-dangling"
+    cp -R "$LINK_BUNDLE" "$DANGLING_LINK_BUNDLE"
+    PYTHONPATH="$PROJECT_ROOT" python3 - "$DANGLING_LINK_BUNDLE/proof.json" <<'PY'
+import json
+import sys
+
+from proof.contract import compute_proof_id
+
+path = sys.argv[1]
+bundle = json.load(open(path, encoding="utf-8"))
+for finding in bundle["findings"]:
+    if "re_review_ref" in finding:
+        finding["re_review_ref"] = "0123456789abcdef"
+bundle["proof_id"] = compute_proof_id(bundle)
+json.dump(bundle, open(path, "w", encoding="utf-8"), ensure_ascii=False, sort_keys=True)
+PY
+    assert_equals "a re-review link pointing nowhere is invalid" "3|invalid" \
+        "$(verify_run "$DANGLING_LINK_BUNDLE")"
+else
+    fail "link export" "a bundle" "export failed"
+fi
+
+echo ""
+echo "Section 6: Truncation is derived from the Bundle, not from its own warning"
+
+# The compiler records `truncated-evidence` in compile_warnings, but verify
+# must not depend on that: a producer that declares an item truncated and drops
+# the warning would otherwise verify `valid`.
+if [[ -n "$TRUNCATED_BUNDLE" ]]; then
+    SILENT_BUNDLE="$TEST_DIR/bundles/truncated-silent"
+    cp -R "$TRUNCATED_BUNDLE" "$SILENT_BUNDLE"
+    python3 - "$SILENT_BUNDLE/proof.json" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+bundle = json.load(open(path, encoding="utf-8"))
+integrity = bundle["integrity"]
+integrity["compile_warnings"] = [
+    warning
+    for warning in integrity["compile_warnings"]
+    if warning["reason"] != "truncated-evidence"
+]
+integrity["status"] = "valid"
+json.dump(bundle, open(path, "w", encoding="utf-8"))
+PY
+    SILENT_REASONS=$(verify_reasons "$SILENT_BUNDLE")
+    if [[ "$SILENT_REASONS" == *truncated-evidence* ]]; then
+        pass "verify derives truncated-evidence without the compiler's warning"
+    else
+        fail "independent truncation check" "truncated-evidence" "$SILENT_REASONS"
+    fi
+    SILENT_RESULT=$(verify_run "$SILENT_BUNDLE")
+    if [[ "$SILENT_RESULT" != "0|valid" ]]; then
+        pass "and it does not verify clean ($SILENT_RESULT)"
+    else
+        fail "silent truncation verdict" "not 0|valid" "$SILENT_RESULT"
+    fi
+fi
+
+echo ""
+echo "Section 7: A reviewed commit behind head withholds the badge (D8)"
 
 # Reviewing an earlier commit than the one delivered is not a defect in the
 # Bundle -- the evidence is intact and internally consistent -- so integrity
