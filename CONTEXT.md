@@ -39,7 +39,7 @@ A fixed, individually assessable condition that defines what the delivery must s
 _Avoid_: Requirement, checklist item
 
 **Evidence Item**:
-An artifact supporting or contradicting an acceptance claim, such as a commit, test result, review finding, or state transition. Its identity is derived from its source path relative to the Loop Run directory combined with a content hash, not from content hash alone — path disambiguates position within the Run, hash detects tampering of that specific file.
+An artifact supporting or contradicting an acceptance claim, such as a commit, test result, review finding, or state transition. Its identity is derived from its source path relative to the Loop Run directory combined with a content hash, not from content hash alone — path disambiguates position within the Run, hash detects tampering of that specific file. An item is normally carried verbatim or withheld outright; a profile may also publish a named kind **masked**, with absolute home paths replaced, in which case the Bundle carries a second hash over the published bytes and only a fuller profile's Bundle can show the masking was faithful (ADR-0004).
 _Avoid_: Proof, log
 
 **Proof Bundle**:

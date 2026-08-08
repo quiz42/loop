@@ -43,20 +43,22 @@ exporter as of `68c756b`; "after" is this branch.
 | Export success rate | 18/18 | 18/18 |
 | `loop proof open` preflight success | 18/18 | 18/18 |
 | Public-profile leakage incidents | **0** | **0** |
-| Bundles verifying `valid` | 7/18 | 14/18 |
-| Bundles with complete required evidence | 14/18 | 14/18 |
+| Bundles verifying `valid` | 7/18 | 17/18 |
+| Bundles with complete required evidence | 14/18 | 17/18 |
 | Acceptance criteria judged `unverifiable` | 46/84 (55%) | 16/84 (19%) |
 | Acceptance criteria carrying evidence references | 38/84 (45%) | 68/84 (81%) |
 | Findings recorded across the corpus | 9 | 18 |
 | Findings recorded in a public Bundle | **0** | 9 |
-| Findings carrying a fix or waiver link | 3/9 | 3/18 |
+| Findings carrying a fix or waiver link | 3/9 | 6/18 |
 
 Leakage stayed at its target of zero in every Bundle, measured independently of
 the exporter's own claim by rescanning the written bytes.
 
-The linkage row's denominator grows because public Bundles now list findings at
-all; the three linked findings are the same three, and all of them are in one
-Run. Observation 4 explains why that number cannot yet be higher.
+Both finding rows count each Run twice, once per profile, because a public
+Bundle now reports the same findings its local counterpart does. The one Run
+that links any of them still links three, and observation 4 explains why that
+number cannot yet be higher. The single Bundle that remains `incomplete` is
+`token-bucket` under `public-v0`, for the reason in observation 3.
 
 ### 1. A wrapped acceptance criterion lost everything after its first line
 
@@ -106,11 +108,28 @@ criteria**, no summaries, no finalize summary, and 14 of its 21 evidence items
 omitted. A maintainer receiving it sees an empty Acceptance Matrix for a Run
 that completed with six criteria.
 
-Partly fixed. A withheld review result now still reports the findings it
-raised, as `unverifiable` and never `resolved`: withheld evidence may show that
-a problem existed, never that one was fixed. The Explorer now distinguishes
-"none recorded" from "none shown here". **The over-redaction itself is not
-fixed** -- see "Not done" below.
+Fixed in two parts.
+
+`public-v0` now publishes a path-citing review result **masked** rather than
+withholding it: the absolute home paths are replaced with a placeholder, the
+item is declared `status: "masked"`, and a second hash covers the bytes the
+Bundle carries so tamper detection still bites on what a recipient receives.
+Only `round_review_result` may be masked, because every other required kind
+feeds structured projections into `proof.json`. The trade-off, and the two
+options that were rejected, are recorded in
+[ADR-0004](adr/0004-masked-publication-of-path-bearing-evidence.md); the cost is
+that only a `local-v0` Bundle of the same Run can show the masking was faithful.
+
+Where an item genuinely is not published -- omitted, or over `max_item_bytes` --
+the findings it raised are still recorded, as `unverifiable` and never
+`resolved`: withheld evidence may show that a problem existed, never that one
+was fixed. The Explorer distinguishes "none recorded" from "none shown here",
+and gives a masked item its own treatment so it cannot be read as withheld.
+
+`token-bucket` is the remaining gap, and it is the case the kind restriction
+excludes: the path is in its **Goal Tracker**, so that item is still omitted and
+its public Bundle still carries zero acceptance criteria and verifies
+`incomplete`. It is the one Bundle of eighteen that does not verify `valid`.
 
 ### 4. Finding-to-fix linkage only closes while problems remain
 
@@ -158,34 +177,25 @@ number from `verdict.per_ac`, `findings`, `evidence` and
 
 ## Not done in this milestone
 
-Two of the findings above need a decision that belongs to the maintainer rather
-than to this change, so each is filed with its evidence instead of guessed at.
-Issue #12's second acceptance criterion -- revising `public-v0` and the schema
--- is therefore **not** met here.
-
-**Observation 3, the over-redaction.** Keeping a public Bundle's review result
-readable requires one of two changes, and both go beyond a fix:
-
-1. *Publish a path-normalized copy.* Add `secret_scan.redact_on` to the profile
-   schema and a `redacted` evidence status carrying both the source `sha256`
-   and a `redacted_sha256` over the published bytes. Already-distributed
-   Bundles keep verifying, since none carries the new status. The cost is real
-   and must be stated in the UI: a redacted item's bytes are no longer
-   byte-identical to the source, so a recipient can verify the published bytes
-   are intact but can only confirm the redaction was faithful against the
-   `local-v0` Bundle. This contradicts spec section C's "a profile never
-   rewrites file content", which exists to prevent exactly that ambiguity.
-2. *Stop writing absolute paths into Run artifacts.* Relativize paths against
-   the project root when the review result is written. The Proof contract is
-   untouched and evidence stays verbatim, but only future Runs benefit.
-
-Option 2 is the better engineering answer and option 1 is the only one that
-helps the Runs already on disk. Both are worth doing; neither should be picked
-without the maintainer.
-
 **Observation 4, the discarded clean re-review.** Writing
 `round-N-review-result.md` on a clean pass would close the finding lifecycle,
 but it also adds round N to `run.rounds`, and `round_coverage_gaps` requires a
 final round to carry both a summary and a review result. A review-phase round
 has no builder summary, so the rule needs a matching refinement -- which is the
 question issue #30 already holds open. The dogfood evidence for it is above.
+
+**Observation 3's remaining half, a path-bearing Goal Tracker.** Masking is
+restricted to `round_review_result` because every other required kind feeds
+structured projections into `proof.json`: the Goal Tracker gives criterion text
+and its `text_sha256`, deferral rows copied verbatim, and plan evolution.
+Masking those means either the manifest asserts facts derived from bytes it did
+not publish, or the Adapter re-parses published bytes -- a pipeline inversion,
+and the kind of Compiler/Validator split that has cost this repo review rounds
+before. Until that is settled, a Run like `token-bucket` still exports a public
+Bundle with no acceptance criteria.
+
+**Relativizing paths in Loop itself** remains available and is not needed by
+anything here. It would keep future review results free of absolute paths so
+masking rarely fires, but it rewrites the reviewer's output at capture time
+without leaving a trace, which is why ADR-0004 did not adopt it as the primary
+fix.

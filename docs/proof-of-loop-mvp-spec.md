@@ -194,7 +194,7 @@ not implement.
 
 - Evidence ID = the first 16 hex characters of `sha256(canonical_json({path, sha256}))`, extended to full length on collision. The path distinguishes position within the Run; the hash detects whether that file was tampered with (D4).
 - Hashes are computed over **raw bytes**, with no newline or encoding normalization.
-- **File evidence is all-or-nothing**: a profile never rewrites file content. To withhold an item, mark it `status: "omitted"`, keep its `path` and `sha256` (the source file's hash), and do not write the content into the Bundle. This keeps AC-3's tamper detection meaningful and avoids "a laundered file whose hash matches nothing".
+- **File evidence is all-or-nothing, with one declared exception**: a profile does not rewrite file content. To withhold an item, mark it `status: "omitted"`, keep its `path` and `sha256` (the source file's hash), and do not write the content into the Bundle. This keeps AC-3's tamper detection meaningful and avoids "a laundered file whose hash matches nothing". The exception, added by [ADR-0004](adr/0004-masked-publication-of-path-bearing-evidence.md) after the Milestone 4 dogfood, is **masked publication**: a profile may name evidence kinds in `secret_scan.mask_kinds` whose absolute home paths are replaced with a fixed placeholder and published as `status: "masked"`. Such an item keeps `sha256` and `bytes` describing the source, and adds `masked_sha256` and `masked_bytes` for the bytes the Bundle carries, so the published copy is still hashed and still tamper-evident. What it gives up is stated plainly: only a `local-v0` Bundle of the same Run can show the masking was faithful. v0 admits exactly one maskable kind, `round_review_result`, because every other required kind feeds structured projections into `proof.json`.
 - **Derived records (commit metadata) do allow field-level redaction**: the optional top-level `commits[]` records are not files and are checked against Git at export time rather than a file hash. `local-v0` retains `sha`, subject, author time/name, and author email; `public-v0` retains the non-email fields, omits `author_email`, and declares that omission in `disclosure.field_redactions`. In v0, `commit.author_email` is the sole supported field-redaction rule. A copied Run whose recorded range is unavailable in the current checkout emits an empty `commits[]` array rather than guessing a different range.
 - Items exceeding `max_item_bytes` are written as `status: "truncated"`: a summary plus the original `sha256` and original byte count. The Validator only checks the declaration's self-consistency and records `truncated-evidence`.
 
@@ -293,9 +293,11 @@ Both the verdict and per-AC statuses are **relative to this export's profile and
 - **whole-item omit**: `round-N-prompt.md`, `round-N-review-prompt.md`, any transcript or log, `.loop/bitlesson.md`, `methodology-analysis-report.md`;
 - **field-level redaction**: commit author email;
 - **required evidence**: plan, goal_tracker, terminal state, and each round's summary and review_result; missing → `incomplete`;
-- **scanning**: a `secret`-class hit (PEM headers, common cloud credential prefixes, `token=`/`api_key=` assignments, high-entropy strings) → **export fails**, with an error naming the file and match type but never echoing the secret value; a `path`-class hit (absolute home paths such as `/Users/<name>/`, `/home/<name>/`) → the item is downgraded to omitted with a warning and counted in the disclosure, without blocking the export.
+- **scanning**: a `secret`-class hit (PEM headers, common cloud credential prefixes, `token=`/`api_key=` assignments, high-entropy strings) → **export fails**, with an error naming the file and match type but never echoing the secret value; a `path`-class hit (absolute home paths such as `/Users/<name>/`, `/home/<name>/`) → the item is published masked when the profile names its kind in `secret_scan.mask_kinds`, and otherwise downgraded to omitted, in both cases with a warning and a disclosure record, without blocking the export.
 
 The rationale for two tiers: a secret leak is irreversible and its target metric is zero, while absolute paths are privacy noise rather than an incident, and hard-failing on them would make public export unusable on real projects.
+
+Masking exists because omission alone turned out to be too blunt for one kind. `codex review` cites the file it faults by absolute path, so the path rule withheld precisely the review results that reported findings — see [`proof-of-loop-m4-dogfood.md`](proof-of-loop-m4-dogfood.md) and ADR-0004. `public-v0` therefore sets `mask_on: ["absolute-path"]` and `mask_kinds: ["round_review_result"]`, keeping `omit_on` as the fallback for anything masking cannot clean (bytes that are not UTF-8, or a substitution that would leave a match behind).
 
 ### I. Loop-Verified badge
 
@@ -309,7 +311,7 @@ Head Commit is always the true HEAD at the end of the Run, never narrowed to "wh
 
 ### J. Validator behavior and exit codes
 
-Validation order: schema → file existence → per-item hash → cross-references (all `ac_refs`/`evidence_refs`/`findings` resolvable) → `proof_id` recomputation → profile required evidence → consistency checks (such as `reviewed_commit` versus `head_commit`).
+Validation order: schema → file existence → per-item hash (against `masked_sha256` for a masked item, `sha256` otherwise) → cross-references (all `ac_refs`/`evidence_refs`/`findings` resolvable) → `proof_id` recomputation → profile required evidence → consistency checks (such as `reviewed_commit` versus `head_commit`).
 
 Integrity status mapping (D7 — three states unchanged, causes live in `reason`):
 
@@ -328,7 +330,7 @@ Integrity status mapping (D7 — three states unchanged, causes live in `reason`
 | `truncated-evidence` | `incomplete` (`valid` + warning when the profile permits) |
 | `head-commit-unknown` / `reviewed-commit-unknown` | `incomplete` |
 | `reviewed-commit-behind-head` | Does not downgrade integrity; withholds the badge only (D8) |
-| `redacted-by-profile` | No downgrade; recorded in the disclosure |
+| `redacted-by-profile` | No downgrade; recorded in the disclosure. Covers both an omitted item and one published masked |
 | `size-budget-exceeded` | No downgrade; warning |
 
 Exit codes: `0` valid; `2` incomplete; `3` invalid; `1` usage/environment error (kept distinct for CI).
