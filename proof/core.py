@@ -1075,9 +1075,65 @@ def _safe_relative_evidence_path(relative: Any) -> bool:
     return not candidate.is_absolute() and ".." not in candidate.parts
 
 
+# The one definition of "absolute home path". The scanner and the mask below
+# must never disagree about what they are looking at: a mask that cleaned less
+# than the scan detects would publish the very thing the scan exists to catch.
+_ABSOLUTE_HOME_PATH = re.compile(r"(?<![A-Za-z0-9._-])/(?:Users|home)/[^\s/]+")
+# What a masked item shows instead. Deliberately not a path, so a reader cannot
+# mistake it for one, and fixed, so masking is deterministic.
+MASKED_HOME_PLACEHOLDER = "<masked-home>"
+
+
 def _has_absolute_path(data: bytes) -> bool:
     text = data.decode("utf-8", errors="replace")
-    return bool(re.search(r"(?<![A-Za-z0-9._-])/(?:Users|home)/[^\s/]+", text))
+    return bool(_ABSOLUTE_HOME_PATH.search(text))
+
+
+def mask_absolute_paths(data: bytes) -> Optional[bytes]:
+    """Return the bytes a profile may publish in place of path-bearing ones.
+
+    Returns None when the item cannot be masked and must be withheld instead:
+    bytes that are not UTF-8 cannot be rewritten without corrupting them, and a
+    substitution that somehow leaves a match behind must not be published.
+    Shared by the compiler, which produces these bytes, and the validator,
+    which re-derives the rule to check a `masked` declaration against the
+    profile that claims to have produced it.
+    """
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    masked = _ABSOLUTE_HOME_PATH.sub(MASKED_HOME_PLACEHOLDER, text).encode("utf-8")
+    return None if _has_absolute_path(masked) else masked
+
+
+def _evidence_is_published(item: Optional[Mapping[str, Any]]) -> bool:
+    """Return whether the Bundle carries readable bytes for this item.
+
+    `included` and `masked` are both published; `omitted` and `truncated` are
+    not. Every "can this Bundle show its reader the source?" question routes
+    here, because answering it in each caller is how a masked item would end up
+    trusted in one place and ignored in another.
+    """
+    return bool(item) and item.get("status") in ("included", "masked")
+
+
+def _published_digest(item: Mapping[str, Any]) -> Optional[str]:
+    """Return the hash of the bytes this Bundle actually carries for an item."""
+    if item.get("status") == "masked":
+        digest = item.get("masked_sha256")
+        return digest if isinstance(digest, str) else None
+    digest = item.get("sha256")
+    return digest if isinstance(digest, str) else None
+
+
+def _published_byte_count(item: Mapping[str, Any]) -> Optional[int]:
+    """Return the size of the bytes this Bundle actually carries for an item."""
+    key = "masked_bytes" if item.get("status") == "masked" else "bytes"
+    value = item.get(key)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
 
 
 def _contains_absolute_home_path(value: Any) -> bool:
@@ -1099,6 +1155,23 @@ def _profile_omits_evidence(
     omit_paths = list(profile.get("omit_paths", []))
     return kind in omit_kinds or any(
         fnmatch.fnmatch(relative_path, pattern) for pattern in omit_paths
+    )
+
+
+def profile_masks_kind(kind: str, scan_class: str, profile: Mapping[str, Any]) -> bool:
+    """Return whether a profile publishes this kind masked for this scan class.
+
+    Both halves are required, and the kind half is the narrow one. A masked
+    item's bytes differ from its source, so anything the Compiler projects out
+    of that source into `proof.json` would then be asserting facts the Bundle
+    cannot show. Review results project only findings, which the Compiler reads
+    from the published bytes; the Goal Tracker, plan and state artifacts
+    project criterion text, deferral rows and frontmatter, so v0's profile
+    schema does not let them be masked at all.
+    """
+    secret_scan = profile.get("secret_scan", {}) or {}
+    return scan_class in set(secret_scan.get("mask_on", [])) and kind in set(
+        secret_scan.get("mask_kinds", [])
     )
 
 
@@ -1165,6 +1238,10 @@ class EvidenceCollection:
     contents: Dict[str, bytes]
     disclosure: List[Dict[str, str]]
     warnings: List[Dict[str, str]]
+    # Masked items are published, not withheld, so they are declared separately
+    # from `disclosure`: a reader scanning the omission list must not have to
+    # tell "you cannot see this" apart from "you can see this, altered".
+    masked: List[Dict[str, str]] = field(default_factory=list)
 
 
 class EvidenceCompiler:
@@ -1178,6 +1255,7 @@ class EvidenceCompiler:
         items: List[Dict[str, Any]] = []
         contents: Dict[str, bytes] = {}
         disclosure: List[Dict[str, str]] = []
+        masked: List[Dict[str, str]] = []
         warnings: List[Dict[str, str]] = []
         used_ids: Dict[str, str] = {}
         secret_scan = self.profile.get("secret_scan", {}) or {}
@@ -1217,29 +1295,52 @@ class EvidenceCompiler:
                 "omitted_reason": None,
             }
             omit_reason: Optional[str] = None
+            masked_data: Optional[bytes] = None
             if _profile_omits_evidence(relative, kind, self.profile):
                 omit_reason = "profile-redaction"
-            elif "absolute-path" in omit_on and _has_absolute_path(data):
-                omit_reason = "absolute-path"
-                warnings.append(
-                    {
-                        "reason": "redacted-by-profile",
-                        "target": relative,
-                        "detail": "Absolute local path detected; evidence omitted by profile.",
-                    }
-                )
+            elif _has_absolute_path(data):
+                # Masking is tried first because withholding this item costs
+                # more than altering it: in the M4 dogfood every review result
+                # that reported a finding cited the faulted file by absolute
+                # path, so the omission rule withheld exactly the evidence a
+                # maintainer most needs. Only kinds the profile names may be
+                # masked, and only when the substitution actually cleans the
+                # bytes; anything else falls through to the omission rule.
+                if profile_masks_kind(kind, "absolute-path", self.profile):
+                    masked_data = mask_absolute_paths(data)
+                if masked_data is not None:
+                    warnings.append(
+                        {
+                            "reason": "redacted-by-profile",
+                            "target": relative,
+                            "detail": "Absolute local path detected; evidence "
+                            "published with those paths masked.",
+                        }
+                    )
+                elif "absolute-path" in omit_on:
+                    omit_reason = "absolute-path"
+                    warnings.append(
+                        {
+                            "reason": "redacted-by-profile",
+                            "target": relative,
+                            "detail": "Absolute local path detected; evidence omitted by profile.",
+                        }
+                    )
+            published = data if masked_data is None else masked_data
             # Omitted evidence bytes never enter the Bundle.  Scan every item
             # that can be published (including a later truncated item), while
             # allowing the profile to withhold sensitive source-only artifacts.
+            # The scan reads the bytes that will be written, not the source, so
+            # masking can never launder a secret past it.
             if omit_reason is None:
-                match = _secret_match(data, fail_on)
+                match = _secret_match(published, fail_on)
                 if match:
                     raise SecretScanError(relative, match)
             if omit_reason:
                 item["status"] = "omitted"
                 item["omitted_reason"] = omit_reason
                 disclosure.append({"path": relative, "reason": omit_reason})
-            elif len(data) > max_item_bytes:
+            elif len(published) > max_item_bytes:
                 item["status"] = "truncated"
                 item["omitted_reason"] = "size-limit"
                 warnings.append(
@@ -1251,7 +1352,16 @@ class EvidenceCompiler:
                 )
                 # A truncated item has no verifiable raw file in the bundle.
             else:
-                contents[relative] = data
+                contents[relative] = published
+                if masked_data is not None:
+                    # `sha256` and `bytes` keep describing the source, so the
+                    # Evidence ID and the cross-profile link to a local-v0
+                    # Bundle are unchanged. The masked pair describes what a
+                    # recipient can actually hash.
+                    item["status"] = "masked"
+                    item["masked_sha256"] = hashlib.sha256(masked_data).hexdigest()
+                    item["masked_bytes"] = len(masked_data)
+                    masked.append({"path": relative, "rule": "absolute-path"})
             items.append(item)
 
         collisions: Dict[str, set] = {}
@@ -1267,7 +1377,7 @@ class EvidenceCompiler:
             matching = [
                 item
                 for item in items
-                if item["kind"] == required_kind and item["status"] == "included"
+                if item["kind"] == required_kind and _evidence_is_published(item)
             ]
             if not matching:
                 warnings.append(
@@ -1277,7 +1387,7 @@ class EvidenceCompiler:
                         "detail": f"No evidence item of required kind {required_kind!r} was included.",
                     }
                 )
-        return EvidenceCollection(items, contents, disclosure, warnings)
+        return EvidenceCollection(items, contents, disclosure, warnings, masked)
 
 
 _FINDING_MARKER = re.compile(
@@ -1294,8 +1404,18 @@ _FINDING_MARKER_TOKEN = re.compile(r"\[P(?P<severity>[0-9])\]")
 
 
 def _finding_key(severity: str, summary: str) -> str:
-    """Return a stable internal key without exposing review prose in the Bundle."""
-    normalized = re.sub(r"\s+", " ", summary.strip().lower())
+    """Return a stable internal key without exposing review prose in the Bundle.
+
+    Absolute home paths are folded to the mask placeholder before hashing, so a
+    finding keeps one identity whether it is read from a source review or from
+    the masked copy a profile published. `codex review` names the faulted file
+    in the finding summary, so without this the same finding would carry
+    different ids in a Run's `local-v0` and `public-v0` Bundles -- and a
+    maintainer holding both could not line them up, which is the whole point of
+    asking the author for the fuller profile.
+    """
+    unmasked = _ABSOLUTE_HOME_PATH.sub(MASKED_HOME_PLACEHOLDER, summary)
+    normalized = re.sub(r"\s+", " ", unmasked.strip().lower())
     return f"{severity}:{normalized}"
 
 
@@ -1388,7 +1508,7 @@ def round_coverage_gaps(
         return gaps
 
     def included(path: str) -> bool:
-        return status_by_path.get(path) == "included"
+        return _evidence_is_published({"status": status_by_path.get(path)})
 
     # Every recorded round needs some evidence of what happened in it.
     for index in indices:
@@ -1540,14 +1660,40 @@ def _withheld_review_findings(
 
 
 def _derive_findings(
-    run: RunRecord, evidence_by_path: Mapping[str, Mapping[str, Any]]
+    run: RunRecord,
+    evidence_by_path: Mapping[str, Mapping[str, Any]],
+    published_contents: Optional[Mapping[str, bytes]] = None,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, str]], bool]:
-    """Derive conservative finding lifecycle facts from retained review results."""
+    """Derive conservative finding lifecycle facts from retained review results.
+
+    Findings are read out of ``published_contents`` -- the bytes the Bundle
+    will actually carry -- not out of the source file. A finding's identity
+    hashes its summary text, and the Validator re-derives that identity from
+    the file it finds in the Bundle when it checks a `resolved` claim against
+    the review it cites. Reading the source here would mint a different id
+    whenever a masked path appears inside a finding summary, which is the
+    common case, and the Validator's "this review still records the finding"
+    check would silently stop matching: a false green rather than a failure.
+    """
     findings: List[Dict[str, Any]] = []
     warnings: List[Dict[str, str]] = []
     parseable = True
     active: Dict[str, Dict[str, Any]] = {}
     known_ac_ids = {criterion["id"] for criterion in run.acceptance_criteria}
+    published = published_contents or {}
+
+    def review_text(relative: str, source: Path) -> Optional[str]:
+        data = published.get(relative)
+        if data is None:
+            # Only reachable for an item the Bundle does not publish, where
+            # the source is all there is; a withheld review's findings are
+            # recorded as unverifiable and never linked, so no Validator
+            # re-derivation depends on this text.
+            return _read_text(source)
+        try:
+            return data.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
 
     review_paths = [
         (
@@ -1560,7 +1706,7 @@ def _derive_findings(
 
     for round_index, relative, path in sorted(review_paths):
         item = evidence_by_path.get(relative)
-        if not item or item.get("status") != "included":
+        if not _evidence_is_published(item):
             if item is None and not active:
                 # No review result for this round and no finding waiting on
                 # one, so this is not a failed re-review.
@@ -1597,11 +1743,14 @@ def _derive_findings(
             if item is not None:
                 findings.extend(
                     _withheld_review_findings(
-                        round_index, item, _read_text(path), sorted(known_ac_ids)
+                        round_index,
+                        item,
+                        review_text(relative, path),
+                        sorted(known_ac_ids),
                     )
                 )
             continue
-        facts = parse_review_result(_read_text(path))
+        facts = parse_review_result(review_text(relative, path))
         if not facts.present:
             parseable = False
             warnings.append(
@@ -1687,7 +1836,11 @@ def _derive_findings(
     # profile could not verify. The tracker has to be retained under the active
     # profile, or the waiver is not profile-verifiable.
     tracker_item = evidence_by_path.get("goal-tracker.md")
-    if tracker_item and tracker_item.get("status") == "included":
+    # Waivers are read from the source tracker text, which is sound only while
+    # the tracker cannot be masked. The v0 profile schema enforces that by
+    # allowing no kind but `round_review_result` in `mask_kinds`; widening it
+    # means moving this read onto the published bytes too.
+    if _evidence_is_published(tracker_item):
         for severity, found_round in _waiver_targets(run.goal_tracker_text):
             matches = [
                 finding
@@ -1887,17 +2040,17 @@ class BundleCompiler:
         # frontmatter (especially free-form circuit-breaker values) would let
         # arbitrary source text bypass the per-item size/redaction boundary.
         state_included = (
-            evidence_by_path.get(state_relative_path, {}).get("status") == "included"
+            _evidence_is_published(evidence_by_path.get(state_relative_path))
         )
         tracker_included = (
-            evidence_by_path.get("goal-tracker.md", {}).get("status") == "included"
+            _evidence_is_published(evidence_by_path.get("goal-tracker.md"))
         )
         # Goal and acceptance-criteria text are projections of file evidence.
         # Once the source item is absent from the Bundle, retaining those
         # projections would let source prose bypass its disclosure boundary.
         projected_goal = (
             run.goal
-            if evidence_by_path.get("plan.md", {}).get("status") == "included"
+            if _evidence_is_published(evidence_by_path.get("plan.md"))
             else ""
         )
         projected_criteria = run.acceptance_criteria if tracker_included else []
@@ -1951,7 +2104,7 @@ class BundleCompiler:
             references: List[str] = []
             for path in event_evidence_paths(linked_event):
                 item = evidence_by_path.get(path)
-                if item and item.get("status") == "included":
+                if _evidence_is_published(item):
                     _append_unique(references, item["id"])
             linked_event["evidence_refs"] = references
             evidence_linked_events.append(linked_event)
@@ -1991,21 +2144,21 @@ class BundleCompiler:
 
         def evidence_refs_for_path(path: str) -> List[str]:
             item = evidence_by_path.get(path)
-            return [item["id"]] if item and item["status"] == "included" else []
+            return [item["id"]] if _evidence_is_published(item) else []
 
         tracker_ref = evidence_refs_for_path("goal-tracker.md")
         review_refs = [
             item["id"]
             for item in evidence.items
-            if item["kind"] == "round_review_result" and item["status"] == "included"
+            if item["kind"] == "round_review_result" and _evidence_is_published(item)
         ]
         summary_refs = [
             item["id"]
             for item in evidence.items
-            if item["kind"] == "round_summary" and item["status"] == "included"
+            if item["kind"] == "round_summary" and _evidence_is_published(item)
         ]
         findings, finding_warnings, findings_parseable = _derive_findings(
-            run, evidence_by_path
+            run, evidence_by_path, evidence.contents
         )
         if not tracker_included:
             # Without the Goal Tracker, finding-to-AC links are not
@@ -2152,8 +2305,7 @@ class BundleCompiler:
         required_statuses = [item["status"] for item in per_ac if item["ac_id"] in required_set]
         required_profile_evidence_present = all(
             any(
-                item["kind"] == required_kind
-                and item["status"] == "included"
+                item["kind"] == required_kind and _evidence_is_published(item)
                 for item in evidence.items
             )
             for required_kind in profile.get("required_evidence_kinds", [])
@@ -2220,7 +2372,11 @@ class BundleCompiler:
                 "status": _integrity_status(warnings),
                 "compile_warnings": warnings,
             },
-            "disclosure": {"omitted": evidence.disclosure, "field_redactions": list(profile.get("field_redactions", []))},
+            "disclosure": {
+                "omitted": evidence.disclosure,
+                "field_redactions": list(profile.get("field_redactions", [])),
+                "masked": evidence.masked,
+            },
             "transport": {"exported_at": _utc_now(), "exporter_host_class": platform.system().lower() or "unknown"},
         }
         if "absolute-path" in profile_omit_on and _contains_absolute_home_path(bundle):
@@ -2506,12 +2662,44 @@ class BundleValidator:
             kind = item.get("kind", "unknown")
             status = item["status"]
             omitted_reason = item.get("omitted_reason")
-            if status == "included" and omitted_reason is not None:
+            if status in ("included", "masked") and omitted_reason is not None:
                 profile_violation(
                     relative,
-                    "Included evidence must not carry an omission reason.",
+                    "Published evidence must not carry an omission reason.",
                 )
-            elif status == "omitted":
+            if status == "masked":
+                # Re-derived from the profile rather than believed: a Bundle
+                # that declares an item masked under a profile with no masking
+                # rule for that class and kind is claiming a licence the
+                # profile never granted.
+                if not profile_masks_kind(kind, "absolute-path", profile):
+                    profile_violation(
+                        relative,
+                        "Evidence is declared masked without a matching profile "
+                        "masking rule for its kind.",
+                    )
+                masked_digest = _published_digest(item)
+                masked_count = _published_byte_count(item)
+                if masked_digest is None or masked_count is None:
+                    report.status = "invalid"
+                    report.reasons.append(
+                        {
+                            "reason": "schema-violation",
+                            "target": relative,
+                            "detail": "Masked evidence must declare "
+                            "'masked_sha256' and a non-negative 'masked_bytes'.",
+                        }
+                    )
+                    continue
+                if masked_digest == digest:
+                    # Masking that changed nothing means the source needed no
+                    # masking, so the status misdescribes the item.
+                    profile_violation(
+                        relative,
+                        "Masked evidence must differ from its source; "
+                        "'masked_sha256' equals 'sha256'.",
+                    )
+            if status == "omitted":
                 if (
                     omitted_reason == "profile-redaction"
                     and not _profile_omits_evidence(relative, kind, profile)
@@ -2553,7 +2741,7 @@ class BundleValidator:
                         relative,
                         "Evidence declared omitted must not be present in the Bundle.",
                     )
-            elif status == "included":
+            elif _evidence_is_published(item):
                 if not source.exists() or not source.is_file():
                     report.status = "invalid"
                     report.reasons.append({"reason": "missing-file", "target": relative, "detail": "Declared included evidence file is absent."})
@@ -2564,14 +2752,24 @@ class BundleValidator:
                     report.status = "invalid"
                     report.reasons.append({"reason": "missing-file", "target": relative, "detail": str(error)})
                     continue
+                # A masked item's file is the masked copy, so it is hashed
+                # against the masked pair. `sha256` still names the source, and
+                # nothing in the Bundle can corroborate that -- only a
+                # `local-v0` Bundle of the same Run can, which is the stated
+                # limit of masked publication (ADR-0004).
+                expected_digest = _published_digest(item)
+                expected_bytes = _published_byte_count(item)
                 actual_digest = hashlib.sha256(data).hexdigest()
-                if actual_digest != digest or len(data) != item["bytes"]:
+                if actual_digest != expected_digest or len(data) != expected_bytes:
                     report.status = "invalid"
                     report.reasons.append({"reason": "hash-mismatch", "target": relative, "detail": "Evidence bytes or declared size differ."})
-                if "absolute-path" in omit_on and _has_absolute_path(data):
+                if (
+                    "absolute-path" in omit_on or status == "masked"
+                ) and _has_absolute_path(data):
                     profile_violation(
                         relative,
-                        "Included evidence contains an absolute home path that the selected profile requires to be omitted.",
+                        "Published evidence contains an absolute home path that "
+                        "the selected profile requires to be masked or omitted.",
                     )
                 else:
                     match = _secret_match(data, fail_on)
@@ -2611,7 +2809,7 @@ class BundleValidator:
             if item is None:
                 report.status = "invalid"
                 report.reasons.append({"reason": "dangling-reference", "target": target, "detail": f"Unknown evidence reference {identifier!r}."})
-            elif included_only and item.get("status") != "included":
+            elif included_only and not _evidence_is_published(item):
                 report.status = "invalid"
                 report.reasons.append(
                     {
@@ -2767,7 +2965,7 @@ class BundleValidator:
                 item
                 for item in items
                 if item.get("kind") == required_kind
-                and item.get("status") == "included"
+                and _evidence_is_published(item)
             ]
             if not matching:
                 if report.status == "valid":
@@ -2830,7 +3028,9 @@ class BundleValidator:
         ):
             report.warnings.append(reviewed_head_warning)
         published_evidence_bytes = sum(
-            item["bytes"] for item in items if item.get("status") == "included"
+            _published_byte_count(item) or 0
+            for item in items
+            if _evidence_is_published(item)
         )
         size_candidate = _bundle_without_size_budget_warning(bundle)
         size_warning = _size_budget_warning(

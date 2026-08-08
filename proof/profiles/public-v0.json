@@ -40,6 +40,12 @@
     ],
     "omit_on": [
       "absolute-path"
+    ],
+    "mask_on": [
+      "absolute-path"
+    ],
+    "mask_kinds": [
+      "round_review_result"
     ]
   },
   "max_bundle_bytes": 10485760,

@@ -387,9 +387,18 @@
             ]
           },
           "status": {
-            "description": "Whether the source evidence is included, omitted, or truncated in this Bundle.",
+            "description": "Whether the source evidence is included verbatim, published with profile masking applied, omitted, or truncated in this Bundle.",
             "type": "string",
-            "enum": ["included", "omitted", "truncated"]
+            "enum": ["included", "masked", "omitted", "truncated"]
+          },
+          "masked_sha256": {
+            "description": "The raw SHA-256 hash of the masked bytes this Bundle carries, and what a recipient hashes the file against. Present only on masked evidence.",
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "masked_bytes": {
+            "description": "The size in bytes of the masked copy this Bundle carries. Present only on masked evidence.",
+            "type": "integer"
           },
           "omitted_reason": {
             "description": "The reason an item is omitted, or null when it remains available.",
@@ -604,10 +613,31 @@
       "additionalProperties": true
     },
     "disclosure": {
-      "description": "The profile-driven declaration of omitted evidence and redacted fields.",
+      "description": "The profile-driven declaration of omitted evidence, masked evidence, and redacted fields.",
       "type": "object",
       "required": ["omitted", "field_redactions"],
       "properties": {
+        "masked": {
+          "description": "Evidence published with profile masking applied rather than withheld. Declared apart from omitted evidence so a reader is never left to tell \"you cannot see this\" apart from \"you can see this, altered\".",
+          "type": "array",
+          "items": {
+            "description": "One masked evidence declaration.",
+            "type": "object",
+            "required": ["path", "rule"],
+            "properties": {
+              "path": {
+                "description": "The source-relative evidence path that was masked.",
+                "type": "string"
+              },
+              "rule": {
+                "description": "The profile scan class that required the masking.",
+                "type": "string",
+                "enum": ["absolute-path"]
+              }
+            },
+            "additionalProperties": true
+          }
+        },
         "omitted": {
           "description": "Evidence paths withheld from this profile-specific Bundle.",
           "type": "array",

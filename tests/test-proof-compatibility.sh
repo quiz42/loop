@@ -785,6 +785,115 @@ else
 fi
 
 echo ""
+echo "=== Scenario: masked publication (ADR-0004) ==="
+
+# `public-v0` publishes a path-citing review result masked rather than
+# withholding it. The masked copy is the file a recipient receives, so it is
+# the one tamper detection has to bite on.
+MASK_RUN=$(make_run mask-tamper path-cited-review-complete)
+MASK_BUNDLE=$(export_run "$MASK_RUN" mask-tamper public-v0)
+if [[ -n "$MASK_BUNDLE" ]]; then
+    assert_equals "a masked Bundle verifies valid at exit 0" "0|valid" \
+        "$(verify_run "$MASK_BUNDLE")"
+
+    # No re-hash is needed: `sha256` still names the source, so the Evidence ID
+    # and proof_id stay coherent and the Bundle fails on the check under test
+    # rather than on proof-id-mismatch.
+    TAMPERED_MASK="$TEST_DIR/bundles/mask-tampered"
+    rm -rf "$TAMPERED_MASK"
+    cp -R "$MASK_BUNDLE" "$TAMPERED_MASK"
+    printf 'appended after masking\n' \
+        >> "$TAMPERED_MASK/evidence/round-1-review-result.md"
+    assert_equals "editing the masked copy is invalid at exit 3" "3|invalid" \
+        "$(verify_run "$TAMPERED_MASK")"
+    MASK_TAMPER_REASONS=$(verify_reasons "$TAMPERED_MASK")
+    if [[ "$MASK_TAMPER_REASONS" == *"hash-mismatch"* ]]; then
+        pass "and it is reported as hash-mismatch ($MASK_TAMPER_REASONS)"
+    else
+        fail "masked tamper reason" "hash-mismatch" "$MASK_TAMPER_REASONS"
+    fi
+
+    # A profile with no masking rule never granted the licence, so a Bundle
+    # that claims one is describing a profile it did not use.
+    #
+    # Built from the local-v0 Bundle rather than by relabelling the public
+    # one's profile: local-v0 omits nothing, so the only rule this Bundle can
+    # break is the masking licence. Repointing the public Bundle at local-v0
+    # instead made every profile-redacted prompt illegitimate too, and the
+    # assertion passed on those whether the licence check ran or not.
+    UNLICENSED_MASK="$TEST_DIR/bundles/mask-unlicensed"
+    rm -rf "$UNLICENSED_MASK"
+    cp -R "$(export_run "$MASK_RUN" mask-unlicensed-src local-v0)" "$UNLICENSED_MASK"
+    cp "$MASK_BUNDLE/evidence/round-1-review-result.md" \
+        "$UNLICENSED_MASK/evidence/round-1-review-result.md"
+    rehash_bundle "$UNLICENSED_MASK/proof.json" <<'PY'
+import hashlib
+import os
+
+data = open(
+    os.path.join(os.path.dirname(path), "evidence", "round-1-review-result.md"), "rb"
+).read()
+for item in bundle["evidence"]:
+    if item["path"] == "round-1-review-result.md":
+        # `sha256` and `bytes` keep naming the source, as a real masked item's
+        # would; only the published pair describes the masked copy.
+        item["status"] = "masked"
+        item["masked_sha256"] = hashlib.sha256(data).hexdigest()
+        item["masked_bytes"] = len(data)
+PY
+    UNLICENSED_REASONS=$(verify_reasons "$UNLICENSED_MASK")
+    if [[ "$UNLICENSED_REASONS" == *"profile-violation"* ]]; then
+        pass "masking under a profile that allows none is a profile-violation"
+    else
+        fail "unlicensed mask" "profile-violation" "$UNLICENSED_REASONS"
+    fi
+
+    # Masking that left a path behind publishes the very thing the rule exists
+    # to catch, so declaring the item masked must not launder it through.
+    #
+    # Only the published pair is updated here. `rewrite_evidence` would also
+    # rewrite `sha256`, which would make it equal `masked_sha256` and trip the
+    # "masked evidence must differ from its source" rule instead -- the
+    # assertion then passed whether or not the path check ran.
+    DIRTY_MASK="$TEST_DIR/bundles/mask-dirty"
+    rm -rf "$DIRTY_MASK"
+    cp -R "$MASK_BUNDLE" "$DIRTY_MASK"
+    printf -- '- [P1] Still cites /Users/example/project/csv_writer.py:1-1\n' \
+        > "$DIRTY_MASK/evidence/round-1-review-result.md"
+    rehash_bundle "$DIRTY_MASK/proof.json" <<'PY'
+import hashlib
+import os
+
+data = open(
+    os.path.join(os.path.dirname(path), "evidence", "round-1-review-result.md"), "rb"
+).read()
+for item in bundle["evidence"]:
+    if item["path"] == "round-1-review-result.md":
+        item["masked_sha256"] = hashlib.sha256(data).hexdigest()
+        item["masked_bytes"] = len(data)
+PY
+    DIRTY_REASONS=$(verify_reasons "$DIRTY_MASK")
+    if [[ "$DIRTY_REASONS" == *"profile-violation"* ]]; then
+        pass "a masked item that still carries a home path is a profile-violation"
+    else
+        fail "dirty mask" "profile-violation" "$DIRTY_REASONS"
+    fi
+else
+    fail "masked export" "a bundle" "export failed"
+fi
+
+# A Bundle exported before masking existed carries no masked item, and the
+# Validator that understands masking must still verify it unchanged.
+PREMASK_RUN=$(make_run pre-mask clean-complete)
+PREMASK_BUNDLE=$(export_run "$PREMASK_RUN" pre-mask public-v0)
+if [[ -n "$PREMASK_BUNDLE" ]]; then
+    assert_equals "a Bundle with no masked evidence still verifies valid" "0|valid" \
+        "$(verify_run "$PREMASK_BUNDLE")"
+else
+    fail "pre-mask export" "a bundle" "export failed"
+fi
+
+echo ""
 echo "========================================"
 echo "Proof Compatibility Test Summary"
 echo "========================================"

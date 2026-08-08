@@ -130,12 +130,30 @@
           }
         },
         "omit_on": {
-          "description": "Privacy classes that omit an affected item while preserving a disclosure record.",
+          "description": "Privacy classes that omit an affected item while preserving a disclosure record. Applied only when masking did not already publish the item.",
           "type": "array",
           "items": {
             "description": "One privacy class that omits an affected item.",
             "type": "string",
             "enum": ["absolute-path"]
+          }
+        },
+        "mask_on": {
+          "description": "Privacy classes that publish an affected item with the matched text masked, rather than withholding it.",
+          "type": "array",
+          "items": {
+            "description": "One privacy class that masks an affected item.",
+            "type": "string",
+            "enum": ["absolute-path"]
+          }
+        },
+        "mask_kinds": {
+          "description": "Evidence kinds this profile may publish masked. Restricted to kinds the Compiler projects nothing but findings out of, because a masked item's published bytes differ from its source and proof.json must not assert facts the Bundle cannot show.",
+          "type": "array",
+          "items": {
+            "description": "One evidence kind that may be published masked.",
+            "type": "string",
+            "enum": ["round_review_result"]
           }
         }
       },

@@ -126,6 +126,30 @@ elif query == "finding_count":
     print(len(findings))
 elif query.startswith("ac:"):
     print(ac(query[3:]).get("status", "absent"))
+elif query.startswith("evidence_status:"):
+    wanted = query[len("evidence_status:") :]
+    print(
+        next(
+            (
+                item["status"]
+                for item in bundle.get("evidence", [])
+                if item.get("path") == wanted
+            ),
+            "absent",
+        )
+    )
+elif query.startswith("evidence_sha256:"):
+    wanted = query[len("evidence_sha256:") :]
+    print(
+        next(
+            (
+                item["sha256"]
+                for item in bundle.get("evidence", [])
+                if item.get("path") == wanted
+            ),
+            "absent",
+        )
+    )
 elif query.startswith("ac_text:"):
     wanted = query[len("ac_text:") :]
     criteria = bundle.get("specification", {}).get("acceptance_criteria", [])
@@ -159,6 +183,47 @@ elif query == "deferred_has_replan_ref":
     )
 else:
     raise SystemExit("unknown query " + query)
+PY
+}
+
+# Report whether a written evidence file still carries an absolute home path.
+# Scanned here rather than read off the manifest, so the assertion checks the
+# bytes a recipient receives rather than the exporter's account of them.
+# Usage: scan_home_paths <file>
+scan_home_paths() {
+    python3 - "$1" <<'PY'
+import re
+import sys
+
+pattern = re.compile(r"(?<![A-Za-z0-9._-])/(?:Users|home)/[^\s/]+")
+text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+print("dirty" if pattern.search(text) else "clean")
+PY
+}
+
+# Report which declared hash the written file actually matches.
+# Usage: hash_matches <bundle> <evidence-relative-path>
+hash_matches() {
+    python3 - "$1" "$2" <<'PY'
+import hashlib
+import json
+import sys
+
+bundle, relative = sys.argv[1], sys.argv[2]
+manifest = json.load(open(bundle + "/proof.json", encoding="utf-8"))
+item = next(
+    (entry for entry in manifest["evidence"] if entry.get("path") == relative), None
+)
+if item is None:
+    print("absent")
+    raise SystemExit(0)
+digest = hashlib.sha256(open(bundle + "/evidence/" + relative, "rb").read()).hexdigest()
+if digest == item.get("masked_sha256"):
+    print("masked")
+elif digest == item.get("sha256"):
+    print("source")
+else:
+    print("neither")
 PY
 }
 
@@ -891,25 +956,63 @@ else
     fail "wrapped-ac export" "a bundle" "export failed"
 fi
 
-# `codex review` cites the file it faults by absolute path, so `public-v0`
-# withholds exactly the review results that carry findings. The findings
-# themselves must survive that: their absence read as "this Run found nothing".
-WITHHELD_RUN=$(make_run withheld-review path-cited-review-complete)
-WITHHELD_LOCAL=$(export_run "$WITHHELD_RUN" "withheld-review-local" local-v0)
-WITHHELD_PUBLIC=$(export_run "$WITHHELD_RUN" "withheld-review-public" public-v0)
-if [[ -n "$WITHHELD_LOCAL" && -n "$WITHHELD_PUBLIC" ]]; then
-    assert_equals "the review result is retained under local-v0" \
-        "4" "$(probe "$WITHHELD_LOCAL" finding_count)"
-    assert_equals "a withheld review result still reports the findings it raised" \
-        "4" "$(probe "$WITHHELD_PUBLIC" finding_count)"
-    assert_equals "a finding from a withheld review is unverifiable, never open" \
-        "unverifiable,unverifiable,unverifiable,unverifiable" \
-        "$(probe "$WITHHELD_PUBLIC" finding_statuses)"
-    assert_equals "withholding the review does not change which findings exist" \
-        "$(probe "$WITHHELD_LOCAL" finding_field:id)" \
-        "$(probe "$WITHHELD_PUBLIC" finding_field:id)"
+# `codex review` cites the file it faults by absolute path, so before masking
+# `public-v0` withheld exactly the review results that carried findings. The
+# review is now published with those paths masked, and the findings it raised
+# read the same as they do under local-v0.
+MASKED_RUN=$(make_run masked-review path-cited-review-complete)
+MASKED_LOCAL=$(export_run "$MASKED_RUN" "masked-review-local" local-v0)
+MASKED_PUBLIC=$(export_run "$MASKED_RUN" "masked-review-public" public-v0)
+if [[ -n "$MASKED_LOCAL" && -n "$MASKED_PUBLIC" ]]; then
+    assert_equals "a path-citing review is published under public-v0, not withheld" \
+        "masked" "$(probe "$MASKED_PUBLIC" evidence_status:round-1-review-result.md)"
+    assert_equals "and the Bundle stays valid" \
+        "valid" "$(probe "$MASKED_PUBLIC" integrity)"
+    assert_equals "the findings it raised are reported" \
+        "4" "$(probe "$MASKED_PUBLIC" finding_count)"
+    assert_equals "and they are open, exactly as under local-v0" \
+        "$(probe "$MASKED_LOCAL" finding_statuses)" \
+        "$(probe "$MASKED_PUBLIC" finding_statuses)"
+    # A maintainer holding both Bundles has to be able to line their findings
+    # up, so masking must not change a finding's identity.
+    assert_equals "masking does not change which findings exist" \
+        "$(probe "$MASKED_LOCAL" finding_field:id)" \
+        "$(probe "$MASKED_PUBLIC" finding_field:id)"
+    # The published bytes are the masked copy, and the source hash stays beside
+    # them so a local-v0 Bundle of the same Run can still be matched against it.
+    assert_equals "the published review carries no absolute home path" \
+        "clean" "$(scan_home_paths "$MASKED_PUBLIC/evidence/round-1-review-result.md")"
+    assert_equals "the file hashes to masked_sha256, not to the source hash" \
+        "masked" "$(hash_matches "$MASKED_PUBLIC" round-1-review-result.md)"
+    assert_equals "the source hash is unchanged from the local-v0 Bundle" \
+        "$(probe "$MASKED_LOCAL" evidence_sha256:round-1-review-result.md)" \
+        "$(probe "$MASKED_PUBLIC" evidence_sha256:round-1-review-result.md)"
 else
-    fail "withheld-review export" "two bundles" "export failed"
+    fail "masked-review export" "two bundles" "export failed"
+fi
+
+# The withheld path is still reachable, and a finding raised by a review the
+# Bundle does not carry must still be recorded -- as `unverifiable`, never
+# `open`, and never later cleared. An item over `max_item_bytes` is truncated,
+# which is "declared but not published" exactly as an omission is.
+TRUNCATED_RUN=$(make_run truncated-review path-cited-review-complete)
+python3 - "$TRUNCATED_RUN/round-1-review-result.md" <<'PY'
+import sys
+
+# Padding goes after the review body, so the [P0-9] markers it raised are
+# untouched and only the item's publishability changes.
+with open(sys.argv[1], "a", encoding="utf-8") as handle:
+    handle.write("\n" + ("filler line to exceed max_item_bytes\n" * 30000))
+PY
+TRUNCATED_BUNDLE=$(export_run "$TRUNCATED_RUN" "truncated-review" local-v0)
+if [[ -n "$TRUNCATED_BUNDLE" ]]; then
+    assert_equals "an unpublished review result still reports the findings it raised" \
+        "4" "$(probe "$TRUNCATED_BUNDLE" finding_count)"
+    assert_equals "a finding from an unpublished review is unverifiable, never open" \
+        "unverifiable,unverifiable,unverifiable,unverifiable" \
+        "$(probe "$TRUNCATED_BUNDLE" finding_statuses)"
+else
+    fail "truncated-review export" "a bundle" "export failed"
 fi
 
 echo ""
