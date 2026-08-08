@@ -146,11 +146,17 @@
     return index;
   }
 
+  // A masked item is published, just altered, so it counts as readable
+  // everywhere the UI asks "can I show the reader the source?".
+  function isPublished(item) {
+    return object(item) && (item.status === "included" || item.status === "masked");
+  }
+
   function withheldReviewResults() {
     var items = object(proof) ? list(proof.evidence) : [];
     var paths = [];
     items.forEach(function (item) {
-      if (object(item) && item.kind === "round_review_result" && item.status !== "included") {
+      if (object(item) && item.kind === "round_review_result" && !isPublished(item)) {
         paths.push(string(item.path, "a review result"));
       }
     });
@@ -159,7 +165,7 @@
 
   function isLinkableEvidence(identifier, index) {
     var item = index[identifier];
-    return object(item) && item.status === "included" && !!safeEvidencePath(item.path);
+    return isPublished(item) && !!safeEvidencePath(item.path);
   }
 
   function hasLinkableEvidence(identifiers, index) {
@@ -313,7 +319,7 @@
       metric("Acceptance criteria", list(proof.specification && proof.specification.acceptance_criteria).length),
       metric("Rounds", list(run.rounds).length),
       metric("Evidence items", evidence.length),
-      metric("Included evidence", evidence.filter(function (item) { return object(item) && item.status === "included"; }).length),
+      metric("Readable evidence", evidence.filter(isPublished).length),
       metric("Findings", list(proof.findings).length),
       metric("Commits", list(proof.commits).length)
     );
@@ -588,6 +594,9 @@
     if (item.status === "truncated") {
       return "truncated";
     }
+    // "masked" is deliberately its own treatment rather than a shade of
+    // "redacted": user story 36 requires withheld and altered-but-present to
+    // be impossible to confuse, and here they mean opposite things.
     return string(item.status, "included");
   }
 
@@ -602,7 +611,7 @@
   }
 
   function renderEvidence() {
-    var content = section("Evidence & Integrity", "Raw Evidence files are linked directly when included. Withheld, missing, and unparseable data use distinct treatments.");
+    var content = section("Evidence & Integrity", "Raw Evidence files are linked directly when the Bundle carries them. Masked, withheld, missing, and unparseable data use distinct treatments; a masked file is present but its absolute local paths were replaced, so its hash matches masked_sha256 rather than the source hash beside it.");
     var items = list(proof.evidence);
     var index = evidenceById();
     if (items.length) {
@@ -621,14 +630,28 @@
         }
         var state = evidenceClass(item);
         var row = element("tr", "evidence-row evidence-row--" + state);
-        var name = item.status === "included" ? evidenceLink(String(item.id), index) : element("span", "", string(item.path));
+        var name = isPublished(item) ? evidenceLink(String(item.id), index) : element("span", "", string(item.path));
+        var masked = item.status === "masked";
         append(
           row,
           append(element("td"), name),
           element("td", "", string(item.kind)),
-          element("td", "hash", string(item.sha256)),
-          element("td", "", byteCount(item.bytes)),
-          append(element("td"), statusChip(state), item.omitted_reason ? element("span", "muted", " · " + item.omitted_reason) : null)
+          // A masked row shows both hashes, because they answer different
+          // questions: masked_sha256 is what the reader can check against the
+          // file here, sha256 is what a local-v0 Bundle of the same Run would
+          // have to match for the masking to be shown faithful.
+          append(
+            element("td", "hash"),
+            element("span", "", string(masked ? item.masked_sha256 : item.sha256)),
+            masked ? element("span", "muted", " source " + string(item.sha256)) : null
+          ),
+          element("td", "", byteCount(masked ? item.masked_bytes : item.bytes)),
+          append(
+            element("td"),
+            statusChip(state),
+            item.omitted_reason ? element("span", "muted", " · " + item.omitted_reason) : null,
+            masked ? element("span", "muted", " · absolute-path") : null
+          )
         );
         append(body, row);
       });

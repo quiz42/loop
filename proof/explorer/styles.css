@@ -117,6 +117,9 @@ h4 { margin: 0 0 0.3rem; font-size: 0.86rem; }
 .status--partial, .status--unmet, .status--changes-required, .status--incomplete, .status--truncated, .status--warning { background: #fff0d2; color: #895100; }
 .status--invalid, .status--open, .status--missing { background: #f9dfe3; color: #982539; }
 .status--unverifiable, .status--deferred, .status--omitted, .status--redacted, .status--withheld { background: #eee4f8; color: #653691; }
+/* Masked evidence is present, so it must not wear the purple of the withheld
+   family; it is altered, so it must not wear the green of a verbatim item. */
+.status--masked { background: #dde6fb; color: #26408f; }
 
 .facts-grid, .compact-facts { display: grid; gap: 0.8rem 1.5rem; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin: 1.3rem 0 0; }
 .fact { min-width: 0; }
@@ -156,6 +159,7 @@ h4 { margin: 0 0 0.3rem; font-size: 0.86rem; }
 .finding-heading h3 { margin: 0 auto 0 0; }
 .finding-evidence + .finding-evidence { margin-top: 0.8rem; }
 
+.evidence-row--masked { background: color-mix(in srgb, var(--accent) 9%, var(--surface)); }
 .evidence-row--redacted { background: color-mix(in srgb, var(--purple) 10%, var(--surface)); }
 .evidence-row--withheld { background: color-mix(in srgb, var(--purple) 6%, var(--surface)); }
 .evidence-row--truncated { background: color-mix(in srgb, var(--warning) 10%, var(--surface)); }
@@ -181,4 +185,5 @@ h4 { margin: 0 0 0.3rem; font-size: 0.86rem; }
   .status--partial, .status--unmet, .status--changes-required, .status--incomplete, .status--truncated, .status--warning { background: #5d4009; color: #ffe09e; }
   .status--invalid, .status--open, .status--missing { background: #5f2330; color: #ffc3cc; }
   .status--unverifiable, .status--deferred, .status--omitted, .status--redacted, .status--withheld { background: #43285d; color: #e4c9ff; }
+  .status--masked { background: #1e3068; color: #bacdff; }
 }
