@@ -536,6 +536,29 @@
     return fallback;
   }
 
+  function unverifiableCause(finding) {
+    // Two different situations share `unverifiable`, and a maintainer must
+    // never read one as the other: an unconfirmed fix is not the same claim
+    // as a problem whose own discovery evidence this profile withheld. Spec
+    // section G makes them distinguishable by whether the finding's
+    // found_round review result is published in this Bundle.
+    var round = finding.found_round;
+    if (typeof round !== "number") {
+      return "";
+    }
+    var items = object(proof) ? list(proof.evidence) : [];
+    var path = "round-" + String(round) + "-review-result.md";
+    for (var position = 0; position < items.length; position += 1) {
+      var item = items[position];
+      if (object(item) && string(item.path, "") === path) {
+        return isPublished(item)
+          ? "a later review result is missing or unparseable; a fix may have been attempted, but nothing in this Bundle confirms or denies it"
+          : "the review that discovered it is not published in this Bundle; the problem is recorded, and nothing about a fix is knowable here";
+      }
+    }
+    return "the review that discovered it is not published in this Bundle; the problem is recorded, and nothing about a fix is knowable here";
+  }
+
   function renderFindings() {
     var content = section("Findings", "Lifecycle links stay conservative: a resolved finding without a linked re-review is shown as unverifiable.");
     var findings = list(proof.findings);
@@ -575,6 +598,12 @@
         fact("Fix commit", findingValue(finding, ["fix_commit", "fixed_by_commit"], "not linked")),
         fact("Fix round", findingValue(finding, ["fix_round"], "not linked"))
       );
+      if (status === "unverifiable") {
+        var cause = unverifiableCause(finding);
+        if (cause) {
+          append(facts, fact("Unverifiable because", cause));
+        }
+      }
       var raw = element("div", "finding-evidence");
       append(raw, element("h4", "", "Raw evidence"), evidenceLinks(finding.evidence_refs, index));
       var reReviewRef = finding.re_review_ref || finding.rereview_ref || finding.re_review_evidence_ref;
