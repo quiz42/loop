@@ -1,0 +1,321 @@
+{
+  "commits": [],
+  "disclosure": {
+    "field_redactions": [
+      {
+        "field": "commit.author_email",
+        "reason": "Public profile privacy policy."
+      }
+    ],
+    "omitted": [
+      {
+        "path": "round-0-prompt.md",
+        "reason": "profile-redaction"
+      },
+      {
+        "path": "round-0-review-prompt.md",
+        "reason": "profile-redaction"
+      },
+      {
+        "path": "round-1-review-prompt.md",
+        "reason": "profile-redaction"
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "bytes": 21,
+      "id": "4f909b559cf9f6d8",
+      "kind": "unknown",
+      "omitted_reason": null,
+      "path": ".review-phase-started",
+      "sha256": "8f591ab23b33e3e79f8204e0a04bb45782a09e45cca48c8c43a29d9c8cd3dc72",
+      "status": "included"
+    },
+    {
+      "bytes": 846,
+      "id": "26a8eca20be09570",
+      "kind": "state",
+      "omitted_reason": null,
+      "path": "complete-state.md",
+      "sha256": "16c0440eb6c029d80a64eb46d6b31319a11932ae07b32a9d154dec6d18ccd3ad",
+      "status": "included"
+    },
+    {
+      "bytes": 1615,
+      "id": "a7f3ac9587118285",
+      "kind": "finalize_summary",
+      "omitted_reason": null,
+      "path": "finalize-summary.md",
+      "sha256": "5f7b5f4501db2f358351bb4de194c327c535eb5cddac37789e0d90c8f8e59d2c",
+      "status": "included"
+    },
+    {
+      "bytes": 3056,
+      "id": "ab29f11abfa7812e",
+      "kind": "goal_tracker",
+      "omitted_reason": null,
+      "path": "goal-tracker.md",
+      "sha256": "642a4a948551b24e4936a01e5662ee094644ead58a8e3b406df76f4dbab1d5fb",
+      "status": "included"
+    },
+    {
+      "bytes": 464,
+      "id": "c0e6d31f0970f573",
+      "kind": "plan",
+      "omitted_reason": null,
+      "path": "plan.md",
+      "sha256": "ebc9563661f112484c254d2a378f86d6cd6848a9b41b6e511279b485014a4232",
+      "status": "included"
+    },
+    {
+      "bytes": 1036,
+      "id": "8630d98ec20d2673",
+      "kind": "round_contract",
+      "omitted_reason": null,
+      "path": "round-0-contract.md",
+      "sha256": "dbbccfed0b15601d584410b49d30b0611ba14f8285db96865a65137b1cc1b514",
+      "status": "included"
+    },
+    {
+      "bytes": 6032,
+      "id": "3e9822ac96b6b22f",
+      "kind": "prompt",
+      "omitted_reason": "profile-redaction",
+      "path": "round-0-prompt.md",
+      "sha256": "0a0139f8a83c882da2452e29209199aed6af555618bc262a474b9efca86812b0",
+      "status": "omitted"
+    },
+    {
+      "bytes": 8643,
+      "id": "c312d1bdabd97bb1",
+      "kind": "review_prompt",
+      "omitted_reason": "profile-redaction",
+      "path": "round-0-review-prompt.md",
+      "sha256": "d98e8f49d64ba51d247e4c98b27bef58e93481cd91662c10131666452272b7e2",
+      "status": "omitted"
+    },
+    {
+      "bytes": 598,
+      "id": "a2a13f12fb2b6447",
+      "kind": "round_review_result",
+      "omitted_reason": null,
+      "path": "round-0-review-result.md",
+      "sha256": "70e725ffadec05e094901a2098c5d3a26061585cb91d3f38b69e0ba53d7f63c0",
+      "status": "included"
+    },
+    {
+      "bytes": 1653,
+      "id": "0cb759fb9e951626",
+      "kind": "round_summary",
+      "omitted_reason": null,
+      "path": "round-0-summary.md",
+      "sha256": "501362183f492148010ff78207db90b9f1a4f7e990cc0f0f01e62f50c860d09c",
+      "status": "included"
+    },
+    {
+      "bytes": 1153,
+      "id": "a0c52d2c5a86daf9",
+      "kind": "review_prompt",
+      "omitted_reason": "profile-redaction",
+      "path": "round-1-review-prompt.md",
+      "sha256": "53296e46a2caf813df5f5ed9de5b07f7054b9e6407c5281b93b6545fe5b1c190",
+      "status": "omitted"
+    }
+  ],
+  "explorer": {
+    "assets": {
+      "app.js": "sha256:f9830e096e773737563380e446ffccae961380e32eae43ccfc246c703bdf4391",
+      "index.html": "sha256:320e3a086069640e0fc1464f60afc7a75fd3e9135bff1d48209d25a1c2260305",
+      "styles.css": "sha256:6e7d8ab3636bcfcec79fe1d97940124a779cc74cc7c0911ecd0caff96c3b9ea9"
+    }
+  },
+  "findings": [],
+  "integrity": {
+    "compile_warnings": [],
+    "status": "valid"
+  },
+  "profile": {
+    "name": "public-v0",
+    "schema_hash": "sha256:9ef8ea70de73dc86fcf534da4faf3883b96d62a717efb79010c3403a6ce305d6",
+    "version": "0"
+  },
+  "proof_id": "sha256:939e8e0a7c1d01e4550be22afc981b54057b0d5385de86d4697ee923530fb69e",
+  "run": {
+    "events": [
+      {
+        "at": null,
+        "evidence_refs": [
+          "c0e6d31f0970f573"
+        ],
+        "kind": "setup"
+      },
+      {
+        "at": null,
+        "evidence_refs": [
+          "0cb759fb9e951626",
+          "8630d98ec20d2673"
+        ],
+        "kind": "round",
+        "round": 0
+      },
+      {
+        "at": null,
+        "evidence_refs": [
+          "a2a13f12fb2b6447"
+        ],
+        "kind": "mainline_verdict",
+        "round": 0,
+        "verdict": "advanced"
+      },
+      {
+        "at": null,
+        "evidence_refs": [
+          "ab29f11abfa7812e"
+        ],
+        "kind": "plan_evolution",
+        "round": 0
+      },
+      {
+        "at": null,
+        "evidence_refs": [
+          "4f909b559cf9f6d8"
+        ],
+        "kind": "review_phase"
+      },
+      {
+        "at": null,
+        "evidence_refs": [
+          "a7f3ac9587118285"
+        ],
+        "kind": "finalize"
+      },
+      {
+        "at": "2026-07-29T20:38:06Z",
+        "evidence_refs": [
+          "26a8eca20be09570"
+        ],
+        "kind": "terminal"
+      }
+    ],
+    "rounds": [
+      {
+        "index": 0
+      }
+    ],
+    "session_timestamp": "2026-07-29T20:22:19Z",
+    "terminal_state": "complete"
+  },
+  "run_id": "sha256:96234876914f340066da7d26903d47c3002039b129f6934c0e2922cc65f665a4",
+  "schema_version": "proof-bundle-v0",
+  "source": {
+    "base_commit": "2ab7053475832d455bb1a39084d987de7e4cc8e7",
+    "exporter_version": "proof-mvp-v0",
+    "head_commit": "0dbb224bc606500e1327a406b4a947e1fa76c298",
+    "loop_version": "unknown",
+    "repo_name": "proj-a",
+    "reviewed_commit": "0dbb224bc606500e1327a406b4a947e1fa76c298"
+  },
+  "specification": {
+    "acceptance_criteria": [
+      {
+        "id": "ac-1",
+        "text": "`greeting.py` exports a function `greeting()` that returns exactly the string `\"hello\"`.",
+        "text_sha256": "b59ef6f43fa46f115547e8893d2d1875ede2aa4131c17aa33cdddb17c7fd8a21"
+      },
+      {
+        "id": "ac-2",
+        "text": "`test_greeting.py` verifies `greeting()` using the `unittest` module.",
+        "text_sha256": "2608eb7885bd0e7daa1c6abc3f234797ed1868086ee735bb4f0802d8e96fc734"
+      },
+      {
+        "id": "ac-3",
+        "text": "The implementation and test files are committed to git before review begins.",
+        "text_sha256": "c926c10bfbfb0c3dfc17798012279ece02fc734aad44900a63de67447f350e6a"
+      },
+      {
+        "id": "ac-4",
+        "text": "Only the Python standard library is used (no third-party dependencies).",
+        "text_sha256": "64ffd24236de3c5c4c621302b01af5893a5466ce1a0feeff527894e3bd6a771c"
+      },
+      {
+        "id": "ac-5",
+        "text": "The change is limited to the greeting module and its test (no unrelated files touched).",
+        "text_sha256": "0c471a0952dba43253e8f813f34efcaa580d29ec67a702202c36f2b55662cba7"
+      }
+    ],
+    "goal": "Add a tiny Python greeting module with one independently verifiable behavior."
+  },
+  "transport": {
+    "exported_at": "2026-08-09T10:04:28Z",
+    "exporter_host_class": "darwin"
+  },
+  "verdict": {
+    "decision": "accept",
+    "deferred": [],
+    "per_ac": [
+      {
+        "ac_id": "ac-1",
+        "contradicting": [],
+        "reason": "Recorded in the Completed and Verified table.",
+        "status": "met",
+        "supporting": [
+          "ab29f11abfa7812e",
+          "a2a13f12fb2b6447",
+          "0cb759fb9e951626"
+        ]
+      },
+      {
+        "ac_id": "ac-2",
+        "contradicting": [],
+        "reason": "Recorded in the Completed and Verified table.",
+        "status": "met",
+        "supporting": [
+          "ab29f11abfa7812e",
+          "a2a13f12fb2b6447",
+          "0cb759fb9e951626"
+        ]
+      },
+      {
+        "ac_id": "ac-3",
+        "contradicting": [],
+        "reason": "Recorded in the Completed and Verified table.",
+        "status": "met",
+        "supporting": [
+          "ab29f11abfa7812e",
+          "a2a13f12fb2b6447",
+          "0cb759fb9e951626"
+        ]
+      },
+      {
+        "ac_id": "ac-4",
+        "contradicting": [],
+        "reason": "Recorded in the Completed and Verified table.",
+        "status": "met",
+        "supporting": [
+          "ab29f11abfa7812e",
+          "a2a13f12fb2b6447",
+          "0cb759fb9e951626"
+        ]
+      },
+      {
+        "ac_id": "ac-5",
+        "contradicting": [],
+        "reason": "Recorded in the Completed and Verified table.",
+        "status": "met",
+        "supporting": [
+          "ab29f11abfa7812e",
+          "a2a13f12fb2b6447",
+          "0cb759fb9e951626"
+        ]
+      }
+    ],
+    "required_set": [
+      "ac-1",
+      "ac-2",
+      "ac-3",
+      "ac-4",
+      "ac-5"
+    ]
+  }
+}

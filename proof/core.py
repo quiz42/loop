@@ -190,13 +190,50 @@ def _first_heading_section(text: str, heading: str) -> Optional[str]:
 
 
 _EXPLICIT_AC_LABEL = re.compile(r"^AC-?([0-9]+)\s*:\s*(.*)$", re.IGNORECASE)
-_AC_REFERENCE = re.compile(
-    r"\bAC-?([0-9]+)(?=(?:\s|[,;|)]|$|:\s|:$))", re.IGNORECASE
-)
+# The boundary every reference form must stop at. Shared between the single
+# and the range pattern so the range grammar can never be narrower than the
+# single-reference grammar: `AC1-AC5:` in a table cell ends exactly as `AC5:`
+# does. A sentence-final period is deliberately not a boundary in either
+# grammar -- `AC5.` and `AC1-AC5.` are both reported as malformed rather than
+# read -- so widening to prose-style references is a grammar decision, not a
+# missing case.
+_AC_BOUNDARY = r"(?=(?:\s|[,;|)]|$|:\s|:$))"
+_AC_REFERENCE = re.compile(r"\bAC-?([0-9]+)" + _AC_BOUNDARY, re.IGNORECASE)
 _AC_REFERENCE_ATTEMPT = re.compile(
     r"(?<![A-Za-z0-9_])AC(?:[-_ ]?[^\s,;|)]*|[-_])",
     re.IGNORECASE,
 )
+# An inclusive range over criterion labels: `AC1-AC5` and its `AC1-5` short
+# form, both of which a real Goal Tracker writes. Anchored on both ends so a
+# hyphenated word is not mistaken for one.
+_AC_RANGE = re.compile(
+    r"(?<![A-Za-z0-9_])AC-?([0-9]+)\s*-\s*(?:AC-?)?([0-9]+)" + _AC_BOUNDARY,
+    re.IGNORECASE,
+)
+# A range wider than this is a typo, not a reference to that many criteria.
+_AC_RANGE_MAX_SPAN = 63
+# A criterion number or round ordinal longer than this is not a number a
+# tracker wrote. CPython additionally refuses int() past 4,300 digits, so an
+# unbounded token would abort the whole export with a conversion error
+# instead of producing a Bundle that reports what it could not read.
+_NUMERIC_TOKEN_MAX_DIGITS = 9
+
+
+def _bounded_int(digits: str) -> Optional[int]:
+    """Convert a digit token a tracker plausibly wrote, or return None."""
+    normalized = digits.lstrip("0") or "0"
+    if len(normalized) > _NUMERIC_TOKEN_MAX_DIGITS:
+        return None
+    try:
+        return int(normalized)
+    except ValueError:
+        return None
+
+
+def _reference_token(token: str) -> str:
+    """Shorten a reported reference token so one absurd cell cannot bloat
+    every warning that quotes it."""
+    return token if len(token) <= 120 else token[:117] + "..."
 
 
 def _ac_id(number: str) -> str:
@@ -212,6 +249,135 @@ def _looks_like_malformed_ac_label(raw: str) -> bool:
     )
 
 
+_CRITERION_BULLET = re.compile(r"^(?:[-*+]|[0-9]+[.)])\s+(.*)$")
+# Markdown block structure a criterion never continues across. A heading, a
+# thematic break, a table row, or a fence is layout, not more criterion text.
+_NESTED_HEADING = re.compile(r"^#{1,6}(?:\s|$)")
+_THEMATIC_BREAK = re.compile(r"^([-_*])(?:\s*\1){2,}\s*$")
+_CODE_FENCE = re.compile(r"^(?:`{3,}|~{3,})")
+# A setext H1 underline: the line above it is a heading, never criterion
+# text. `-` underlines are deliberately not read this way -- a real tracker
+# writes `---` as a separator, and reading it as an underline would eat the
+# last wrapped line of the criterion above it. Reading `=` lines as
+# underlines is itself a deliberate divergence from CommonMark, whose
+# lazy-continuation rule would fold both the heading text and the `=` line
+# into the criterion's paragraph -- exactly the absorption into attested
+# text this reader exists to prevent.
+_SETEXT_UNDERLINE = re.compile(r"^={3,}\s*$")
+# The HTML block tags that can interrupt a paragraph (CommonMark type 6).
+# A generic tag (type 7) cannot, so inline HTML at the start of a wrapped
+# continuation line still folds.
+_HTML_BLOCK_TAG = re.compile(
+    r"^</?(?:address|article|aside|base|basefont|blockquote|body|caption"
+    r"|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset"
+    r"|figcaption|figure|footer|form|frame|frameset|h1|h2|h3|h4|h5|h6|head"
+    r"|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav"
+    r"|noframes|ol|optgroup|option|p|param|search|section|summary|table"
+    r"|tbody|td|tfoot|th|thead|title|tr|track|ul)(?:\s|/?>|$)",
+    re.IGNORECASE,
+)
+
+
+def _criteria_list_items(section: str) -> List[str]:
+    """Return each Acceptance Criteria list item as one whole criterion.
+
+    A criterion wraps. Real plans hard-wrap at the margin, so the tracker's
+    IMMUTABLE section routinely holds
+
+        - AC1: `parse(version)` accepts a valid SemVer 2.0.0 string and
+          returns a structure exposing major, minor and patch.
+
+    Reading only the bullet line recorded "...string and" as the criterion and
+    dropped the rest, silently: the continuation lines match no bullet, so they
+    were skipped rather than reported. The Acceptance Matrix then showed the
+    maintainer a criterion cut off mid-sentence, and `text_sha256` committed to
+    the fragment. Continuation lines are folded back in, joined with a single
+    space; a blank line ends the item.
+
+    Only prose continues an item. Markdown block structure -- a nested
+    heading, a thematic break, a table row, a code fence, an HTML comment, a
+    block quote, or a nested list bullet -- ends the item where it stands and is never folded
+    into the criterion the Acceptance Matrix attests to; prose after such a
+    block is commentary on the list, not part of any item. Continuation prose
+    is deliberately not required to be indented: a flush-left hard wrap is
+    exactly the shape this reader exists to keep, and dropping it because of
+    its indentation would silently re-truncate the criterion.
+    """
+    items: List[str] = []
+    current: Optional[List[str]] = None
+    base_indent: Optional[int] = None
+    in_comment = False
+    in_fence = False
+
+    def flush() -> None:
+        if current is not None:
+            items.append(" ".join(part for part in current if part))
+
+    for line in section.splitlines():
+        stripped = line.strip()
+        if in_comment:
+            if "-->" in stripped:
+                in_comment = False
+            continue
+        if in_fence:
+            if _CODE_FENCE.match(stripped):
+                in_fence = False
+            continue
+        if not stripped:
+            flush()
+            current = None
+            continue
+        if stripped.startswith("<!--"):
+            flush()
+            current = None
+            if "-->" not in stripped:
+                in_comment = True
+            continue
+        if _CODE_FENCE.match(stripped):
+            flush()
+            current = None
+            in_fence = True
+            continue
+        if _SETEXT_UNDERLINE.match(stripped):
+            # The underline promotes the line above it into a heading, so
+            # that line was never criterion text: unfold it before flushing.
+            if current is not None and len(current) > 1:
+                current.pop()
+            flush()
+            current = None
+            continue
+        if (
+            _NESTED_HEADING.match(stripped)
+            or _THEMATIC_BREAK.match(stripped)
+            or stripped.startswith("|")
+            # Block quotes and type-6 HTML blocks can interrupt a paragraph
+            # (CommonMark), so neither is ever lazy continuation of the
+            # criterion above it.
+            or stripped.startswith(">")
+            or _HTML_BLOCK_TAG.match(stripped)
+        ):
+            flush()
+            current = None
+            continue
+        match = _CRITERION_BULLET.match(stripped)
+        if match:
+            indent = len(line) - len(line.lstrip())
+            if base_indent is None:
+                base_indent = indent
+            if indent > base_indent:
+                # A nested list belongs to the criterion above it the way a
+                # table does: structure, not a criterion and not more text.
+                flush()
+                current = None
+                continue
+            flush()
+            current = [match.group(1).strip()]
+        elif current is not None:
+            current.append(stripped)
+    flush()
+    return items
+
+
 def _parse_criteria(goal_tracker: Optional[str]) -> Tuple[List[Dict[str, str]], List[str]]:
     """Parse criteria, retaining only unambiguous stable criterion identities."""
     if not goal_tracker:
@@ -223,15 +389,8 @@ def _parse_criteria(goal_tracker: Optional[str]) -> Tuple[List[Dict[str, str]], 
     parsed: List[Tuple[str, str]] = []
     problems: List[str] = []
     list_position = 0
-    for line in section.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("<!--") or stripped.endswith("-->"):
-            continue
-        match = re.match(r"^(?:[-*]|[0-9]+[.)])\s+(.*)$", stripped)
-        if not match:
-            continue
+    for raw in _criteria_list_items(section):
         list_position += 1
-        raw = match.group(1).strip()
         explicit = _EXPLICIT_AC_LABEL.match(raw)
         if explicit:
             identifier = _ac_id(explicit.group(1))
@@ -276,23 +435,84 @@ def _parse_criteria(goal_tracker: Optional[str]) -> Tuple[List[Dict[str, str]], 
     return criteria, problems
 
 
-def _ac_ids(raw: str) -> List[str]:
-    """Return stable criterion IDs explicitly named in free-form table text."""
+def _expand_ac_ranges(raw: str) -> Tuple[List[str], str, List[str]]:
+    """Return the IDs the AC ranges name, the text without any range, and the
+    range-shaped tokens that name no readable criteria.
+
+    A Goal Tracker row that covers several criteria at once is written as a
+    range: four of the nine M4 dogfood Runs put `AC1-AC5` in the Completed and
+    Verified table. That form matched neither the single-reference pattern nor
+    the well-formed shape, so the row resolved to its last criterion alone and
+    reported the rest as a malformed reference -- and since a malformed
+    reference invalidates the AC mapping, one range cost the whole delivery its
+    verdict while three or four genuinely verified criteria fell back to
+    `unverifiable`.
+
+    A range is a label form, not prose: `AC1-AC5` states which criteria it
+    names as exactly as `AC1, AC2, AC3, AC4, AC5` does, so reading it stays
+    inside ADR-0002. A range that is shaped like one but names no readable
+    criteria -- descending, absurdly wide, or with an endpoint no tracker
+    would number -- is consumed whole and reported malformed: leaving it in
+    the remainder let the single-reference scan accept one endpoint of a
+    reference this reader had already rejected.
+    """
     identifiers: List[str] = []
-    for match in _AC_REFERENCE.finditer(raw):
+    malformed: List[str] = []
+    remainder: List[str] = []
+    last = 0
+    for match in _AC_RANGE.finditer(raw):
+        remainder.append(raw[last : match.start()])
+        last = match.end()
+        first_number = _bounded_int(match.group(1))
+        last_number = _bounded_int(match.group(2))
+        if (
+            first_number is None
+            or last_number is None
+            or last_number < first_number
+            or last_number - first_number > _AC_RANGE_MAX_SPAN
+        ):
+            token = _reference_token(match.group(0))
+            if token not in malformed:
+                malformed.append(token)
+            continue
+        for number in range(first_number, last_number + 1):
+            identifier = _ac_id(str(number))
+            if identifier not in identifiers:
+                identifiers.append(identifier)
+    remainder.append(raw[last:])
+    return identifiers, " ".join(remainder), malformed
+
+
+def _ac_ids_and_remainder(raw: str) -> Tuple[List[str], str, List[str]]:
+    """Return the criterion IDs the text names, the text no range explained,
+    and the range-shaped tokens that are not valid references.
+
+    Ranges are consumed first -- valid or not -- so the malformed-reference
+    scan never sees a range and the single-reference scan never reads an
+    endpoint out of one; what they do see is everything a range did not
+    claim.
+    """
+    identifiers, remainder, malformed = _expand_ac_ranges(raw)
+    for match in _AC_REFERENCE.finditer(remainder):
         identifier = _ac_id(match.group(1))
         if identifier not in identifiers:
             identifiers.append(identifier)
-    return identifiers
+    return identifiers, remainder, malformed
+
+
+def _ac_ids(raw: str) -> List[str]:
+    """Return stable criterion IDs explicitly named in free-form table text."""
+    return _ac_ids_and_remainder(raw)[0]
 
 
 def _ac_references(raw: str) -> Tuple[List[str], List[str]]:
     """Return valid AC IDs and any malformed AC-like references in the text."""
-    identifiers = _ac_ids(raw)
-    malformed: List[str] = []
-    for match in _AC_REFERENCE_ATTEMPT.finditer(raw):
+    identifiers, remainder, malformed_ranges = _ac_ids_and_remainder(raw)
+    malformed: List[str] = list(malformed_ranges)
+    for match in _AC_REFERENCE_ATTEMPT.finditer(remainder):
         token = match.group(0)
         if not re.fullmatch(r"AC-?[0-9]+(?::)?", token, flags=re.IGNORECASE):
+            token = _reference_token(token)
             if token not in malformed:
                 malformed.append(token)
     return identifiers, malformed
@@ -336,7 +556,10 @@ def _plan_evolution_events(goal_tracker: Optional[str]) -> List[Dict[str, Any]]:
         match = re.fullmatch(r"(?:round\s+)?([0-9]+)", row[round_column], re.IGNORECASE)
         if match is None:
             continue
-        events.append({"kind": "plan_evolution", "at": None, "round": int(match.group(1))})
+        round_number = _bounded_int(match.group(1))
+        if round_number is None:
+            continue
+        events.append({"kind": "plan_evolution", "at": None, "round": round_number})
     return events
 
 
@@ -347,7 +570,7 @@ def _round_value(raw: str) -> Optional[int]:
     still in flight. Only the first form is a recorded round.
     """
     match = re.fullmatch(r"(?:round\s+)?([0-9]+)", raw.strip(), re.IGNORECASE)
-    return int(match.group(1)) if match else None
+    return _bounded_int(match.group(1)) if match else None
 
 
 def _parse_completed_and_deferred(
@@ -794,6 +1017,12 @@ class RunAdapter:
         return rounds, events
 
 
+# The profile export uses when none is named. Every library entry point and
+# the CLI read this one name, so a future profile revision -- which ADR-0006
+# makes a rename -- cannot leave the defaults out of sync with each other.
+DEFAULT_EXPORT_PROFILE = "public-v1"
+
+
 def _default_profile(name: str) -> Dict[str, Any]:
     if re.fullmatch(r"[a-z][a-z0-9-]*-v[0-9]+", name):
         path = Path(__file__).resolve().parent / "profiles" / f"{name}.json"
@@ -802,7 +1031,7 @@ def _default_profile(name: str) -> Dict[str, Any]:
     raise ProofError(f"unknown verification profile {name!r}")
 
 
-def load_profile(name: str = "public-v0") -> Dict[str, Any]:
+def load_profile(name: str = DEFAULT_EXPORT_PROFILE) -> Dict[str, Any]:
     """Load a profile document and fail closed when it is malformed."""
     profile = _default_profile(name)
     result = validate_instance(profile, load_schema("verification-profile-v0"))
@@ -983,9 +1212,65 @@ def _safe_relative_evidence_path(relative: Any) -> bool:
     return not candidate.is_absolute() and ".." not in candidate.parts
 
 
+# The one definition of "absolute home path". The scanner and the mask below
+# must never disagree about what they are looking at: a mask that cleaned less
+# than the scan detects would publish the very thing the scan exists to catch.
+_ABSOLUTE_HOME_PATH = re.compile(r"(?<![A-Za-z0-9._-])/(?:Users|home)/[^\s/]+")
+# What a masked item shows instead. Deliberately not a path, so a reader cannot
+# mistake it for one, and fixed, so masking is deterministic.
+MASKED_HOME_PLACEHOLDER = "<masked-home>"
+
+
 def _has_absolute_path(data: bytes) -> bool:
     text = data.decode("utf-8", errors="replace")
-    return bool(re.search(r"(?<![A-Za-z0-9._-])/(?:Users|home)/[^\s/]+", text))
+    return bool(_ABSOLUTE_HOME_PATH.search(text))
+
+
+def mask_absolute_paths(data: bytes) -> Optional[bytes]:
+    """Return the bytes a profile may publish in place of path-bearing ones.
+
+    Returns None when the item cannot be masked and must be withheld instead:
+    bytes that are not UTF-8 cannot be rewritten without corrupting them, and a
+    substitution that somehow leaves a match behind must not be published.
+    Shared by the compiler, which produces these bytes, and the validator,
+    which re-derives the rule to check a `masked` declaration against the
+    profile that claims to have produced it.
+    """
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    masked = _ABSOLUTE_HOME_PATH.sub(MASKED_HOME_PLACEHOLDER, text).encode("utf-8")
+    return None if _has_absolute_path(masked) else masked
+
+
+def _evidence_is_published(item: Optional[Mapping[str, Any]]) -> bool:
+    """Return whether the Bundle carries readable bytes for this item.
+
+    `included` and `masked` are both published; `omitted` and `truncated` are
+    not. Every "can this Bundle show its reader the source?" question routes
+    here, because answering it in each caller is how a masked item would end up
+    trusted in one place and ignored in another.
+    """
+    return bool(item) and item.get("status") in ("included", "masked")
+
+
+def _published_digest(item: Mapping[str, Any]) -> Optional[str]:
+    """Return the hash of the bytes this Bundle actually carries for an item."""
+    if item.get("status") == "masked":
+        digest = item.get("masked_sha256")
+        return digest if isinstance(digest, str) else None
+    digest = item.get("sha256")
+    return digest if isinstance(digest, str) else None
+
+
+def _published_byte_count(item: Mapping[str, Any]) -> Optional[int]:
+    """Return the size of the bytes this Bundle actually carries for an item."""
+    key = "masked_bytes" if item.get("status") == "masked" else "bytes"
+    value = item.get(key)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
 
 
 def _contains_absolute_home_path(value: Any) -> bool:
@@ -1007,6 +1292,23 @@ def _profile_omits_evidence(
     omit_paths = list(profile.get("omit_paths", []))
     return kind in omit_kinds or any(
         fnmatch.fnmatch(relative_path, pattern) for pattern in omit_paths
+    )
+
+
+def profile_masks_kind(kind: str, scan_class: str, profile: Mapping[str, Any]) -> bool:
+    """Return whether a profile publishes this kind masked for this scan class.
+
+    Both halves are required, and the kind half is the narrow one. A masked
+    item's bytes differ from its source, so anything the Compiler projects out
+    of that source into `proof.json` would then be asserting facts the Bundle
+    cannot show. Review results project only findings, which the Compiler reads
+    from the published bytes; the Goal Tracker, plan and state artifacts
+    project criterion text, deferral rows and frontmatter, so v0's profile
+    schema does not let them be masked at all.
+    """
+    secret_scan = profile.get("secret_scan", {}) or {}
+    return scan_class in set(secret_scan.get("mask_on", [])) and kind in set(
+        secret_scan.get("mask_kinds", [])
     )
 
 
@@ -1073,6 +1375,10 @@ class EvidenceCollection:
     contents: Dict[str, bytes]
     disclosure: List[Dict[str, str]]
     warnings: List[Dict[str, str]]
+    # Masked items are published, not withheld, so they are declared separately
+    # from `disclosure`: a reader scanning the omission list must not have to
+    # tell "you cannot see this" apart from "you can see this, altered".
+    masked: List[Dict[str, str]] = field(default_factory=list)
 
 
 class EvidenceCompiler:
@@ -1086,6 +1392,7 @@ class EvidenceCompiler:
         items: List[Dict[str, Any]] = []
         contents: Dict[str, bytes] = {}
         disclosure: List[Dict[str, str]] = []
+        masked: List[Dict[str, str]] = []
         warnings: List[Dict[str, str]] = []
         used_ids: Dict[str, str] = {}
         secret_scan = self.profile.get("secret_scan", {}) or {}
@@ -1125,29 +1432,62 @@ class EvidenceCompiler:
                 "omitted_reason": None,
             }
             omit_reason: Optional[str] = None
+            masked_data: Optional[bytes] = None
+            # Size is a property of the source evidence, not of what masking
+            # leaves of it. Deciding it after substitution let one long
+            # masked-out path publish an item under public-v1 that local-v0
+            # truncates, so the thinner profile carried the more complete
+            # Bundle -- and no local Bundle held the source bytes that could
+            # corroborate the masking (ADR-0004's trust boundary).
+            oversized = len(data) > max_item_bytes
             if _profile_omits_evidence(relative, kind, self.profile):
                 omit_reason = "profile-redaction"
-            elif "absolute-path" in omit_on and _has_absolute_path(data):
-                omit_reason = "absolute-path"
-                warnings.append(
-                    {
-                        "reason": "redacted-by-profile",
-                        "target": relative,
-                        "detail": "Absolute local path detected; evidence omitted by profile.",
-                    }
-                )
+            elif _has_absolute_path(data):
+                # Masking is tried first because withholding this item costs
+                # more than altering it: in the M4 dogfood every review result
+                # that reported a finding cited the faulted file by absolute
+                # path, so the omission rule withheld exactly the evidence a
+                # maintainer most needs. Only kinds the profile names may be
+                # masked, and only when the substitution actually cleans the
+                # bytes; anything else falls through to the omission rule.
+                # An oversized source is never rescued by masking: it falls
+                # through to the omission rule exactly as it did before
+                # masking existed.
+                if not oversized and profile_masks_kind(kind, "absolute-path", self.profile):
+                    masked_data = mask_absolute_paths(data)
+                if masked_data is not None:
+                    warnings.append(
+                        {
+                            "reason": "redacted-by-profile",
+                            "target": relative,
+                            "detail": "Absolute local path detected; evidence "
+                            "published with those paths masked.",
+                        }
+                    )
+                elif "absolute-path" in omit_on:
+                    omit_reason = "absolute-path"
+                    warnings.append(
+                        {
+                            "reason": "redacted-by-profile",
+                            "target": relative,
+                            "detail": "Absolute local path detected; evidence omitted by profile.",
+                        }
+                    )
+            published = data if masked_data is None else masked_data
             # Omitted evidence bytes never enter the Bundle.  Scan every item
             # that can be published (including a later truncated item), while
             # allowing the profile to withhold sensitive source-only artifacts.
+            # The scan reads the bytes that will be written, not the source, so
+            # masking can never launder a secret past it.
             if omit_reason is None:
-                match = _secret_match(data, fail_on)
+                match = _secret_match(published, fail_on)
                 if match:
                     raise SecretScanError(relative, match)
             if omit_reason:
                 item["status"] = "omitted"
                 item["omitted_reason"] = omit_reason
                 disclosure.append({"path": relative, "reason": omit_reason})
-            elif len(data) > max_item_bytes:
+            elif len(published) > max_item_bytes:
                 item["status"] = "truncated"
                 item["omitted_reason"] = "size-limit"
                 warnings.append(
@@ -1159,7 +1499,16 @@ class EvidenceCompiler:
                 )
                 # A truncated item has no verifiable raw file in the bundle.
             else:
-                contents[relative] = data
+                contents[relative] = published
+                if masked_data is not None:
+                    # `sha256` and `bytes` keep describing the source, so the
+                    # Evidence ID and the cross-profile link to a local-v0
+                    # Bundle are unchanged. The masked pair describes what a
+                    # recipient can actually hash.
+                    item["status"] = "masked"
+                    item["masked_sha256"] = hashlib.sha256(masked_data).hexdigest()
+                    item["masked_bytes"] = len(masked_data)
+                    masked.append({"path": relative, "rule": "absolute-path"})
             items.append(item)
 
         collisions: Dict[str, set] = {}
@@ -1175,7 +1524,7 @@ class EvidenceCompiler:
             matching = [
                 item
                 for item in items
-                if item["kind"] == required_kind and item["status"] == "included"
+                if item["kind"] == required_kind and _evidence_is_published(item)
             ]
             if not matching:
                 warnings.append(
@@ -1185,7 +1534,7 @@ class EvidenceCompiler:
                         "detail": f"No evidence item of required kind {required_kind!r} was included.",
                     }
                 )
-        return EvidenceCollection(items, contents, disclosure, warnings)
+        return EvidenceCollection(items, contents, disclosure, warnings, masked)
 
 
 _FINDING_MARKER = re.compile(
@@ -1202,8 +1551,18 @@ _FINDING_MARKER_TOKEN = re.compile(r"\[P(?P<severity>[0-9])\]")
 
 
 def _finding_key(severity: str, summary: str) -> str:
-    """Return a stable internal key without exposing review prose in the Bundle."""
-    normalized = re.sub(r"\s+", " ", summary.strip().lower())
+    """Return a stable internal key without exposing review prose in the Bundle.
+
+    Absolute home paths are folded to the mask placeholder before hashing, so a
+    finding keeps one identity whether it is read from a source review or from
+    the masked copy a profile published. `codex review` names the faulted file
+    in the finding summary, so without this the same finding would carry
+    different ids in a Run's `local-v0` and `public-v1` Bundles -- and a
+    maintainer holding both could not line them up, which is the whole point of
+    asking the author for the fuller profile.
+    """
+    unmasked = _ABSOLUTE_HOME_PATH.sub(MASKED_HOME_PLACEHOLDER, summary)
+    normalized = re.sub(r"\s+", " ", unmasked.strip().lower())
     return f"{severity}:{normalized}"
 
 
@@ -1296,7 +1655,7 @@ def round_coverage_gaps(
         return gaps
 
     def included(path: str) -> bool:
-        return status_by_path.get(path) == "included"
+        return _evidence_is_published({"status": status_by_path.get(path)})
 
     # Every recorded round needs some evidence of what happened in it.
     for index in indices:
@@ -1393,15 +1752,104 @@ def _append_unique(values: List[str], value: str) -> None:
         values.append(value)
 
 
+def _withheld_review_findings(
+    round_index: int,
+    item: Mapping[str, Any],
+    text: Optional[str],
+    known_ac_ids: Sequence[str],
+) -> List[Dict[str, Any]]:
+    """Record that a withheld review raised findings, without claiming more.
+
+    The review is in the manifest but its bytes are not in the Bundle, because
+    the profile omitted or truncated the item. Dropping its findings made the
+    Bundle read as if the Run had found nothing, and under `public-v0` that is
+    not incidental: `codex review` cites the file it faults by absolute path,
+    so in the M4 dogfood corpus every one of the seven review results that
+    reported a finding contained an absolute home path, and the public path
+    rule withheld every one of them. Every public Bundle listed no findings at
+    all while its local counterpart listed them.
+
+    So the finding's existence is recorded and nothing else is. `unverifiable`
+    is the honest state (spec section G: a lifecycle no evidence in this Bundle
+    can establish), the id is a hash of round, severity and normalized summary
+    so no review prose enters the Bundle, and these findings never join
+    ``active`` -- a later review may not clear a finding whose own evidence
+    this profile withheld (D9). The direction is one-way on purpose: withheld
+    evidence may show that a problem existed, never that one was fixed.
+
+    A malformed marker fails this reader closed, exactly as it fails the
+    included-review reader: partial facts from a review that also contains
+    markers the parser rejected are not facts, and the two readers must not
+    disagree about that just because one review's bytes were withheld. The
+    malformed tokens themselves are never reported here -- they are content
+    from bytes the profile chose not to publish.
+    """
+    facts = parse_review_result(text)
+    if not facts.present:
+        return []
+    if facts.malformed_markers:
+        return []
+    known = set(known_ac_ids)
+    findings: List[Dict[str, Any]] = []
+    by_key: Dict[str, Dict[str, Any]] = {}
+    for severity, summary in facts.markers:
+        key = _finding_key(severity, summary)
+        ac_refs = [
+            identifier for identifier in _ac_ids(summary) if identifier in known
+        ]
+        existing = by_key.get(key)
+        if existing is not None:
+            for identifier in ac_refs:
+                _append_unique(existing["ac_refs"], identifier)
+            continue
+        finding = {
+            "id": _finding_id(round_index, severity, key),
+            "severity": severity,
+            "status": "unverifiable",
+            "found_round": round_index,
+            "evidence_refs": [item["id"]],
+            "ac_refs": ac_refs,
+        }
+        by_key[key] = finding
+        findings.append(finding)
+    return findings
+
+
 def _derive_findings(
-    run: RunRecord, evidence_by_path: Mapping[str, Mapping[str, Any]]
+    run: RunRecord,
+    evidence_by_path: Mapping[str, Mapping[str, Any]],
+    published_contents: Optional[Mapping[str, bytes]] = None,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, str]], bool]:
-    """Derive conservative finding lifecycle facts from retained review results."""
+    """Derive conservative finding lifecycle facts from retained review results.
+
+    Findings are read out of ``published_contents`` -- the bytes the Bundle
+    will actually carry -- not out of the source file. A finding's identity
+    hashes its summary text, and the Validator re-derives that identity from
+    the file it finds in the Bundle when it checks a `resolved` claim against
+    the review it cites. Reading the source here would mint a different id
+    whenever a masked path appears inside a finding summary, which is the
+    common case, and the Validator's "this review still records the finding"
+    check would silently stop matching: a false green rather than a failure.
+    """
     findings: List[Dict[str, Any]] = []
     warnings: List[Dict[str, str]] = []
     parseable = True
     active: Dict[str, Dict[str, Any]] = {}
     known_ac_ids = {criterion["id"] for criterion in run.acceptance_criteria}
+    published = published_contents or {}
+
+    def review_text(relative: str, source: Path) -> Optional[str]:
+        data = published.get(relative)
+        if data is None:
+            # Only reachable for an item the Bundle does not publish, where
+            # the source is all there is; a withheld review's findings are
+            # recorded as unverifiable and never linked, so no Validator
+            # re-derivation depends on this text.
+            return _read_text(source)
+        try:
+            return data.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
 
     review_paths = [
         (
@@ -1414,7 +1862,7 @@ def _derive_findings(
 
     for round_index, relative, path in sorted(review_paths):
         item = evidence_by_path.get(relative)
-        if not item or item.get("status") != "included":
+        if not _evidence_is_published(item):
             if item is None and not active:
                 # No review result for this round and no finding waiting on
                 # one, so this is not a failed re-review.
@@ -1448,8 +1896,17 @@ def _derive_findings(
                 if item and item.get("id"):
                     _append_unique(finding["evidence_refs"], item["id"])
             active = {}
+            if item is not None:
+                findings.extend(
+                    _withheld_review_findings(
+                        round_index,
+                        item,
+                        review_text(relative, path),
+                        sorted(known_ac_ids),
+                    )
+                )
             continue
-        facts = parse_review_result(_read_text(path))
+        facts = parse_review_result(review_text(relative, path))
         if not facts.present:
             parseable = False
             warnings.append(
@@ -1535,7 +1992,11 @@ def _derive_findings(
     # profile could not verify. The tracker has to be retained under the active
     # profile, or the waiver is not profile-verifiable.
     tracker_item = evidence_by_path.get("goal-tracker.md")
-    if tracker_item and tracker_item.get("status") == "included":
+    # Waivers are read from the source tracker text, which is sound only while
+    # the tracker cannot be masked. The v0 profile schema enforces that by
+    # allowing no kind but `round_review_result` in `mask_kinds`; widening it
+    # means moving this read onto the published bytes too.
+    if _evidence_is_published(tracker_item):
         for severity, found_round in _waiver_targets(run.goal_tracker_text):
             matches = [
                 finding
@@ -1710,7 +2171,7 @@ class BundleCompiler:
     def __init__(
         self,
         run_dir: Union[str, os.PathLike[str]],
-        profile: str = "public-v0",
+        profile: str = DEFAULT_EXPORT_PROFILE,
         repo_root: Optional[Union[str, os.PathLike[str]]] = None,
         exporter_version: str = "proof-mvp-v0",
     ) -> None:
@@ -1735,17 +2196,17 @@ class BundleCompiler:
         # frontmatter (especially free-form circuit-breaker values) would let
         # arbitrary source text bypass the per-item size/redaction boundary.
         state_included = (
-            evidence_by_path.get(state_relative_path, {}).get("status") == "included"
+            _evidence_is_published(evidence_by_path.get(state_relative_path))
         )
         tracker_included = (
-            evidence_by_path.get("goal-tracker.md", {}).get("status") == "included"
+            _evidence_is_published(evidence_by_path.get("goal-tracker.md"))
         )
         # Goal and acceptance-criteria text are projections of file evidence.
         # Once the source item is absent from the Bundle, retaining those
         # projections would let source prose bypass its disclosure boundary.
         projected_goal = (
             run.goal
-            if evidence_by_path.get("plan.md", {}).get("status") == "included"
+            if _evidence_is_published(evidence_by_path.get("plan.md"))
             else ""
         )
         projected_criteria = run.acceptance_criteria if tracker_included else []
@@ -1799,7 +2260,7 @@ class BundleCompiler:
             references: List[str] = []
             for path in event_evidence_paths(linked_event):
                 item = evidence_by_path.get(path)
-                if item and item.get("status") == "included":
+                if _evidence_is_published(item):
                     _append_unique(references, item["id"])
             linked_event["evidence_refs"] = references
             evidence_linked_events.append(linked_event)
@@ -1839,21 +2300,21 @@ class BundleCompiler:
 
         def evidence_refs_for_path(path: str) -> List[str]:
             item = evidence_by_path.get(path)
-            return [item["id"]] if item and item["status"] == "included" else []
+            return [item["id"]] if _evidence_is_published(item) else []
 
         tracker_ref = evidence_refs_for_path("goal-tracker.md")
         review_refs = [
             item["id"]
             for item in evidence.items
-            if item["kind"] == "round_review_result" and item["status"] == "included"
+            if item["kind"] == "round_review_result" and _evidence_is_published(item)
         ]
         summary_refs = [
             item["id"]
             for item in evidence.items
-            if item["kind"] == "round_summary" and item["status"] == "included"
+            if item["kind"] == "round_summary" and _evidence_is_published(item)
         ]
         findings, finding_warnings, findings_parseable = _derive_findings(
-            run, evidence_by_path
+            run, evidence_by_path, evidence.contents
         )
         if not tracker_included:
             # Without the Goal Tracker, finding-to-AC links are not
@@ -2000,8 +2461,7 @@ class BundleCompiler:
         required_statuses = [item["status"] for item in per_ac if item["ac_id"] in required_set]
         required_profile_evidence_present = all(
             any(
-                item["kind"] == required_kind
-                and item["status"] == "included"
+                item["kind"] == required_kind and _evidence_is_published(item)
                 for item in evidence.items
             )
             for required_kind in profile.get("required_evidence_kinds", [])
@@ -2068,7 +2528,11 @@ class BundleCompiler:
                 "status": _integrity_status(warnings),
                 "compile_warnings": warnings,
             },
-            "disclosure": {"omitted": evidence.disclosure, "field_redactions": list(profile.get("field_redactions", []))},
+            "disclosure": {
+                "omitted": evidence.disclosure,
+                "field_redactions": list(profile.get("field_redactions", [])),
+                "masked": evidence.masked,
+            },
             "transport": {"exported_at": _utc_now(), "exporter_host_class": platform.system().lower() or "unknown"},
         }
         if "absolute-path" in profile_omit_on and _contains_absolute_home_path(bundle):
@@ -2354,12 +2818,44 @@ class BundleValidator:
             kind = item.get("kind", "unknown")
             status = item["status"]
             omitted_reason = item.get("omitted_reason")
-            if status == "included" and omitted_reason is not None:
+            if status in ("included", "masked") and omitted_reason is not None:
                 profile_violation(
                     relative,
-                    "Included evidence must not carry an omission reason.",
+                    "Published evidence must not carry an omission reason.",
                 )
-            elif status == "omitted":
+            if status == "masked":
+                # Re-derived from the profile rather than believed: a Bundle
+                # that declares an item masked under a profile with no masking
+                # rule for that class and kind is claiming a licence the
+                # profile never granted.
+                if not profile_masks_kind(kind, "absolute-path", profile):
+                    profile_violation(
+                        relative,
+                        "Evidence is declared masked without a matching profile "
+                        "masking rule for its kind.",
+                    )
+                masked_digest = _published_digest(item)
+                masked_count = _published_byte_count(item)
+                if masked_digest is None or masked_count is None:
+                    report.status = "invalid"
+                    report.reasons.append(
+                        {
+                            "reason": "schema-violation",
+                            "target": relative,
+                            "detail": "Masked evidence must declare "
+                            "'masked_sha256' and a non-negative 'masked_bytes'.",
+                        }
+                    )
+                    continue
+                if masked_digest == digest:
+                    # Masking that changed nothing means the source needed no
+                    # masking, so the status misdescribes the item.
+                    profile_violation(
+                        relative,
+                        "Masked evidence must differ from its source; "
+                        "'masked_sha256' equals 'sha256'.",
+                    )
+            if status == "omitted":
                 if (
                     omitted_reason == "profile-redaction"
                     and not _profile_omits_evidence(relative, kind, profile)
@@ -2401,7 +2897,7 @@ class BundleValidator:
                         relative,
                         "Evidence declared omitted must not be present in the Bundle.",
                     )
-            elif status == "included":
+            elif _evidence_is_published(item):
                 if not source.exists() or not source.is_file():
                     report.status = "invalid"
                     report.reasons.append({"reason": "missing-file", "target": relative, "detail": "Declared included evidence file is absent."})
@@ -2412,14 +2908,24 @@ class BundleValidator:
                     report.status = "invalid"
                     report.reasons.append({"reason": "missing-file", "target": relative, "detail": str(error)})
                     continue
+                # A masked item's file is the masked copy, so it is hashed
+                # against the masked pair. `sha256` still names the source, and
+                # nothing in the Bundle can corroborate that -- only a
+                # `local-v0` Bundle of the same Run can, which is the stated
+                # limit of masked publication (ADR-0004).
+                expected_digest = _published_digest(item)
+                expected_bytes = _published_byte_count(item)
                 actual_digest = hashlib.sha256(data).hexdigest()
-                if actual_digest != digest or len(data) != item["bytes"]:
+                if actual_digest != expected_digest or len(data) != expected_bytes:
                     report.status = "invalid"
                     report.reasons.append({"reason": "hash-mismatch", "target": relative, "detail": "Evidence bytes or declared size differ."})
-                if "absolute-path" in omit_on and _has_absolute_path(data):
+                if (
+                    "absolute-path" in omit_on or status == "masked"
+                ) and _has_absolute_path(data):
                     profile_violation(
                         relative,
-                        "Included evidence contains an absolute home path that the selected profile requires to be omitted.",
+                        "Published evidence contains an absolute home path that "
+                        "the selected profile requires to be masked or omitted.",
                     )
                 else:
                     match = _secret_match(data, fail_on)
@@ -2459,7 +2965,7 @@ class BundleValidator:
             if item is None:
                 report.status = "invalid"
                 report.reasons.append({"reason": "dangling-reference", "target": target, "detail": f"Unknown evidence reference {identifier!r}."})
-            elif included_only and item.get("status") != "included":
+            elif included_only and not _evidence_is_published(item):
                 report.status = "invalid"
                 report.reasons.append(
                     {
@@ -2575,6 +3081,32 @@ class BundleValidator:
                 "disclosure.omitted",
                 "Disclosure omissions must list each and only each omitted evidence item.",
             )
+        # The masked declaration is reconciled exactly as the omitted one is:
+        # issue #32 introduced `disclosure.masked` so a reader is never left
+        # to tell "you cannot see this" from "you can see this, altered", and
+        # an unreconciled declaration is one a producer can silently drop.
+        # The rule is re-derived, not believed: v0 admits exactly one masking
+        # rule, so every masked item declares `absolute-path`. The field may
+        # be absent only in a Bundle that masks nothing, which is every
+        # Bundle distributed before masking existed.
+        expected_masked = {
+            (item["path"], "absolute-path")
+            for item in items
+            if item.get("status") == "masked"
+        }
+        declared_masked = bundle.get("disclosure", {}).get("masked", [])
+        actual_masked = {
+            (item.get("path"), item.get("rule")) for item in declared_masked
+        }
+        if declared_masked or expected_masked:
+            if (
+                len(declared_masked) != len(actual_masked)
+                or actual_masked != expected_masked
+            ):
+                profile_violation(
+                    "disclosure.masked",
+                    "Disclosure maskings must list each and only each masked evidence item with its rule.",
+                )
         expected_redactions = list(profile.get("field_redactions", []))
         if bundle.get("disclosure", {}).get("field_redactions", []) != expected_redactions:
             profile_violation(
@@ -2615,7 +3147,7 @@ class BundleValidator:
                 item
                 for item in items
                 if item.get("kind") == required_kind
-                and item.get("status") == "included"
+                and _evidence_is_published(item)
             ]
             if not matching:
                 if report.status == "valid":
@@ -2678,7 +3210,9 @@ class BundleValidator:
         ):
             report.warnings.append(reviewed_head_warning)
         published_evidence_bytes = sum(
-            item["bytes"] for item in items if item.get("status") == "included"
+            _published_byte_count(item) or 0
+            for item in items
+            if _evidence_is_published(item)
         )
         size_candidate = _bundle_without_size_budget_warning(bundle)
         size_warning = _size_budget_warning(
@@ -2718,7 +3252,7 @@ class BundleValidator:
 def compile_bundle(
     run_dir: Union[str, os.PathLike[str]],
     output_dir: Union[str, os.PathLike[str]],
-    profile: str = "public-v0",
+    profile: str = DEFAULT_EXPORT_PROFILE,
     repo_root: Optional[Union[str, os.PathLike[str]]] = None,
 ) -> Path:
     """Convenience function used by scripts and embedders."""
@@ -2729,7 +3263,7 @@ def compile_bundle(
 def export_run(
     run_dir: Union[str, os.PathLike[str]],
     output_dir: Optional[Union[str, os.PathLike[str]]] = None,
-    profile: str = "public-v0",
+    profile: str = DEFAULT_EXPORT_PROFILE,
     repo_root: Optional[Union[str, os.PathLike[str]]] = None,
 ) -> ExportResult:
     """Compile and write a Run, using the identity-addressed default if needed."""

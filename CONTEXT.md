@@ -39,7 +39,7 @@ A fixed, individually assessable condition that defines what the delivery must s
 _Avoid_: Requirement, checklist item
 
 **Evidence Item**:
-An artifact supporting or contradicting an acceptance claim, such as a commit, test result, review finding, or state transition. Its identity is derived from its source path relative to the Loop Run directory combined with a content hash, not from content hash alone — path disambiguates position within the Run, hash detects tampering of that specific file.
+An artifact supporting or contradicting an acceptance claim, such as a commit, test result, review finding, or state transition. Its identity is derived from its source path relative to the Loop Run directory combined with a content hash, not from content hash alone — path disambiguates position within the Run, hash detects tampering of that specific file. An item is normally carried verbatim or withheld outright; a profile may also publish a named kind **masked**, with absolute home paths replaced, in which case the Bundle carries a second hash over the published bytes and only a fuller profile's Bundle can show the masking was faithful (ADR-0004).
 _Avoid_: Proof, log
 
 **Proof Bundle**:
@@ -59,7 +59,7 @@ An evidence-backed assessment of the delivery against its acceptance criteria, s
 _Avoid_: Proof of correctness, approval, silent AC exemption
 
 **Finding**:
-A review observation with severity, affected scope, evidence references, and a lifecycle of `open`, `resolved`, `waived`, or `unverifiable`. `open` means no fix has been attempted yet. `resolved` and `waived` each require explicit evidence or a recorded decision — never reached by default through silence or a failed re-review. `unverifiable` is distinct from `open`: it means a fix was attempted but the re-review evidence needed to confirm or deny it is missing or unparseable.
+A review observation with severity, affected scope, evidence references, and a lifecycle of `open`, `resolved`, `waived`, or `unverifiable`. `open` means no fix has been attempted yet. `resolved` and `waived` each require explicit evidence or a recorded decision — never reached by default through silence or a failed re-review. `unverifiable` is distinct from `open`: it asserts nothing this bundle's evidence cannot establish. It covers both a fix whose re-review evidence is missing or unparseable and a finding whose own discovery review the active profile withheld; the two are distinguishable by whether the finding's `found_round` review result is published in the bundle, and `open` is never used for the withheld case because "no fix has been attempted" is itself a claim withheld evidence cannot support (ADR-0005).
 _Avoid_: Comment, feedback
 
 ## Verification semantics

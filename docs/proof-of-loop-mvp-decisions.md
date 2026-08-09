@@ -32,7 +32,7 @@ An Acceptance Criterion's own definition is immutable (inheriting the Goal Track
 ### D6. Finding lifecycle transition rules
 
 - `open`: no fix has been attempted yet (waiting for the next round);
-- `unverifiable`: a fix was attempted, but the re-review evidence is missing or unparseable (for example, empty `codex review` output) — semantically distinct from `open`, and it implies a different action for the maintainer ("wait for the next round" versus "someone needs to read the diff");
+- `unverifiable`: the lifecycle cannot be established from the evidence the Bundle admits (ADR-0005). Either a fix was attempted but the re-review evidence is missing or unparseable (for example, empty `codex review` output), or the review that discovered the finding is itself withheld by the active profile — the two are distinguishable by whether the finding's `found_round` review result is published, and each implies a different action for the maintainer ("someone needs to read the diff" versus "ask for the fuller profile's Bundle"). Semantically distinct from `open`, which is never used for the withheld case: "no fix has been attempted" is itself a claim withheld evidence cannot support;
 - `resolved` / `waived`: reachable only with explicit evidence or a recorded decision, never by default through silence or a failed re-review.
 
 ### D7. Proof Integrity stays a three-state value

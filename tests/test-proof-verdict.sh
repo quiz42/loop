@@ -126,6 +126,39 @@ elif query == "finding_count":
     print(len(findings))
 elif query.startswith("ac:"):
     print(ac(query[3:]).get("status", "absent"))
+elif query.startswith("evidence_status:"):
+    wanted = query[len("evidence_status:") :]
+    print(
+        next(
+            (
+                item["status"]
+                for item in bundle.get("evidence", [])
+                if item.get("path") == wanted
+            ),
+            "absent",
+        )
+    )
+elif query.startswith("evidence_sha256:"):
+    wanted = query[len("evidence_sha256:") :]
+    print(
+        next(
+            (
+                item["sha256"]
+                for item in bundle.get("evidence", [])
+                if item.get("path") == wanted
+            ),
+            "absent",
+        )
+    )
+elif query.startswith("ac_text:"):
+    wanted = query[len("ac_text:") :]
+    criteria = bundle.get("specification", {}).get("acceptance_criteria", [])
+    print(
+        next(
+            (item["text"] for item in criteria if item["id"] == wanted),
+            "absent",
+        )
+    )
 elif query.startswith("ac_contradicting:"):
     print(len(ac(query[17:]).get("contradicting", [])))
 elif query.startswith("finding_field:"):
@@ -150,6 +183,47 @@ elif query == "deferred_has_replan_ref":
     )
 else:
     raise SystemExit("unknown query " + query)
+PY
+}
+
+# Report whether a written evidence file still carries an absolute home path.
+# Scanned here rather than read off the manifest, so the assertion checks the
+# bytes a recipient receives rather than the exporter's account of them.
+# Usage: scan_home_paths <file>
+scan_home_paths() {
+    python3 - "$1" <<'PY'
+import re
+import sys
+
+pattern = re.compile(r"(?<![A-Za-z0-9._-])/(?:Users|home)/[^\s/]+")
+text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+print("dirty" if pattern.search(text) else "clean")
+PY
+}
+
+# Report which declared hash the written file actually matches.
+# Usage: hash_matches <bundle> <evidence-relative-path>
+hash_matches() {
+    python3 - "$1" "$2" <<'PY'
+import hashlib
+import json
+import sys
+
+bundle, relative = sys.argv[1], sys.argv[2]
+manifest = json.load(open(bundle + "/proof.json", encoding="utf-8"))
+item = next(
+    (entry for entry in manifest["evidence"] if entry.get("path") == relative), None
+)
+if item is None:
+    print("absent")
+    raise SystemExit(0)
+digest = hashlib.sha256(open(bundle + "/evidence/" + relative, "rb").read()).hexdigest()
+if digest == item.get("masked_sha256"):
+    print("masked")
+elif digest == item.get("sha256"):
+    print("source")
+else:
+    print("neither")
 PY
 }
 
@@ -844,6 +918,402 @@ for fixture in cancel-after-review maxiter-derived stop-derived unexpected-deriv
         fail "$fixture export" "a bundle" "export failed"
     fi
 done
+
+echo ""
+echo "=== Scenario: Goal Tracker shapes the M4 dogfood produced ==="
+
+# Both fixtures below are real Runs captured during the issue #12 dogfood, so
+# each assertion is a shape the golden corpus never contained and real Runs
+# produce routinely.
+
+# A real plan hard-wraps, so a criterion spans several lines. Reading only the
+# bullet line recorded the first line as the whole criterion.
+WRAPPED_RUN=$(make_run wrapped-ac wrapped-ac-complete)
+WRAPPED_BUNDLE=$(export_run "$WRAPPED_RUN" "wrapped-ac")
+if [[ -n "$WRAPPED_BUNDLE" ]]; then
+    WRAPPED_TEXT=$(probe "$WRAPPED_BUNDLE" ac_text:ac-1)
+    case "$WRAPPED_TEXT" in
+        *"whitespace; values keep interior whitespace but lose surrounding whitespace."*)
+            pass "a wrapped acceptance criterion keeps its continuation lines"
+            ;;
+        *)
+            fail "wrapped criterion text" \
+                "the whole criterion" "$WRAPPED_TEXT"
+            ;;
+    esac
+
+    # The same Run's Completed and Verified table covers five criteria with one
+    # `AC1-AC5` cell. Reading that as `ac-5` alone left four verified criteria
+    # `unverifiable` and reported the cell as a malformed reference, which
+    # invalidates the mapping and costs the delivery its verdict.
+    assert_equals "an AC range in Completed and Verified marks every criterion it names" \
+        "met" "$(probe "$WRAPPED_BUNDLE" statuses)"
+    assert_equals "a Run whose tracker uses an AC range still derives accept" \
+        "accept" "$(probe "$WRAPPED_BUNDLE" decision)"
+    assert_equals "an AC range is not reported as a malformed reference" \
+        "" "$(probe "$WRAPPED_BUNDLE" warning_reasons)"
+else
+    fail "wrapped-ac export" "a bundle" "export failed"
+fi
+
+# `codex review` cites the file it faults by absolute path, so `public-v0`
+# withheld exactly the review results that carried findings. `public-v1`
+# publishes the review with those paths masked, and the findings it raised
+# read the same as they do under local-v0. (`public-v0` is frozen per
+# ADR-0006; the masking revision is a new profile name.)
+MASKED_RUN=$(make_run masked-review path-cited-review-complete)
+MASKED_LOCAL=$(export_run "$MASKED_RUN" "masked-review-local" local-v0)
+MASKED_PUBLIC=$(export_run "$MASKED_RUN" "masked-review-public" public-v1)
+if [[ -n "$MASKED_LOCAL" && -n "$MASKED_PUBLIC" ]]; then
+    assert_equals "a path-citing review is published under public-v1, not withheld" \
+        "masked" "$(probe "$MASKED_PUBLIC" evidence_status:round-1-review-result.md)"
+    assert_equals "and the Bundle stays valid" \
+        "valid" "$(probe "$MASKED_PUBLIC" integrity)"
+    assert_equals "the findings it raised are reported" \
+        "4" "$(probe "$MASKED_PUBLIC" finding_count)"
+    assert_equals "and they are open, exactly as under local-v0" \
+        "$(probe "$MASKED_LOCAL" finding_statuses)" \
+        "$(probe "$MASKED_PUBLIC" finding_statuses)"
+    # A maintainer holding both Bundles has to be able to line their findings
+    # up, so masking must not change a finding's identity.
+    assert_equals "masking does not change which findings exist" \
+        "$(probe "$MASKED_LOCAL" finding_field:id)" \
+        "$(probe "$MASKED_PUBLIC" finding_field:id)"
+    # The published bytes are the masked copy, and the source hash stays beside
+    # them so a local-v0 Bundle of the same Run can still be matched against it.
+    assert_equals "the published review carries no absolute home path" \
+        "clean" "$(scan_home_paths "$MASKED_PUBLIC/evidence/round-1-review-result.md")"
+    assert_equals "the file hashes to masked_sha256, not to the source hash" \
+        "masked" "$(hash_matches "$MASKED_PUBLIC" round-1-review-result.md)"
+    assert_equals "the source hash is unchanged from the local-v0 Bundle" \
+        "$(probe "$MASKED_LOCAL" evidence_sha256:round-1-review-result.md)" \
+        "$(probe "$MASKED_PUBLIC" evidence_sha256:round-1-review-result.md)"
+else
+    fail "masked-review export" "two bundles" "export failed"
+fi
+
+# The withheld path is still reachable, and a finding raised by a review the
+# Bundle does not carry must still be recorded -- as `unverifiable`, never
+# `open`, and never later cleared (ADR-0005: `open` would claim "no fix has
+# been attempted", which withheld evidence cannot establish). An item over
+# `max_item_bytes` is truncated, which is "declared but not published" exactly
+# as an omission is.
+TRUNCATED_RUN=$(make_run truncated-review path-cited-review-complete)
+python3 - "$TRUNCATED_RUN/round-1-review-result.md" <<'PY'
+import sys
+
+# Padding goes after the review body, so the [P0-9] markers it raised are
+# untouched and only the item's publishability changes.
+with open(sys.argv[1], "a", encoding="utf-8") as handle:
+    handle.write("\n" + ("filler line to exceed max_item_bytes\n" * 30000))
+PY
+TRUNCATED_BUNDLE=$(export_run "$TRUNCATED_RUN" "truncated-review" local-v0)
+if [[ -n "$TRUNCATED_BUNDLE" ]]; then
+    assert_equals "an unpublished review result still reports the findings it raised" \
+        "4" "$(probe "$TRUNCATED_BUNDLE" finding_count)"
+    assert_equals "a finding from an unpublished review is unverifiable, never open" \
+        "unverifiable,unverifiable,unverifiable,unverifiable" \
+        "$(probe "$TRUNCATED_BUNDLE" finding_statuses)"
+else
+    fail "truncated-review export" "a bundle" "export failed"
+fi
+
+# Size is decided on the source bytes, so masking never rescues an oversized
+# item and the profile that hides more can never carry the more complete
+# Bundle. Before this rule, one long masked-out path published a review under
+# the masking profile that local-v0 truncates -- and no Bundle anywhere held
+# the source bytes that could corroborate the masking.
+OVERSIZED_MASK_RUN=$(make_run oversized-mask path-cited-review-complete)
+python3 - "$OVERSIZED_MASK_RUN/round-1-review-result.md" <<'PY'
+import sys
+
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    handle.write(
+        "Codex review passed. No findings.\n"
+        "Source inspected at /Users/" + "a" * 1050000 + "\n"
+    )
+PY
+OVERSIZED_LOCAL=$(export_run "$OVERSIZED_MASK_RUN" oversized-mask-local local-v0)
+OVERSIZED_PUBLIC=$(export_run "$OVERSIZED_MASK_RUN" oversized-mask-public public-v1)
+if [[ -n "$OVERSIZED_LOCAL" && -n "$OVERSIZED_PUBLIC" ]]; then
+    assert_equals "an oversized source is never published masked" \
+        "omitted" "$(probe "$OVERSIZED_PUBLIC" evidence_status:round-1-review-result.md)"
+    assert_equals "local-v0 truncates the same oversized source" \
+        "truncated" "$(probe "$OVERSIZED_LOCAL" evidence_status:round-1-review-result.md)"
+    assert_equals "and the thinner profile does not carry the more complete Bundle" \
+        "$(probe "$OVERSIZED_LOCAL" integrity)" \
+        "$(probe "$OVERSIZED_PUBLIC" integrity)"
+else
+    fail "oversized-mask export" "two bundles" "export failed"
+fi
+
+echo ""
+echo "=== Scenario: withheld discovery evidence across later rounds (ADR-0005) ==="
+
+# A later included, clean review must not move a finding whose discovery
+# review this Bundle does not carry: the direction is one-way, because
+# withheld evidence may show that a problem existed, never that one was
+# fixed. Resolution would otherwise be derived from an absence the recipient
+# cannot check against the discovery bytes.
+LATER_INCLUDED_RUN=$(make_run withheld-then-included path-cited-review-complete)
+python3 - "$LATER_INCLUDED_RUN/round-1-review-result.md" <<'PY'
+import sys
+
+with open(sys.argv[1], "a", encoding="utf-8") as handle:
+    handle.write("\n" + ("filler line to exceed max_item_bytes\n" * 30000))
+PY
+cat > "$LATER_INCLUDED_RUN/round-2-summary.md" <<'SUMMARY_EOF'
+# Round 2 Summary
+
+Addressed the round 1 review remarks and re-ran the suite.
+SUMMARY_EOF
+cat > "$LATER_INCLUDED_RUN/round-2-review-result.md" <<'REVIEW_EOF'
+Codex review passed. No findings.
+REVIEW_EOF
+LATER_INCLUDED_BUNDLE=$(export_run "$LATER_INCLUDED_RUN" withheld-then-included local-v0)
+if [[ -n "$LATER_INCLUDED_BUNDLE" ]]; then
+    assert_equals "a later included clean review does not clear a withheld discovery" \
+        "unverifiable,unverifiable,unverifiable,unverifiable" \
+        "$(probe "$LATER_INCLUDED_BUNDLE" finding_statuses)"
+    assert_equals "and the findings are still all recorded" \
+        "4" "$(probe "$LATER_INCLUDED_BUNDLE" finding_count)"
+else
+    fail "withheld-then-included export" "a bundle" "export failed"
+fi
+
+# The same Run with the later review also unavailable reaches the same state:
+# nothing this Bundle admits can establish any lifecycle for those findings.
+LATER_HELD_RUN=$(make_run withheld-then-withheld path-cited-review-complete)
+python3 - "$LATER_HELD_RUN/round-1-review-result.md" <<'PY'
+import sys
+
+with open(sys.argv[1], "a", encoding="utf-8") as handle:
+    handle.write("\n" + ("filler line to exceed max_item_bytes\n" * 30000))
+PY
+cat > "$LATER_HELD_RUN/round-2-summary.md" <<'SUMMARY_EOF'
+# Round 2 Summary
+
+Addressed the round 1 review remarks and re-ran the suite.
+SUMMARY_EOF
+python3 - "$LATER_HELD_RUN/round-2-review-result.md" <<'PY'
+import sys
+
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    handle.write("Codex review passed. No findings.\n")
+    handle.write("filler line to exceed max_item_bytes\n" * 30000)
+PY
+LATER_HELD_BUNDLE=$(export_run "$LATER_HELD_RUN" withheld-then-withheld local-v0)
+if [[ -n "$LATER_HELD_BUNDLE" ]]; then
+    assert_equals "a later unavailable review leaves a withheld discovery unverifiable" \
+        "unverifiable,unverifiable,unverifiable,unverifiable" \
+        "$(probe "$LATER_HELD_BUNDLE" finding_statuses)"
+else
+    fail "withheld-then-withheld export" "a bundle" "export failed"
+fi
+
+echo ""
+echo "=== Scenario: a malformed marker fails both review readers closed ==="
+
+# The included-review reader refuses partial facts when any marker is
+# malformed. The withheld-review reader must refuse them identically, or the
+# same Run yields different finding sets across profiles because of a marker
+# the parser rejected in both.
+MIXED_INCLUDED_RUN=$(make_run mixed-markers-included path-cited-review-complete)
+printf -- '- [P?] One marker the parser rejects\n' >> "$MIXED_INCLUDED_RUN/round-1-review-result.md"
+MIXED_LOCAL=$(export_run "$MIXED_INCLUDED_RUN" mixed-markers-local local-v0)
+MIXED_PUBLIC=$(export_run "$MIXED_INCLUDED_RUN" mixed-markers-public public-v1)
+
+MIXED_HELD_RUN=$(make_run mixed-markers-withheld path-cited-review-complete)
+printf -- '- [P?] One marker the parser rejects\n' >> "$MIXED_HELD_RUN/round-1-review-result.md"
+python3 - "$MIXED_HELD_RUN/round-1-review-result.md" <<'PY'
+import sys
+
+with open(sys.argv[1], "a", encoding="utf-8") as handle:
+    handle.write("\n" + ("filler line to exceed max_item_bytes\n" * 30000))
+PY
+MIXED_HELD=$(export_run "$MIXED_HELD_RUN" mixed-markers-withheld local-v0)
+if [[ -n "$MIXED_LOCAL" && -n "$MIXED_PUBLIC" && -n "$MIXED_HELD" ]]; then
+    assert_equals "an included review with a malformed marker records no findings" \
+        "0" "$(probe "$MIXED_LOCAL" finding_count)"
+    assert_equals "the masked profile agrees with the local one" \
+        "0" "$(probe "$MIXED_PUBLIC" finding_count)"
+    assert_equals "a withheld review with a malformed marker fails closed the same way" \
+        "0" "$(probe "$MIXED_HELD" finding_count)"
+    MIXED_HELD_WARNINGS=$(probe "$MIXED_HELD" warning_reasons)
+    case "$MIXED_HELD_WARNINGS" in
+        *unparseable-artifact*)
+            pass "and the withheld reader still flags the review unparseable"
+            ;;
+        *)
+            fail "withheld malformed-marker warning" \
+                "warning_reasons containing unparseable-artifact" "$MIXED_HELD_WARNINGS"
+            ;;
+    esac
+else
+    fail "mixed-markers export" "three bundles" "export failed"
+fi
+
+echo ""
+echo "=== Scenario: reference grammar hardening from the PR #31 review ==="
+
+# The range boundary is shared with the single-reference grammar, so a range
+# ends exactly as a single reference does: `AC1-AC5:` in a table cell is the
+# same claim as `AC5:`. Before the boundary was shared, the range failed to
+# match, the single scan accepted `ac-5` alone, and the leftover text was
+# reported as a malformed reference -- one colon cost the delivery its verdict.
+COLON_RANGE_RUN=$(make_run colon-range wrapped-ac-complete)
+python3 - "$COLON_RANGE_RUN/goal-tracker.md" <<'PY'
+import sys
+
+path = sys.argv[1]
+text = open(path, encoding="utf-8").read()
+updated = text.replace("| AC1-AC5 |", "| AC1-AC5: |", 1)
+if updated == text:
+    raise SystemExit("fixture cell not found")
+open(path, "w", encoding="utf-8").write(updated)
+PY
+COLON_RANGE_BUNDLE=$(export_run "$COLON_RANGE_RUN" colon-range)
+if [[ -n "$COLON_RANGE_BUNDLE" ]]; then
+    assert_equals "a range ending in a colon names every criterion it spans" \
+        "met" "$(probe "$COLON_RANGE_BUNDLE" statuses)"
+    assert_equals "and is not reported as a malformed reference" \
+        "" "$(probe "$COLON_RANGE_BUNDLE" warning_reasons)"
+else
+    fail "colon-range export" "a bundle" "export failed"
+fi
+
+# The same boundary in the Explicitly Deferred and Plan Evolution readers: a
+# deferral written as a range with a trailing colon defers every criterion
+# the range names, and _replan_ac_rounds reads the same colon form out of the
+# Impact on AC column -- the deferral is only authorized if both parse.
+RANGE_DEFER_RUN=$(make_run range-defer)
+append_table_row "$RANGE_DEFER_RUN/goal-tracker.md" "Plan Evolution Log" \
+    "| 0 | Dropped AC4 and AC5 from scope | Out of scope after review | AC4-AC5: deferred |"
+append_table_row "$RANGE_DEFER_RUN/goal-tracker.md" "Explicitly Deferred" \
+    "| Limit the change surface | AC4-AC5: | 0 | Superseded by the round 0 replan | Next milestone |"
+RANGE_DEFER_BUNDLE=$(export_run "$RANGE_DEFER_RUN" range-defer)
+if [[ -n "$RANGE_DEFER_BUNDLE" ]]; then
+    assert_equals "a deferred range with a colon defers each criterion it names" \
+        "ac-4,ac-5" "$(probe "$RANGE_DEFER_BUNDLE" deferred_ac_ids)"
+    assert_equals "and the range is not reported as malformed" \
+        "" "$(probe "$RANGE_DEFER_BUNDLE" warning_reasons)"
+else
+    fail "range-defer export" "a bundle" "export failed"
+fi
+
+# An endpoint past CPython's 4,300-digit int conversion limit used to abort
+# the whole export with a conversion error: no Bundle, no structured problem,
+# exit 1. An absurd number is a malformed reference like any other.
+HUGE_RANGE_RUN=$(make_run huge-range wrapped-ac-complete)
+python3 - "$HUGE_RANGE_RUN/goal-tracker.md" <<'PY'
+import sys
+
+path = sys.argv[1]
+text = open(path, encoding="utf-8").read()
+updated = text.replace("| AC1-AC5 |", "| AC1-AC" + "9" * 4400 + " |", 1)
+if updated == text:
+    raise SystemExit("fixture cell not found")
+open(path, "w", encoding="utf-8").write(updated)
+PY
+HUGE_RANGE_BUNDLE=$(export_run "$HUGE_RANGE_RUN" huge-range)
+if [[ -n "$HUGE_RANGE_BUNDLE" ]]; then
+    assert_equals "an absurd range endpoint is a malformed reference, not an abort" \
+        "unparseable-artifact" "$(probe "$HUGE_RANGE_BUNDLE" warning_reasons)"
+    assert_equals "and the invalidated mapping derives unverifiable" \
+        "unverifiable" "$(probe "$HUGE_RANGE_BUNDLE" decision)"
+else
+    fail "huge-range export" "a bundle" "export aborted instead of producing one"
+fi
+
+# An invalid range is consumed whole. Leaving it in the text let the single
+# scan read `ac-1` out of `AC5-AC1` -- an endpoint of a reference the range
+# reader had already rejected -- and attach it to a finding.
+DESC_REF_RUN=$(make_run descending-ref)
+cat > "$DESC_REF_RUN/round-0-review-result.md" <<'REVIEW_EOF'
+- [P2] Sort out the AC5-AC1 ordering remark - greeting.py:1-1
+  The range in this summary is written backwards.
+REVIEW_EOF
+DESC_REF_BUNDLE=$(export_run "$DESC_REF_RUN" descending-ref)
+if [[ -n "$DESC_REF_BUNDLE" ]]; then
+    assert_equals "a descending range in a finding summary names no criterion" \
+        "[]" "$(probe "$DESC_REF_BUNDLE" finding_field:ac_refs)"
+else
+    fail "descending-ref export" "a bundle" "export failed"
+fi
+
+echo ""
+echo "=== Scenario: Markdown structure never joins a criterion ==="
+
+# A criterion folds its hard-wrapped continuation lines and nothing else.
+# Before the structural flushes, a thematic break, a nested heading, prose
+# after them, a nested list, a table, or a multiline comment following an AC
+# with no blank separator was absorbed into the criterion text -- changing the
+# immutable criterion the Acceptance Matrix attests to and its `text_sha256`.
+STRUCTURED_RUN=$(make_run structured-criteria)
+python3 - "$STRUCTURED_RUN/goal-tracker.md" <<'PY'
+import sys
+
+path = sys.argv[1]
+text = open(path, encoding="utf-8").read()
+old = """1. AC1: `greeting.py` exports a function `greeting()` that returns exactly the string `"hello"`.
+2. AC2: `test_greeting.py` verifies `greeting()` using the `unittest` module.
+3. AC3: The implementation and test files are committed to git before review begins.
+4. AC4: Only the Python standard library is used (no third-party dependencies).
+5. AC5: The change is limited to the greeting module and its test (no unrelated files touched)."""
+new = """1. AC1: `greeting.py` exports a function `greeting()` that returns exactly
+the string `"hello"`.
+---
+#### Reviewer notes
+This prose explains the list and must not join any criterion.
+2. AC2: `test_greeting.py` verifies `greeting()` using the `unittest` module.
+   - a nested checklist entry that is structure, not a criterion
+   + a plus-marker nested entry that is structure just the same
+   nested continuation that must stay out as well
+3. AC3: The implementation and test files are committed to git before review begins.
+Reviewer heading
+====
+prose under a setext heading that must not join the criterion
+<!--
+a multiline comment between items
+must not fold into any criterion
+-->
+4. AC4: Only the Python standard library is used (no third-party dependencies).
+> a block quote interrupting the paragraph, per CommonMark
+| noise | table |
+|-------|-------|
+5. AC5: The change is limited to the greeting module and its test (no unrelated files touched).
+<details>
+<summary>collapsed commentary</summary>
+hidden commentary that must not join any criterion
+</details>"""
+if old not in text:
+    raise SystemExit("fixture criteria not found")
+open(path, "w", encoding="utf-8").write(text.replace(old, new, 1))
+PY
+STRUCTURED_BUNDLE=$(export_run "$STRUCTURED_RUN" structured-criteria)
+if [[ -n "$STRUCTURED_BUNDLE" ]]; then
+    assert_equals "a flush-left hard wrap still folds into its criterion" \
+        '`greeting.py` exports a function `greeting()` that returns exactly the string `"hello"`.' \
+        "$(probe "$STRUCTURED_BUNDLE" ac_text:ac-1)"
+    assert_equals "a nested list and its continuation stay out of the criterion" \
+        '`test_greeting.py` verifies `greeting()` using the `unittest` module.' \
+        "$(probe "$STRUCTURED_BUNDLE" ac_text:ac-2)"
+    assert_equals "a setext heading and its underline stay out of the criterion" \
+        'The implementation and test files are committed to git before review begins.' \
+        "$(probe "$STRUCTURED_BUNDLE" ac_text:ac-3)"
+    assert_equals "a block quote stays out of the criterion" \
+        'Only the Python standard library is used (no third-party dependencies).' \
+        "$(probe "$STRUCTURED_BUNDLE" ac_text:ac-4)"
+    assert_equals "an HTML block and its content stay out of the criterion" \
+        'The change is limited to the greeting module and its test (no unrelated files touched).' \
+        "$(probe "$STRUCTURED_BUNDLE" ac_text:ac-5)"
+    assert_equals "structure between items leaves five clean criteria" \
+        "met" "$(probe "$STRUCTURED_BUNDLE" statuses)"
+    assert_equals "and the Run still derives accept" \
+        "accept" "$(probe "$STRUCTURED_BUNDLE" decision)"
+else
+    fail "structured-criteria export" "a bundle" "export failed"
+fi
 
 echo ""
 echo "========================================"
