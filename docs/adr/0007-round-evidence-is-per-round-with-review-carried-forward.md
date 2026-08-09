@@ -113,5 +113,8 @@ a changed profile document is a new profile name, so this choice also avoids a
   identity. `proof_id` covers them, and is recomputed per Bundle from the
   payload that Bundle carries.
 - What this does not settle: whether every implementation round must carry a
-  contract. That needs a corpus Run with `build_finish_round >= 1`, which does
-  not exist yet.
+  contract. A rule of "every implementation round needs one" would pass all ten
+  fixtures today, and would still be a guess — every fixture has
+  `build_finish_round=0`, so each has exactly one implementation round and the
+  shape has never been exercised. Deciding it needs a captured Run with
+  `build_finish_round >= 1`; tracked as issue #34.
