@@ -16,6 +16,7 @@ and validator tests copy them and create any tampered Bundles programmatically.
 | `legacy-pre-d17` | Mechanical derivative of `clean-complete` with D17 recorder facts removed | `complete` |
 | `wrapped-ac-complete` | Real Claude+Codex RLCR Run from the M4 dogfood | `complete` |
 | `path-cited-review-complete` | Real Claude+Codex RLCR Run from the M4 dogfood, in `--skip-impl` review-only mode | `complete` |
+| `clean-rereview-derived` | Mechanical derivative of `path-cited-review-complete` | `complete` |
 
 The three real Runs are kept whole, including prompt and review-prompt files.
 Their raw source paths are intentional input to later public-profile tests --
@@ -43,3 +44,36 @@ intact or those assertions stop testing anything.
   the masked-publication tests assert; the withheld-findings property the Run
   was captured for is still exercised by truncating the same review past
   `max_item_bytes`.
+
+## Round evidence
+
+Every Run here satisfies the round-evidence rule as captured (ADR-0007); none
+was reshaped to fit it. Two shapes are worth naming because they look like gaps
+and are not:
+
+- **An implementation round with no review result of its own.** Round 0 of
+  `cancel-after-review`, `complete-after-rework`, `maxiter-derived`,
+  `stop-derived` and `path-cited-review-complete` has a summary and no review
+  result. `codex review` reads the cumulative diff from the Run's base commit,
+  so round 1's review covers round 0's work; the round is reviewed, just not in
+  its own index. Applying spec H:295 literally would have rejected
+  `cancel-after-review`, a real captured Run, which is why the rule is written
+  as coverage rather than as one review per round.
+- **A round with no contract.** Round 1 of `cancel-after-review`,
+  `maxiter-derived` and `stop-derived` has both a summary and a review result
+  but no contract, while round 1 of `complete-after-rework` and
+  `path-cited-review-complete` does have one. Only round 0's contract is
+  scaffolded by `setup-rlcr-loop.sh`; the rest are agent-authored and no hook
+  requires them. `round_contract` is therefore required once per Run, not per
+  round.
+
+`clean-rereview-derived` is `path-cited-review-complete` plus the
+`round-2-review-result.md` that Loop now writes when a re-review comes back
+clean. It exists because the base Run is the M4 dogfood's `csv-writer`, the Run
+that reached `complete` through a clean re-review and left all four of its
+findings `open` forever (issue #33). The pair is the before and after of one
+real Run: keep the base fixture's four `open` findings and this one's four
+`resolved` findings carrying `fix_round` 2, or the assertions in
+`tests/test-proof-verdict.sh` stop testing anything. Its round 2 has a review
+result and no summary — the review-phase shape whose evidence rule ADR-0007
+settles.

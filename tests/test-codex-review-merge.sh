@@ -131,6 +131,83 @@ else
 fi
 
 # ========================================
+# Test 3b: A clean review is recorded in the Run, not only in the cache log
+# ========================================
+# Issue #33: the clean re-review is the one artifact that closes a finding, and
+# it used to be produced and discarded. The Proof layer resolves a finding only
+# against a later parseable review result that no longer names it.
+echo "Test 3b: detect_review_issues records the clean result in the Run"
+
+CLEAN_RESULT_FILE="$LOOP_DIR/round-3-review-result.md"
+if [[ -f "$CLEAN_RESULT_FILE" ]]; then
+    pass "Clean review writes round-N-review-result.md"
+else
+    fail "Clean review record" "$CLEAN_RESULT_FILE exists" "no file written"
+fi
+
+# The record must read as a *clean* review, not an unparseable one. The review
+# readers scan the first ten characters of each line for a bracketed severity
+# token, and a token that is not a single digit -- `[P0-9]` written literally --
+# reads as malformed, which would leave the findings it was meant to resolve
+# `unverifiable` instead. This is the assertion that keeps the wording honest.
+if ! command -v python3 >/dev/null 2>&1; then
+    pass "Clean review record parse skipped (python3 unavailable)"
+elif [[ ! -f "$CLEAN_RESULT_FILE" ]]; then
+    # Not a skip: with no record there is nothing to parse, and reporting that
+    # as a pass is how this assertion would quietly stop testing anything.
+    fail "Clean review record parse" "a record to parse" "no file written"
+else
+    CLEAN_PARSE=$(cd "$PROJECT_ROOT" && python3 - "$CLEAN_RESULT_FILE" <<'PY'
+import sys
+sys.path.insert(0, ".")
+from proof.core import parse_review_result
+
+facts = parse_review_result(open(sys.argv[1], encoding="utf-8").read())
+print(
+    "present=%s malformed=%d markers=%d"
+    % (facts.present, len(facts.malformed_markers), len(facts.markers))
+)
+PY
+)
+    if [[ "$CLEAN_PARSE" == "present=True malformed=0 markers=0" ]]; then
+        pass "Clean review record parses as present, well-formed and finding-free"
+    else
+        fail "Clean review record parse" "present=True malformed=0 markers=0" "$CLEAN_PARSE"
+    fi
+fi
+
+# An absolute path here would be withheld or masked by a public profile, which
+# is the failure mode issue #32 recorded for the findings path.
+if [[ -f "$CLEAN_RESULT_FILE" ]] && ! grep -qE '/(Users|home)/[^/[:space:]]+' "$CLEAN_RESULT_FILE"; then
+    pass "Clean review record carries no absolute home path"
+else
+    fail "Clean review record paths" "no absolute home path" "$(cat "$CLEAN_RESULT_FILE" 2>/dev/null)"
+fi
+
+# A findings run must still overwrite the record with the findings themselves,
+# so a clean pass followed by a dirty one does not leave a stale all-clear.
+setup_test_env
+cat > "$CACHE_DIR/round-9-codex-review.log" << 'EOF'
+Code review complete
+No issues found
+EOF
+set +e
+detect_review_issues 9 >/dev/null 2>&1
+cat > "$CACHE_DIR/round-9-codex-review.log" << 'EOF'
+Reviewing again
+- [P1] Regression reintroduced - file.py:1-2
+EOF
+detect_review_issues 9 >/dev/null 2>&1
+set -e
+if grep -q '\[P1\]' "$LOOP_DIR/round-9-review-result.md" && \
+   ! grep -q 'No severity-marked finding' "$LOOP_DIR/round-9-review-result.md"; then
+    pass "A later findings review replaces the clean record"
+else
+    fail "Clean record replacement" "the findings review only" \
+        "$(cat "$LOOP_DIR/round-9-review-result.md" 2>/dev/null)"
+fi
+
+# ========================================
 # Test 4: Missing log file - should return 2
 # ========================================
 echo "Test 4: detect_review_issues returns error code 2 when log file is missing"

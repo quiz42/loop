@@ -166,6 +166,12 @@ elif query.startswith("finding_field:"):
     print(",".join(str(item.get(field, "absent")) for item in findings))
 elif query == "deferred_ac_ids":
     print(",".join(item["ac_id"] for item in verdict.get("deferred", [])))
+elif query == "round_kinds":
+    rounds = bundle.get("run", {}).get("rounds", [])
+    print(",".join(str(item.get("kind", "absent")) for item in rounds))
+elif query == "round_reviewed_by":
+    rounds = bundle.get("run", {}).get("rounds", [])
+    print(",".join(str(item.get("reviewed_by", "absent")) for item in rounds))
 elif query == "warning_reasons":
     print(
         ",".join(
@@ -790,38 +796,64 @@ else
 fi
 
 # The summary side of the same contract: a Run cannot have delivered work in a
-# round it never summarized, and spec section J lists each round's summary as
-# required evidence too.
+# round it never summarized. The rule applies to the rounds that had to deliver
+# work -- those at or before `build_finish_round` -- so the scenario deletes an
+# implementation round's summary rather than a review-phase round's, which is a
+# different shape entirely (see the clean re-review section below).
 NO_SUMMARY_RUN=$(make_run no-summary)
-cp "$NO_SUMMARY_RUN/round-0-review-result.md" "$NO_SUMMARY_RUN/round-1-review-result.md"
+rm -f "$NO_SUMMARY_RUN/round-0-summary.md"
 
 NO_SUMMARY_BUNDLE=$(export_run "$NO_SUMMARY_RUN" no-summary)
 if [[ -n "$NO_SUMMARY_BUNDLE" ]]; then
-    assert_equals "a final round with no summary does not derive accept" "unverifiable" \
-        "$(probe "$NO_SUMMARY_BUNDLE" decision)"
+    assert_equals "an implementation round with no summary does not derive accept" \
+        "unverifiable" "$(probe "$NO_SUMMARY_BUNDLE" decision)"
     NO_SUMMARY_WARNINGS=$(probe "$NO_SUMMARY_BUNDLE" warning_reasons)
     if [[ "$NO_SUMMARY_WARNINGS" == *profile-required-evidence-missing* ]]; then
         pass "and it warns profile-required-evidence-missing"
     else
-        fail "missing final summary warning" "profile-required-evidence-missing" \
+        fail "missing implementation summary warning" "profile-required-evidence-missing" \
             "$NO_SUMMARY_WARNINGS"
     fi
+    assert_equals "and the Bundle is incomplete" "incomplete" \
+        "$(probe "$NO_SUMMARY_BUNDLE" integrity)"
 else
     fail "no-summary export" "a bundle" "export failed"
 fi
 
-# Present-but-withheld is not present. A profile that omits the final summary
-# while an earlier round's summary stays included satisfies the kind-level
-# required-evidence check, so testing only for absence let this export accept.
+# The same shape one round later is not a gap but the ordinary end of a Run: an
+# implementation round whose work a later review covers. Held separately from
+# the case above because before ADR-0007 the two were indistinguishable, and
+# collapsing them is what made a clean re-review look like missing evidence.
+MID_SUMMARY_RUN=$(make_run mid-summary)
+cp "$MID_SUMMARY_RUN/round-0-review-result.md" "$MID_SUMMARY_RUN/round-1-review-result.md"
+
+MID_SUMMARY_BUNDLE=$(export_run "$MID_SUMMARY_RUN" mid-summary)
+if [[ -n "$MID_SUMMARY_BUNDLE" ]]; then
+    assert_equals "a trailing review-phase round with no summary is not a gap" \
+        "accept" "$(probe "$MID_SUMMARY_BUNDLE" decision)"
+    assert_equals "and the Bundle stays valid" "valid" \
+        "$(probe "$MID_SUMMARY_BUNDLE" integrity)"
+    assert_equals "and the rounds are classified by the recorded boundary" \
+        "implementation,review_phase" "$(probe "$MID_SUMMARY_BUNDLE" round_kinds)"
+else
+    fail "mid-summary export" "a bundle" "export failed"
+fi
+
+# Present-but-withheld is not present. A profile that omits an implementation
+# round's summary while a later round's summary stays included satisfies the
+# kind-level required-evidence check, so testing only for absence let this
+# export accept.
 WITHHELD_RUN=$(make_run withheld)
 cp "$WITHHELD_RUN/round-0-summary.md" "$WITHHELD_RUN/round-1-summary.md"
 cp "$WITHHELD_RUN/round-0-review-result.md" "$WITHHELD_RUN/round-1-review-result.md"
-printf '\nLocal path: /Users/example/private/greeting.py\n' >> "$WITHHELD_RUN/round-1-summary.md"
+printf '\nLocal path: /Users/example/private/greeting.py\n' >> "$WITHHELD_RUN/round-0-summary.md"
 
 WITHHELD_BUNDLE=$(export_run "$WITHHELD_RUN" withheld public-v0)
 if [[ -n "$WITHHELD_BUNDLE" ]]; then
-    assert_equals "an omitted final summary does not derive accept" "unverifiable" \
-        "$(probe "$WITHHELD_BUNDLE" decision)"
+    assert_equals "the withheld summary is omitted, not published" "omitted" \
+        "$(probe "$WITHHELD_BUNDLE" evidence_status:round-0-summary.md)"
+    assert_equals "an omitted implementation summary does not derive accept" \
+        "unverifiable" "$(probe "$WITHHELD_BUNDLE" decision)"
     assert_equals "and the Bundle is incomplete" "incomplete" \
         "$(probe "$WITHHELD_BUNDLE" integrity)"
 else
@@ -847,11 +879,11 @@ else
     fail "empty round export" "a bundle" "export failed"
 fi
 
-# An intermediate round without a *review* is still normal: work summarized in
-# round N and reviewed in round N+1 is reviewed work, and cancel-after-review
-# is a real Run shaped exactly that way. Whether that N+1 rule is the intended
-# product contract is a spec question, tracked separately; the check above is
-# deliberately narrower and only rejects a round with nothing at all.
+# An intermediate round without a *review* is still normal: `codex review` reads
+# the cumulative diff from the base commit, so work summarized in round N and
+# reviewed in round N+1 is reviewed work. cancel-after-review is a real Run
+# shaped exactly that way, and ADR-0007 makes that the written rule rather than
+# an implementation accident.
 INTERMEDIATE_RUN=$(make_run intermediate cancel-after-review)
 INTERMEDIATE_BUNDLE=$(export_run "$INTERMEDIATE_RUN" intermediate)
 if [[ -n "$INTERMEDIATE_BUNDLE" ]]; then
@@ -861,8 +893,58 @@ if [[ -n "$INTERMEDIATE_BUNDLE" ]]; then
     else
         fail "intermediate round" "no profile-required-evidence-missing" "$INTERMEDIATE_WARNINGS"
     fi
+    # The relation is published rather than left to be reconstructed: round 0's
+    # work is covered by round 1's review.
+    assert_equals "and the covering review is recorded per round" "1,1" \
+        "$(probe "$INTERMEDIATE_BUNDLE" round_reviewed_by)"
 else
     fail "intermediate export" "a bundle" "export failed"
+fi
+
+# A clean re-review is what closes a finding, and Loop used to discard it: the
+# verdict went to the cache log and nothing entered the Run, so a Run that
+# fixed everything and passed carried `open` findings forever (issue #33).
+# clean-rereview-derived is path-cited-review-complete -- the real csv-writer
+# Run that showed this -- with the record Loop now writes. The base fixture
+# still derives four `open` findings with no fix link, so this pair is the
+# before and after of the same Run.
+CLEAN_REREVIEW_RUN=$(make_run clean-rereview clean-rereview-derived)
+CLEAN_REREVIEW_BUNDLE=$(export_run "$CLEAN_REREVIEW_RUN" clean-rereview)
+if [[ -n "$CLEAN_REREVIEW_BUNDLE" ]]; then
+    assert_equals "a clean re-review resolves the findings it no longer names" \
+        "resolved,resolved,resolved,resolved" \
+        "$(probe "$CLEAN_REREVIEW_BUNDLE" finding_statuses)"
+    assert_equals "and each records the round that closed it" "2,2,2,2" \
+        "$(probe "$CLEAN_REREVIEW_BUNDLE" finding_field:fix_round)"
+    if [[ "$(probe "$CLEAN_REREVIEW_BUNDLE" finding_field:re_review_ref)" != *absent* ]]; then
+        pass "and each cites the re-review that confirms it"
+    else
+        fail "clean re-review link" "a re_review_ref per finding" \
+            "$(probe "$CLEAN_REREVIEW_BUNDLE" finding_field:re_review_ref)"
+    fi
+    # The round the clean review created carries no builder summary. Before
+    # ADR-0007 that alone turned the Bundle incomplete, which is why the record
+    # could not simply be written.
+    assert_equals "the review-phase round it creates is not an evidence gap" \
+        "valid" "$(probe "$CLEAN_REREVIEW_BUNDLE" integrity)"
+    assert_equals "and it is classified as a review-phase round" \
+        "implementation,review_phase,review_phase" \
+        "$(probe "$CLEAN_REREVIEW_BUNDLE" round_kinds)"
+else
+    fail "clean re-review export" "a bundle" "export failed"
+fi
+
+# The same Run under the public profile: masking publishes the path-citing
+# review, so the resolution stays checkable rather than falling to unverifiable.
+CLEAN_REREVIEW_PUBLIC=$(export_run "$CLEAN_REREVIEW_RUN" clean-rereview-public public-v1)
+if [[ -n "$CLEAN_REREVIEW_PUBLIC" ]]; then
+    assert_equals "the public Bundle resolves them too" \
+        "resolved,resolved,resolved,resolved" \
+        "$(probe "$CLEAN_REREVIEW_PUBLIC" finding_statuses)"
+    assert_equals "and stays valid" "valid" \
+        "$(probe "$CLEAN_REREVIEW_PUBLIC" integrity)"
+else
+    fail "clean re-review public export" "a bundle" "export failed"
 fi
 
 echo ""

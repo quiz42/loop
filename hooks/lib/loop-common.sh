@@ -785,7 +785,11 @@ upsert_state_fields() {
 # 2. Find the first such line where [P?] (? is a digit) appears in the first 10
 #    characters.
 # 3. If found: extract from that line to the end and output it.
-# 4. If not found: no issues, return 1.
+# 4. If not found: record the clean result as a fact and return 1.
+#
+# Optional globals: CODEX_REVIEWED_BASE, CODEX_REVIEWED_COMMIT -- recorded into
+# the clean-review result when the caller captured them, "not recorded" when it
+# did not, so this stays usable outside the Stop hook.
 #
 # Note: codex review outputs to stderr, so we analyze the combined log file
 # which contains both stdout and stderr (redirected with 2>&1).
@@ -834,6 +838,32 @@ detect_review_issues() {
         printf '## Codex Review Issues\n\n%s\n' "$extracted_content"
         return 0
     fi
+
+    # A clean review is a fact, and until now it was the one review outcome the
+    # Run did not keep. The verdict went only to the cache log, outside the Run,
+    # so a finding raised in an earlier round had nothing later to close it: a
+    # Run that fixed everything and passed its re-review still carried `open`
+    # findings forever (issue #33).
+    #
+    # What is written is a fact-only record -- this round, the base it was
+    # reviewed against, and that no severity-marked finding was reported. The
+    # cache log is not copied: it runs to hundreds of lines of prompt and exec
+    # trace with absolute paths in it, which a public profile would then have to
+    # withhold, and none of it is what closes a finding.
+    #
+    # The text must not contain a bracketed severity token anywhere in the first
+    # ten characters of a line. That is what the review readers scan for, and a
+    # token that is not a single digit reads as a *malformed* marker, which
+    # would make this round unparseable and leave the findings it was meant to
+    # resolve `unverifiable` instead. Say "P0-P9" in prose, never in brackets.
+    {
+        printf '# Round %s Code Review Result\n\n' "$round"
+        printf 'Reviewed base: %s\n' "${CODEX_REVIEWED_BASE:-not recorded}"
+        printf 'Reviewed commit: %s\n' "${CODEX_REVIEWED_COMMIT:-not recorded}"
+        printf '\nNo severity-marked finding (P0 through P9) was reported by '
+        printf 'codex review for this round.\n'
+    } > "$result_file"
+    echo "Clean review recorded to: $result_file" >&2
 
     echo "No [P?] issues found in log file" >&2
     return 1

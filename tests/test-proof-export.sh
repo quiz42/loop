@@ -116,7 +116,9 @@ import sys
 bundle = json.load(open(sys.argv[1], encoding="utf-8"))
 assert bundle["profile"]["name"] == "public-v1"
 assert bundle["run"]["terminal_state"] == "complete"
-assert bundle["run"]["rounds"] == [{"index": 0}]
+assert bundle["run"]["rounds"] == [
+    {"index": 0, "kind": "implementation", "reviewed_by": 0}
+]
 assert bundle["proof_id"].startswith("sha256:")
 assert bundle["integrity"]["status"] == "valid"
 verdict_event = next(event for event in bundle["run"]["events"] if event["kind"] == "mainline_verdict")

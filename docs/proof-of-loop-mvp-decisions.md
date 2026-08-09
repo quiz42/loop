@@ -106,6 +106,12 @@ A code review revealed that Loop currently records neither the Reviewed Commit n
 
 Decision: add two fact-only writes inside Loop — record `reviewed_commit` / `reviewed_at` / `reviewed_base` when `codex review` runs, and append `head_commit` / `ended_at` before `end_loop()` performs its rename. State frontmatter is parsed field by field by `_parse_state_fields()` with unknown fields ignored, and the hook already writes fields such as `current_round` and `review_started`, so this touches none of the RLCR state machine's decision logic. For legacy Runs missing these fields, both values are `null` and carry a `legacy-version-gap` warning.
 
+### D18. Round evidence is per round, and Loop records a clean re-review (added 2026-08-09)
+
+Spec section H stated the round contract per round while the implementation checked required evidence by kind across the whole Bundle; PR #29 narrowed the gap and left it open, because closing it either way is a product decision (issue #30). Separately, `detect_review_issues` wrote `round-N-review-result.md` only when the review found something, so the clean re-review — the one artifact that can move a finding to `resolved` — was produced and discarded, and a Run that fixed everything carried `open` findings forever (issue #33). The two are coupled: recording a clean review creates a round with a review result and no builder summary, which the old rule counted as missing evidence.
+
+Decision: check evidence per round, with what a round owes determined by `build_finish_round` from the `.review-phase-started` marker — an Implementation Round must publish a summary, a summarized round must be covered by a review at its own index or later, a Review-Phase Round owes no summary, and `round_contract` is required once per Run rather than per round. Loop writes a fact-only clean-review record so the coverage the loop actually achieved is in the Run. Both round facts are published in `run.rounds[]` and re-derived by the Validator, never trusted. See [ADR-0007](adr/0007-round-evidence-is-per-round-with-review-carried-forward.md); this amends D6's `resolved` transition, which now has an artifact to key on in the clean case.
+
 ## 6. Implementation Sub-choices (settled in the specification)
 
 The four sub-choices originally left to Milestones 1-2 are settled in [`proof-of-loop-mvp-spec.md`](proof-of-loop-mvp-spec.md):
