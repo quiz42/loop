@@ -50,6 +50,10 @@ meaningful and costs one file per revision.
 - The nine-Run dogfood corpus was exported while masking briefly lived in
   `public-v0`; those local Bundles pin a hash no shipped document carries and
   must be re-exported under `public-v1`. They were never distributed.
-- Any future change to a shipped profile document — even a comment or
-  description edit — is a new name, because the hash pins bytes, not
-  semantics.
+- Any future change to a shipped profile document — even a description edit
+  — is a new name. The pinned hash covers the canonicalized document content
+  (keys sorted, compact separators, per the Proof v0 canonical JSON rules),
+  so formatting and key order are free, and every field value is
+  load-bearing. Moving to raw-byte hashing would itself change every pinned
+  `schema_hash` and is therefore its own compatibility decision, not a
+  cleanup.

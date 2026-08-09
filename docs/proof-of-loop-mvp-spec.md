@@ -142,8 +142,10 @@ Top-level objects in `proof.json` (`proof-bundle-v0.schema.json`):
   "run": { "session_timestamp": "...", "terminal_state": "complete|stop|cancel|maxiter|unexpected",
            "rounds": [ ... ], "events": [ ... ] },
   "evidence":  [ { "id": "...", "path": "...", "sha256": "...", "bytes": 1234,
-                   "kind": "round_summary", "status": "included|omitted|truncated",
-                   "omitted_reason": "profile-redaction|null" } ],
+                   "kind": "round_summary", "status": "included|omitted|truncated|masked",
+                   "omitted_reason": "profile-redaction|null",
+                   "masked_sha256": "sha256:...",  // masked items only: hash of the published copy
+                   "masked_bytes": 1230 } ],       // masked items only; sha256/bytes keep naming the source
   "findings":  [ { "id": "...", "severity": "P0..P9", "status": "open|resolved|waived|unverifiable",
                    "found_round": 2, "evidence_refs": [...], "ac_refs": [...] } ],
   "verdict":   { "decision": "accept|changes_required|unverifiable",
@@ -151,12 +153,14 @@ Top-level objects in `proof.json` (`proof-bundle-v0.schema.json`):
                                "reason": "...", "supporting": [...], "contradicting": [...] } ],
                  "required_set": ["ac-1", "..."], "deferred": [ { "ac_id": "ac-3", "replan_ref": "..." } ] },
   "integrity": { "status": "valid|incomplete|invalid", "compile_warnings": [ { "reason": "...", "target": "...", "detail": "..." } ] },
-  "disclosure":{ "omitted": [ { "path": "...", "reason": "..." } ], "field_redactions": [ ... ] },
+  "disclosure":{ "omitted": [ { "path": "...", "reason": "..." } ],
+                 "masked": [ { "path": "...", "rule": "absolute-path" } ],
+                 "field_redactions": [ ... ] },
   "transport": { "exported_at": "...", "exporter_host_class": "..." }   // excluded from proof_id
 }
 ```
 
-`verification-profile-v0.schema.json`: `name`, `version`, `description`, `required_evidence_kinds[]`, `omit_paths[]` (glob), `omit_kinds[]`, `field_redactions[]`, `secret_scan.fail_on[]`, `secret_scan.omit_on[]`, `max_bundle_bytes`, `max_item_bytes`, `require_reviewed_equals_head` (affects the badge only, never integrity).
+`verification-profile-v0.schema.json`: `name`, `version`, `description`, `required_evidence_kinds[]`, `omit_paths[]` (glob), `omit_kinds[]`, `field_redactions[]`, `secret_scan.fail_on[]`, `secret_scan.omit_on[]`, `secret_scan.mask_on[]`, `secret_scan.mask_kinds[]`, `max_bundle_bytes`, `max_item_bytes`, `require_reviewed_equals_head` (affects the badge only, never integrity).
 
 `max_bundle_bytes` measures the deterministic managed Bundle projection: included
 raw evidence plus the rendered manifest files, excluding mutable `transport`
@@ -490,7 +494,7 @@ Not in this MVP, left to P1 and beyond:
 - **Milestone 1**: both JSON Schemas, canonicalization, the `run_id`/`proof_id` algorithms with test vectors, and the hand-written schema validator;
 - **Milestone 2**: Run Adapter + Compiler + Validator + CLI integration, with `test-proof-export.sh` / `test-proof-verify.sh` fully green;
 - **Milestone 3**: the Explorer's five views + `proof open` + manual walkthrough over the three golden Runs;
-- **Milestone 4**: dogfood on 5-10 public tasks, and revise `public-v0` and the schema accordingly. What that dogfood found is recorded in [`proof-of-loop-m4-dogfood.md`](proof-of-loop-m4-dogfood.md).
+- **Milestone 4**: dogfood on 5-10 public tasks, and revise the public contract and the schema accordingly — shipped as a new versioned public profile, `public-v1`, with `public-v0` frozen, because a profile document is immutable once a Bundle has pinned it (ADR-0006). What that dogfood found is recorded in [`proof-of-loop-m4-dogfood.md`](proof-of-loop-m4-dogfood.md).
 
 ### Acceptance criteria (Draft §10 calibrated by the decision appendix)
 
