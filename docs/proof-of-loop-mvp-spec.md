@@ -271,7 +271,7 @@ per-AC status trusts only structured facts the Stop hook enforces (D11, ADR-0002
 Finding lifecycle (D6):
 
 - `open`: no subsequent fix round yet;
-- `unverifiable`: a subsequent round exists, but its review result is missing, empty, or unparseable;
+- `unverifiable`: the lifecycle cannot be established from the evidence this Bundle admits. Two causes share the status, and a consumer tells them apart by whether the finding's `found_round` review result is published in the Bundle: either a subsequent round exists but its review result is missing, empty, or unparseable (a fix may have been attempted; the re-review cannot confirm or deny it), or the review that discovered the finding is itself withheld by the active profile — its existence is recorded and nothing further, because withheld evidence may show that a problem existed, never that one was fixed, so no later review moves it (ADR-0005). `open` is never used for the withheld case: "no fix has been attempted" is itself a claim the withheld evidence cannot support;
 - `resolved`: a later, parseable, successfully produced review result exists in which the finding key no longer appears;
 - `waived`: only when the Goal Tracker's Queued/Deferred tables carry an explicit record — neither silence nor a failed re-review constitutes `waived`.
 
