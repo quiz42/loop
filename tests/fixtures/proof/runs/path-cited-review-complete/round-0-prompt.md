@@ -41,4 +41,3 @@ Keep @/Users/quiz/loop-dogfood/csv-writer/.loop/rlcr/2026-08-08_00-53-47/round-0
 When you're ready for review, write a brief summary of your changes and try to exit (do not try to execute anything, just stop).
 
 Write your summary to: @/Users/quiz/loop-dogfood/csv-writer/.loop/rlcr/2026-08-08_00-53-47/round-0-summary.md
-

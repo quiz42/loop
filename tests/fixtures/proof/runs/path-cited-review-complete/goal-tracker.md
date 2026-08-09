@@ -55,4 +55,3 @@ Pass code review for the current branch without regressing existing behavior.
 ### Explicitly Deferred
 | Task | Original AC | Deferred Since | Justification | When to Reconsider |
 |------|-------------|----------------|---------------|-------------------|
-

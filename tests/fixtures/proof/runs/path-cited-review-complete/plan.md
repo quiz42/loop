@@ -9,4 +9,3 @@ The loop will:
 1. Run `codex review` on the current branch changes
 2. If issues are found, Claude will fix them
 3. When no issues remain, enter finalize phase
-
