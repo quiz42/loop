@@ -1017,6 +1017,12 @@ class RunAdapter:
         return rounds, events
 
 
+# The profile export uses when none is named. Every library entry point and
+# the CLI read this one name, so a future profile revision -- which ADR-0006
+# makes a rename -- cannot leave the defaults out of sync with each other.
+DEFAULT_EXPORT_PROFILE = "public-v1"
+
+
 def _default_profile(name: str) -> Dict[str, Any]:
     if re.fullmatch(r"[a-z][a-z0-9-]*-v[0-9]+", name):
         path = Path(__file__).resolve().parent / "profiles" / f"{name}.json"
@@ -1025,7 +1031,7 @@ def _default_profile(name: str) -> Dict[str, Any]:
     raise ProofError(f"unknown verification profile {name!r}")
 
 
-def load_profile(name: str = "public-v1") -> Dict[str, Any]:
+def load_profile(name: str = DEFAULT_EXPORT_PROFILE) -> Dict[str, Any]:
     """Load a profile document and fail closed when it is malformed."""
     profile = _default_profile(name)
     result = validate_instance(profile, load_schema("verification-profile-v0"))
@@ -2165,7 +2171,7 @@ class BundleCompiler:
     def __init__(
         self,
         run_dir: Union[str, os.PathLike[str]],
-        profile: str = "public-v1",
+        profile: str = DEFAULT_EXPORT_PROFILE,
         repo_root: Optional[Union[str, os.PathLike[str]]] = None,
         exporter_version: str = "proof-mvp-v0",
     ) -> None:
@@ -3246,7 +3252,7 @@ class BundleValidator:
 def compile_bundle(
     run_dir: Union[str, os.PathLike[str]],
     output_dir: Union[str, os.PathLike[str]],
-    profile: str = "public-v1",
+    profile: str = DEFAULT_EXPORT_PROFILE,
     repo_root: Optional[Union[str, os.PathLike[str]]] = None,
 ) -> Path:
     """Convenience function used by scripts and embedders."""
@@ -3257,7 +3263,7 @@ def compile_bundle(
 def export_run(
     run_dir: Union[str, os.PathLike[str]],
     output_dir: Optional[Union[str, os.PathLike[str]]] = None,
-    profile: str = "public-v1",
+    profile: str = DEFAULT_EXPORT_PROFILE,
     repo_root: Optional[Union[str, os.PathLike[str]]] = None,
 ) -> ExportResult:
     """Compile and write a Run, using the identity-addressed default if needed."""

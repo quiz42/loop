@@ -38,6 +38,10 @@ class _ArgumentParser(argparse.ArgumentParser):
 
 
 def _parser() -> argparse.ArgumentParser:
+    try:
+        from proof.core import DEFAULT_EXPORT_PROFILE as default_profile
+    except Exception:  # pragma: no cover - main() reports the broken import
+        default_profile = "public-v1"
     parser = _ArgumentParser(
         prog="loop proof export",
         description="Export a terminal Loop Run as a Proof Bundle.",
@@ -55,9 +59,9 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--profile",
-        default="public-v1",
+        default=default_profile,
         metavar="NAME",
-        help="verification profile (default: public-v1)",
+        help=f"verification profile (default: {default_profile})",
     )
     parser.add_argument(
         "--out",
