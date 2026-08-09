@@ -284,6 +284,8 @@ Finding lifecycle (D6):
 
 A clean re-review is a recorded artifact. Loop writes `round-N-review-result.md` on a clean pass as well as a failing one — a fact-only record naming the round, the reviewed base and commit, and that no severity-marked finding was reported. It used to write nothing, sending the verdict only to the cache log outside the Run, so the one artifact that can move a finding to `resolved` was produced and discarded and a Run that fixed everything carried `open` findings forever. The round that record creates is a Review-Phase Round under section H's round rule, which is why the two changes land together.
 
+**The record asserts only what the detector established.** Loop extracts findings from the tail of the review log, because that is where they appear; it writes the all-clear only when the *whole* log carries no severity-marked token, canonical or malformed. The two windows differ on purpose. Missing a finding during extraction is a detection gap; asserting a clean review the log contradicts is a false green that resolves every finding still open in the Run, and can carry unfixed work to `accept`. Where the detector cannot establish a clean review it records nothing, and drops any earlier all-clear it had written for that round.
+
 Overall Delivery Verdict:
 
 - `accept`: every AC in the required set is `met`, no blocking finding is `open` or `unverifiable`, Terminal State is `complete`, and the evidence the profile requires is complete;

@@ -947,6 +947,121 @@ else
     fail "clean re-review public export" "a bundle" "export failed"
 fi
 
+# The whole value of a clean re-review record is that it resolves findings. That
+# is also what makes a *false* one dangerous, so the record must come from the
+# detector rather than be assumed. These two scenarios write the record by hand
+# to stand in for a Loop that recorded something it had not established.
+
+# A round whose review result is empty establishes nothing. It must not clear
+# the findings an earlier round raised.
+EMPTY_REREVIEW_RUN=$(make_run empty-rereview clean-rereview-derived)
+: > "$EMPTY_REREVIEW_RUN/round-2-review-result.md"
+EMPTY_REREVIEW_BUNDLE=$(export_run "$EMPTY_REREVIEW_RUN" empty-rereview)
+if [[ -n "$EMPTY_REREVIEW_BUNDLE" ]]; then
+    if [[ "$(probe "$EMPTY_REREVIEW_BUNDLE" finding_statuses)" != *resolved* ]]; then
+        pass "an empty re-review resolves nothing (statuses: $(probe "$EMPTY_REREVIEW_BUNDLE" finding_statuses))"
+    else
+        fail "empty re-review" "no resolved finding" \
+            "$(probe "$EMPTY_REREVIEW_BUNDLE" finding_statuses)"
+    fi
+else
+    fail "empty re-review export" "a bundle" "export failed"
+fi
+
+# A round whose review result still carries a malformed marker establishes
+# nothing either, and must not read as an all-clear.
+MALFORMED_REREVIEW_RUN=$(make_run malformed-rereview clean-rereview-derived)
+printf -- '- [P10] Severity out of range - csv_writer.py:1\n' \
+    > "$MALFORMED_REREVIEW_RUN/round-2-review-result.md"
+MALFORMED_REREVIEW_BUNDLE=$(export_run "$MALFORMED_REREVIEW_RUN" malformed-rereview)
+if [[ -n "$MALFORMED_REREVIEW_BUNDLE" ]]; then
+    if [[ "$(probe "$MALFORMED_REREVIEW_BUNDLE" finding_statuses)" != *resolved* ]]; then
+        pass "a malformed re-review resolves nothing (statuses: $(probe "$MALFORMED_REREVIEW_BUNDLE" finding_statuses))"
+    else
+        fail "malformed re-review" "no resolved finding" \
+            "$(probe "$MALFORMED_REREVIEW_BUNDLE" finding_statuses)"
+    fi
+else
+    fail "malformed re-review export" "a bundle" "export failed"
+fi
+
+echo ""
+echo "Section 11b: An ambiguous review-phase boundary falls back to the strict rule"
+
+# `build_finish_round` excuses a round from having to publish a summary, so an
+# ambiguous declaration must never be resolved in the producer's favour. Reading
+# the first of two conflicting lines let `build_finish_round=0` beside
+# `build_finish_round=1` quietly excuse round 1.
+# Usage: assert_strict_fallback <name> <marker-content>
+assert_strict_fallback() {
+    local name="$1"
+    local marker="$2"
+    local run
+    run=$(make_run "boundary-$3" cancel-after-review)
+    printf '%s' "$marker" > "$run/.review-phase-started"
+    local bundle
+    bundle=$(export_run "$run" "boundary-$3")
+    if [[ -z "$bundle" ]]; then
+        fail "boundary $name export" "a bundle" "export failed"
+        return
+    fi
+    local kinds
+    kinds=$(probe "$bundle" round_kinds)
+    if [[ "$kinds" != *review_phase* ]]; then
+        pass "$name falls back to the strict rule (kinds: $kinds)"
+    else
+        fail "boundary $name" "no review_phase carve-out" "$kinds"
+    fi
+}
+
+assert_strict_fallback "a conflicting boundary" \
+    'build_finish_round=0
+build_finish_round=1
+' conflict
+assert_strict_fallback "a duplicated boundary" \
+    'build_finish_round=0
+build_finish_round=0
+' duplicate
+assert_strict_fallback "a non-numeric boundary" 'build_finish_round=zero
+' nonnumeric
+
+# A boundary naming no recorded round has to be built on a Run with a gap in its
+# round indices, or the case does not discriminate: a boundary above every
+# recorded round makes them all implementation rounds, which is stricter anyway.
+# Here rounds 0 and 2 are recorded and the marker names round 1, so a parser
+# that takes the value on trust grants round 2 a carve-out it never earned.
+UNRECORDED_RUN=$(make_run boundary-unrecorded clean-rereview-derived)
+rm -f "$UNRECORDED_RUN"/round-1-*.md
+printf 'build_finish_round=1\n' > "$UNRECORDED_RUN/.review-phase-started"
+UNRECORDED_BUNDLE=$(export_run "$UNRECORDED_RUN" boundary-unrecorded)
+if [[ -n "$UNRECORDED_BUNDLE" ]]; then
+    UNRECORDED_KINDS=$(probe "$UNRECORDED_BUNDLE" round_kinds)
+    if [[ "$UNRECORDED_KINDS" != *review_phase* ]]; then
+        pass "a boundary naming no recorded round falls back (kinds: $UNRECORDED_KINDS)"
+    else
+        fail "boundary naming no recorded round" "no review_phase carve-out" \
+            "$UNRECORDED_KINDS"
+    fi
+else
+    fail "boundary unrecorded export" "a bundle" "export failed"
+fi
+
+# An oversized value must be a verdict, not an unhandled failure: `int()` raises
+# above 4300 digits, and a Bundle is not trusted input.
+HUGE=$(python3 -c "print('build_finish_round=' + '1'*5000)")
+assert_strict_fallback "an oversized boundary" "$HUGE
+" oversized
+
+# The control: the same Run with its real marker still gets the carve-out, so
+# the assertions above are about ambiguity and not about the rule being off.
+BOUNDARY_CONTROL=$(export_run "$(make_run boundary-control cancel-after-review)" boundary-control)
+if [[ -n "$BOUNDARY_CONTROL" ]]; then
+    assert_equals "an unambiguous boundary still classifies the rounds" \
+        "implementation,review_phase" "$(probe "$BOUNDARY_CONTROL" round_kinds)"
+else
+    fail "boundary control export" "a bundle" "export failed"
+fi
+
 echo ""
 echo "Section 12: A finding queued in Explicitly Deferred is waived too"
 

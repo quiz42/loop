@@ -208,6 +208,106 @@ else
 fi
 
 # ========================================
+# Test 3c: An all-clear is only written when the WHOLE log is clean
+# ========================================
+# The extraction window is the last 50 lines, because findings appear at the end
+# and a full-file scan invites false positives. That trade is right for pulling
+# findings out. It is wrong for asserting that none exist: a canonical marker
+# earlier in the log, or a marker-shaped token that is not a single digit, means
+# the detector has NOT established a clean review.
+#
+# Recording one anyway is a false green with teeth. The Proof layer resolves
+# every finding still open in the Run against that record, so one missed marker
+# launders the lot and can carry a Run with unfixed work to `accept`. Verified
+# end to end before this gate existed: `changes_required` became `accept`.
+echo "Test 3c: detect_review_issues does not assert a clean review it cannot establish"
+
+# Usage: assert_no_clean_record <round> <label>
+assert_no_clean_record() {
+    local round="$1"
+    local label="$2"
+    set +e
+    detect_review_issues "$round" >/dev/null 2>&1
+    local rc=$?
+    set -e
+    if [[ $rc -eq 1 ]] && [[ ! -f "$LOOP_DIR/round-${round}-review-result.md" ]]; then
+        pass "$label writes no clean record"
+    else
+        fail "$label" "return 1 and no record" \
+            "return $rc, record exists: $(test -f "$LOOP_DIR/round-${round}-review-result.md" && echo yes || echo no)"
+    fi
+}
+
+setup_test_env
+
+# A canonical marker outside the extraction window. tests above already assert
+# the detector reports this log as clean; the point here is that it must not
+# write that down.
+{
+    for i in $(seq 1 4); do echo "Debug line $i"; done
+    echo "- [P1] Outside the window - /path/to/file.py:1"
+    for i in $(seq 6 70); do echo "More output line $i - no issues here"; done
+} > "$CACHE_DIR/round-20-codex-review.log"
+assert_no_clean_record 20 "a canonical marker outside the window"
+
+# Marker-shaped but not a single digit. parse_review_result would score these as
+# malformed and hold the round unparseable; a synthetic all-clear hides them.
+printf 'review output\n- [P10] Severity out of range - f.py:1\n' \
+    > "$CACHE_DIR/round-21-codex-review.log"
+assert_no_clean_record 21 "a [P10] token"
+
+printf 'review output\n- [P0-9] Literal class, not a severity - f.py:1\n' \
+    > "$CACHE_DIR/round-22-codex-review.log"
+assert_no_clean_record 22 "a [P0-9] token"
+
+# A genuinely clean log still earns its record, or the gate is useless.
+printf 'Code review complete\nNothing to report\n' \
+    > "$CACHE_DIR/round-23-codex-review.log"
+set +e
+detect_review_issues 23 >/dev/null 2>&1
+set -e
+if [[ -f "$LOOP_DIR/round-23-review-result.md" ]]; then
+    pass "a genuinely clean log still earns its record"
+else
+    fail "clean log record" "a record" "no file written"
+fi
+
+# An earlier attempt at the same round may have left an all-clear on disk. Once
+# the outcome is ambiguous that record cannot stand.
+printf 'Code review complete\nNothing to report\n' \
+    > "$CACHE_DIR/round-24-codex-review.log"
+set +e
+detect_review_issues 24 >/dev/null 2>&1
+set -e
+{
+    for i in $(seq 1 4); do echo "Debug line $i"; done
+    echo "- [P1] Reported on the retry, outside the window - f.py:1"
+    for i in $(seq 6 70); do echo "More output line $i"; done
+} > "$CACHE_DIR/round-24-codex-review.log"
+assert_no_clean_record 24 "an ambiguous retry after a clean pass"
+
+# ...but an extracted findings record is evidence, and must survive the same
+# retry. Only our own all-clear is ever dropped.
+printf 'review output\n- [P1] Genuine finding - f.py:1\n' \
+    > "$CACHE_DIR/round-25-codex-review.log"
+set +e
+detect_review_issues 25 >/dev/null 2>&1
+{
+    for i in $(seq 1 4); do echo "Debug line $i"; done
+    echo "- [P2] Different marker, outside the window - f.py:1"
+    for i in $(seq 6 70); do echo "More output line $i"; done
+} > "$CACHE_DIR/round-25-codex-review.log"
+detect_review_issues 25 >/dev/null 2>&1
+set -e
+if [[ -f "$LOOP_DIR/round-25-review-result.md" ]] && \
+   grep -q '\[P1\]' "$LOOP_DIR/round-25-review-result.md"; then
+    pass "an ambiguous retry keeps an extracted findings record"
+else
+    fail "findings record retention" "the [P1] record preserved" \
+        "$(cat "$LOOP_DIR/round-25-review-result.md" 2>/dev/null || echo 'deleted')"
+fi
+
+# ========================================
 # Test 4: Missing log file - should return 2
 # ========================================
 echo "Test 4: detect_review_issues returns error code 2 when log file is missing"

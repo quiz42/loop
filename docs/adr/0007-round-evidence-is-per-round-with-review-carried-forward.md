@@ -56,10 +56,20 @@ and `reviewed_by` — so a recipient reads the coverage relation instead of
 reconstructing it, which is what #30 asked for.
 
 The boundary is read from the **published bytes** of `.review-phase-started`,
-which is ordinary hashed evidence, by the compiler and the validator alike. When
-a Bundle does not publish it, `kind` is `unknown` and the older, stricter rule
-applies: the final round needs both artifacts. Not publishing the marker is
-never a licence.
+which is ordinary hashed evidence, by the compiler and the validator alike. It
+is read out of a Bundle rather than out of a trusted Run, so exactly one
+complete, bounded declaration naming a recorded round is accepted. Absent,
+withheld, malformed, duplicated, contradictory, oversized, or naming no recorded
+round all give `kind: unknown`, and the older, stricter rule applies: the final
+round needs both artifacts.
+
+A boundary excuses a round from having to publish a summary, so an ambiguous one
+must never be resolved in the producer's favour. Reading the first of several
+declarations would let `build_finish_round=0` beside `build_finish_round=1`
+quietly excuse round 1. Bounding the value keeps the parse total: CPython raises
+on integer strings above 4300 digits, so an unbounded conversion turns a crafted
+marker into an unhandled failure instead of a verdict. Not publishing the marker,
+or publishing an ambiguous one, is never a licence.
 
 ## Considered Options
 
@@ -97,6 +107,12 @@ a changed profile document is a new profile name, so this choice also avoids a
   `open` findings forever. `clean-rereview-derived` — the dogfood's `csv-writer`
   with the record Loop now writes — resolves all four with `fix_round` and
   `re_review_ref`.
+- The all-clear is written only when the whole review log carries no
+  severity-marked token. The first version of this change wrote it whenever the
+  50-line extraction window came back empty, which promoted a known detection
+  gap into positive evidence: a `[P1]` outside the window took a Run from
+  `changes_required` with the finding `open` to `accept` with it `resolved`.
+  Extraction may keep its window; assertion may not.
 - A new gap is reachable that was not before: an implementation round holding
   only a review result, its summary absent or withheld, is `incomplete` and
   cannot derive `accept`. Previously the per-round check inspected only the

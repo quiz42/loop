@@ -768,10 +768,17 @@ upsert_state_fields() {
     ' "$state_file" > "$temp_file" && mv "$temp_file" "$state_file"
 }
 
+# The line that identifies a clean-review record as one this function wrote.
+# Machine-readable on purpose: it lets an ambiguous re-run drop its own stale
+# all-clear without ever touching an extracted findings record. It carries no
+# bracketed token, because the review readers score one that is not a single
+# digit as a malformed marker.
+readonly CLEAN_REVIEW_MARKER="Result: clean"
+
 # Detect review issues from codex review log file
 # Returns:
 #   0 - issues found (caller should continue review loop)
-#   1 - no issues found (caller can proceed to finalize)
+#   1 - no issues found, or the outcome is ambiguous (caller can proceed)
 #   2 - log file missing/empty (hard error - caller must block and require retry)
 # Outputs: extracted review content to stdout if issues found
 # Arguments: $1=round_number
@@ -785,7 +792,14 @@ upsert_state_fields() {
 # 2. Find the first such line where [P?] (? is a digit) appears in the first 10
 #    characters.
 # 3. If found: extract from that line to the end and output it.
-# 4. If not found: record the clean result as a fact and return 1.
+# 4. If not found, scan the WHOLE log for any marker-shaped token. Record the
+#    clean result as a fact only when there is none; otherwise the outcome is
+#    ambiguous, so record nothing and drop any stale clean record.
+#
+# Extraction and assertion deliberately use different windows. Missing a finding
+# in the window is a detection gap the loop has always had. Asserting a clean
+# review that the log contradicts is a false green in the Proof Bundle, which is
+# worse, so step 4 fails closed where step 1 does not.
 #
 # Optional globals: CODEX_REVIEWED_BASE, CODEX_REVIEWED_COMMIT -- recorded into
 # the clean-review result when the caller captured them, "not recorded" when it
@@ -839,6 +853,43 @@ detect_review_issues() {
         return 0
     fi
 
+    # Nothing canonical in the extraction window. That is NOT the same as "the
+    # review was clean", and the difference decides whether an all-clear may be
+    # written at all.
+    #
+    # The window above is 50 lines because findings appear at the end and a
+    # full-file scan invites false positives from earlier debug output. That
+    # trade is right for *extraction*. It is wrong for *assertion*: a canonical
+    # marker earlier in the log, or a marker-shaped token that is not a single
+    # digit (`[P10]`, `[P0-9]`), means this function has not established that
+    # the review was clean. Writing an all-clear there converts a silent miss
+    # into durable evidence that no finding was reported -- and the Proof layer
+    # then resolves every finding still open in the Run against it, which can
+    # carry a Run with unfixed work to `accept`.
+    #
+    # So the whole log decides whether the record may be written. A false
+    # positive here costs a resolution the Run could have earned; a false
+    # negative costs the truth. Those are not comparable, so this fails closed.
+    local marker_anywhere
+    marker_anywhere=$(awk '
+        substr($0, 1, 10) ~ /\[P[^]]*\]/ {
+            print NR
+            exit
+        }
+    ' "$log_file")
+
+    if [[ -n "$marker_anywhere" ]]; then
+        # An earlier attempt at this same round may have left an all-clear on
+        # disk. It cannot stand once the outcome is ambiguous, so drop it --
+        # but only ever our own clean record, never an extracted findings one.
+        if [[ -f "$result_file" ]] && grep -q "^${CLEAN_REVIEW_MARKER}$" "$result_file" 2>/dev/null; then
+            rm -f "$result_file"
+            echo "Removed a stale clean-review record for round $round" >&2
+        fi
+        echo "Marker-shaped token at line $marker_anywhere is outside the extraction window or malformed; not recording a clean review" >&2
+        return 1
+    fi
+
     # A clean review is a fact, and until now it was the one review outcome the
     # Run did not keep. The verdict went only to the cache log, outside the Run,
     # so a finding raised in an earlier round had nothing later to close it: a
@@ -858,6 +909,7 @@ detect_review_issues() {
     # resolve `unverifiable` instead. Say "P0-P9" in prose, never in brackets.
     {
         printf '# Round %s Code Review Result\n\n' "$round"
+        printf '%s\n' "$CLEAN_REVIEW_MARKER"
         printf 'Reviewed base: %s\n' "${CODEX_REVIEWED_BASE:-not recorded}"
         printf 'Reviewed commit: %s\n' "${CODEX_REVIEWED_COMMIT:-not recorded}"
         printf '\nNo severity-marked finding (P0 through P9) was reported by '
