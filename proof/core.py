@@ -193,7 +193,10 @@ _EXPLICIT_AC_LABEL = re.compile(r"^AC-?([0-9]+)\s*:\s*(.*)$", re.IGNORECASE)
 # The boundary every reference form must stop at. Shared between the single
 # and the range pattern so the range grammar can never be narrower than the
 # single-reference grammar: `AC1-AC5:` in a table cell ends exactly as `AC5:`
-# does.
+# does. A sentence-final period is deliberately not a boundary in either
+# grammar -- `AC5.` and `AC1-AC5.` are both reported as malformed rather than
+# read -- so widening to prose-style references is a grammar decision, not a
+# missing case.
 _AC_BOUNDARY = r"(?=(?:\s|[,;|)]|$|:\s|:$))"
 _AC_REFERENCE = re.compile(r"\bAC-?([0-9]+)" + _AC_BOUNDARY, re.IGNORECASE)
 _AC_REFERENCE_ATTEMPT = re.compile(
