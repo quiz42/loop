@@ -787,11 +787,12 @@ fi
 echo ""
 echo "=== Scenario: masked publication (ADR-0004) ==="
 
-# `public-v0` publishes a path-citing review result masked rather than
+# `public-v1` publishes a path-citing review result masked rather than
 # withholding it. The masked copy is the file a recipient receives, so it is
-# the one tamper detection has to bite on.
+# the one tamper detection has to bite on. (`public-v0` is frozen per
+# ADR-0006 and never masks.)
 MASK_RUN=$(make_run mask-tamper path-cited-review-complete)
-MASK_BUNDLE=$(export_run "$MASK_RUN" mask-tamper public-v0)
+MASK_BUNDLE=$(export_run "$MASK_RUN" mask-tamper public-v1)
 if [[ -n "$MASK_BUNDLE" ]]; then
     assert_equals "a masked Bundle verifies valid at exit 0" "0|valid" \
         "$(verify_run "$MASK_BUNDLE")"
@@ -878,20 +879,76 @@ PY
     else
         fail "dirty mask" "profile-violation" "$DIRTY_REASONS"
     fi
+
+    # The masked declaration is reconciled like the omitted one: a Bundle
+    # whose declaration is missing, padded, or duplicated is describing a
+    # disclosure that did not happen, and a declaration a producer can
+    # silently drop is not a declaration.
+    NO_DECL_MASK="$TEST_DIR/bundles/mask-no-declaration"
+    rm -rf "$NO_DECL_MASK"
+    cp -R "$MASK_BUNDLE" "$NO_DECL_MASK"
+    rehash_bundle "$NO_DECL_MASK/proof.json" <<'PY'
+bundle["disclosure"].pop("masked", None)
+PY
+    NO_DECL_REASONS=$(verify_reasons "$NO_DECL_MASK")
+    if [[ "$NO_DECL_REASONS" == *"profile-violation"* ]]; then
+        pass "dropping disclosure.masked from a masked Bundle is a profile-violation"
+    else
+        fail "missing masked declaration" "profile-violation" "$NO_DECL_REASONS"
+    fi
+
+    DUP_DECL_MASK="$TEST_DIR/bundles/mask-duplicate-declaration"
+    rm -rf "$DUP_DECL_MASK"
+    cp -R "$MASK_BUNDLE" "$DUP_DECL_MASK"
+    rehash_bundle "$DUP_DECL_MASK/proof.json" <<'PY'
+declared = bundle["disclosure"]["masked"]
+declared.append(dict(declared[0]))
+PY
+    DUP_DECL_REASONS=$(verify_reasons "$DUP_DECL_MASK")
+    if [[ "$DUP_DECL_REASONS" == *"profile-violation"* ]]; then
+        pass "a duplicated masked declaration is a profile-violation"
+    else
+        fail "duplicate masked declaration" "profile-violation" "$DUP_DECL_REASONS"
+    fi
+
+    FAKE_DECL_MASK="$TEST_DIR/bundles/mask-fabricated-declaration"
+    rm -rf "$FAKE_DECL_MASK"
+    cp -R "$MASK_BUNDLE" "$FAKE_DECL_MASK"
+    rehash_bundle "$FAKE_DECL_MASK/proof.json" <<'PY'
+bundle["disclosure"]["masked"].append(
+    {"path": "round-0-summary.md", "rule": "absolute-path"}
+)
+PY
+    FAKE_DECL_REASONS=$(verify_reasons "$FAKE_DECL_MASK")
+    if [[ "$FAKE_DECL_REASONS" == *"profile-violation"* ]]; then
+        pass "declaring an item masked that is not is a profile-violation"
+    else
+        fail "fabricated masked declaration" "profile-violation" "$FAKE_DECL_REASONS"
+    fi
 else
     fail "masked export" "a bundle" "export failed"
 fi
 
-# A Bundle exported before masking existed carries no masked item, and the
-# Validator that understands masking must still verify it unchanged.
+# A freshly exported Bundle that masks nothing carries no masked item and no
+# declaration, and verifies valid.
 PREMASK_RUN=$(make_run pre-mask clean-complete)
-PREMASK_BUNDLE=$(export_run "$PREMASK_RUN" pre-mask public-v0)
+PREMASK_BUNDLE=$(export_run "$PREMASK_RUN" pre-mask public-v1)
 if [[ -n "$PREMASK_BUNDLE" ]]; then
-    assert_equals "a Bundle with no masked evidence still verifies valid" "0|valid" \
+    assert_equals "a v1 Bundle with no masked evidence verifies valid" "0|valid" \
         "$(verify_run "$PREMASK_BUNDLE")"
 else
     fail "pre-mask export" "a bundle" "export failed"
 fi
+
+# The real backward-compatibility check: a byte-for-byte archived Bundle,
+# exported by the pre-masking exporter under the then-current `public-v0`,
+# must verify valid with today's CLI. Re-exporting with today's code cannot
+# test this -- it pins today's profile hash -- which is how the in-place
+# `public-v0` revision shipped with this claim green while every archived
+# public Bundle failed on `profile.schema_hash` (ADR-0006).
+BASELINE_BUNDLE="$PROJECT_ROOT/tests/fixtures/proof/bundles/pre-masking-public-v0"
+assert_equals "an archived pre-masking public-v0 Bundle verifies valid unchanged" \
+    "0|valid" "$(verify_run "$BASELINE_BUNDLE")"
 
 echo ""
 echo "========================================"

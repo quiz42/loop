@@ -1,7 +1,7 @@
 {
-  "name": "public-v0",
+  "name": "public-v1",
   "version": "0",
-  "description": "The default public disclosure profile: it preserves the minimum evidence needed to inspect a completed Loop Run while omitting prompts, logs, transcripts, BitLesson content, and methodology analysis output.",
+  "description": "The default public disclosure profile: the public-v0 evidence set with masked publication of path-citing review results (ADR-0004). public-v0 is frozen for Bundles that pinned it; this revision is a new name per ADR-0006.",
   "required_evidence_kinds": [
     "plan",
     "goal_tracker",
@@ -40,6 +40,12 @@
     ],
     "omit_on": [
       "absolute-path"
+    ],
+    "mask_on": [
+      "absolute-path"
+    ],
+    "mask_kinds": [
+      "round_review_result"
     ]
   },
   "max_bundle_bytes": 10485760,

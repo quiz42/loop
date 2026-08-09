@@ -956,15 +956,16 @@ else
     fail "wrapped-ac export" "a bundle" "export failed"
 fi
 
-# `codex review` cites the file it faults by absolute path, so before masking
-# `public-v0` withheld exactly the review results that carried findings. The
-# review is now published with those paths masked, and the findings it raised
-# read the same as they do under local-v0.
+# `codex review` cites the file it faults by absolute path, so `public-v0`
+# withheld exactly the review results that carried findings. `public-v1`
+# publishes the review with those paths masked, and the findings it raised
+# read the same as they do under local-v0. (`public-v0` is frozen per
+# ADR-0006; the masking revision is a new profile name.)
 MASKED_RUN=$(make_run masked-review path-cited-review-complete)
 MASKED_LOCAL=$(export_run "$MASKED_RUN" "masked-review-local" local-v0)
-MASKED_PUBLIC=$(export_run "$MASKED_RUN" "masked-review-public" public-v0)
+MASKED_PUBLIC=$(export_run "$MASKED_RUN" "masked-review-public" public-v1)
 if [[ -n "$MASKED_LOCAL" && -n "$MASKED_PUBLIC" ]]; then
-    assert_equals "a path-citing review is published under public-v0, not withheld" \
+    assert_equals "a path-citing review is published under public-v1, not withheld" \
         "masked" "$(probe "$MASKED_PUBLIC" evidence_status:round-1-review-result.md)"
     assert_equals "and the Bundle stays valid" \
         "valid" "$(probe "$MASKED_PUBLIC" integrity)"
@@ -1015,6 +1016,35 @@ if [[ -n "$TRUNCATED_BUNDLE" ]]; then
         "$(probe "$TRUNCATED_BUNDLE" finding_statuses)"
 else
     fail "truncated-review export" "a bundle" "export failed"
+fi
+
+# Size is decided on the source bytes, so masking never rescues an oversized
+# item and the profile that hides more can never carry the more complete
+# Bundle. Before this rule, one long masked-out path published a review under
+# the masking profile that local-v0 truncates -- and no Bundle anywhere held
+# the source bytes that could corroborate the masking.
+OVERSIZED_MASK_RUN=$(make_run oversized-mask path-cited-review-complete)
+python3 - "$OVERSIZED_MASK_RUN/round-1-review-result.md" <<'PY'
+import sys
+
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    handle.write(
+        "Codex review passed. No findings.\n"
+        "Source inspected at /Users/" + "a" * 1050000 + "\n"
+    )
+PY
+OVERSIZED_LOCAL=$(export_run "$OVERSIZED_MASK_RUN" oversized-mask-local local-v0)
+OVERSIZED_PUBLIC=$(export_run "$OVERSIZED_MASK_RUN" oversized-mask-public public-v1)
+if [[ -n "$OVERSIZED_LOCAL" && -n "$OVERSIZED_PUBLIC" ]]; then
+    assert_equals "an oversized source is never published masked" \
+        "omitted" "$(probe "$OVERSIZED_PUBLIC" evidence_status:round-1-review-result.md)"
+    assert_equals "local-v0 truncates the same oversized source" \
+        "truncated" "$(probe "$OVERSIZED_LOCAL" evidence_status:round-1-review-result.md)"
+    assert_equals "and the thinner profile does not carry the more complete Bundle" \
+        "$(probe "$OVERSIZED_LOCAL" integrity)" \
+        "$(probe "$OVERSIZED_PUBLIC" integrity)"
+else
+    fail "oversized-mask export" "two bundles" "export failed"
 fi
 
 echo ""
@@ -1091,7 +1121,7 @@ echo "=== Scenario: a malformed marker fails both review readers closed ==="
 MIXED_INCLUDED_RUN=$(make_run mixed-markers-included path-cited-review-complete)
 printf -- '- [P?] One marker the parser rejects\n' >> "$MIXED_INCLUDED_RUN/round-1-review-result.md"
 MIXED_LOCAL=$(export_run "$MIXED_INCLUDED_RUN" mixed-markers-local local-v0)
-MIXED_PUBLIC=$(export_run "$MIXED_INCLUDED_RUN" mixed-markers-public public-v0)
+MIXED_PUBLIC=$(export_run "$MIXED_INCLUDED_RUN" mixed-markers-public public-v1)
 
 MIXED_HELD_RUN=$(make_run mixed-markers-withheld path-cited-review-complete)
 printf -- '- [P?] One marker the parser rejects\n' >> "$MIXED_HELD_RUN/round-1-review-result.md"
@@ -1248,6 +1278,7 @@ a multiline comment between items
 must not fold into any criterion
 -->
 4. AC4: Only the Python standard library is used (no third-party dependencies).
+> a block quote interrupting the paragraph, per CommonMark
 | noise | table |
 |-------|-------|
 5. AC5: The change is limited to the greeting module and its test (no unrelated files touched)."""
@@ -1266,6 +1297,9 @@ if [[ -n "$STRUCTURED_BUNDLE" ]]; then
     assert_equals "a setext heading and its underline stay out of the criterion" \
         'The implementation and test files are committed to git before review begins.' \
         "$(probe "$STRUCTURED_BUNDLE" ac_text:ac-3)"
+    assert_equals "a block quote stays out of the criterion" \
+        'Only the Python standard library is used (no third-party dependencies).' \
+        "$(probe "$STRUCTURED_BUNDLE" ac_text:ac-4)"
     assert_equals "structure between items leaves five clean criteria" \
         "met" "$(probe "$STRUCTURED_BUNDLE" statuses)"
     assert_equals "and the Run still derives accept" \

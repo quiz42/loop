@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>Loop Proof Explorer</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="header-copy">
+        <p class="eyebrow">Loop Proof Explorer</p>
+        <h1 id="proof-title">Loading Proof Bundle…</h1>
+        <p id="proof-subtitle" class="muted">Reading packaged display data.</p>
+      </div>
+      <p id="loop-verified-badge" class="verified-badge" hidden></p>
+    </header>
+
+    <aside class="verification-notice" role="note">
+      <strong>Packaged display, not live verification.</strong>
+      Run <code>loop proof verify &lt;bundle-dir&gt;</code> to establish the current integrity result. Opening this file directly remains portable, but does not verify its contents.
+    </aside>
+
+    <nav class="view-nav" aria-label="Proof views">
+      <button type="button" data-view="overview" aria-current="page">Overview</button>
+      <button type="button" data-view="acceptance">Acceptance Matrix</button>
+      <button type="button" data-view="timeline">Run Timeline</button>
+      <button type="button" data-view="findings">Findings</button>
+      <button type="button" data-view="evidence">Evidence &amp; Integrity</button>
+    </nav>
+
+    <main id="proof-app" tabindex="-1">
+      <p class="loading">Loading the offline Proof Bundle…</p>
+    </main>
+
+    <noscript>
+      <p class="noscript">The Proof Explorer needs JavaScript to render its packaged data. It does not need a server or a network connection.</p>
+    </noscript>
+
+    <!-- Script tags, rather than fetch(), make the copied Bundle work over file://. -->
+    <script src="proof-data.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

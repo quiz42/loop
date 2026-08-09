@@ -146,17 +146,11 @@
     return index;
   }
 
-  // A masked item is published, just altered, so it counts as readable
-  // everywhere the UI asks "can I show the reader the source?".
-  function isPublished(item) {
-    return object(item) && (item.status === "included" || item.status === "masked");
-  }
-
   function withheldReviewResults() {
     var items = object(proof) ? list(proof.evidence) : [];
     var paths = [];
     items.forEach(function (item) {
-      if (object(item) && item.kind === "round_review_result" && !isPublished(item)) {
+      if (object(item) && item.kind === "round_review_result" && item.status !== "included") {
         paths.push(string(item.path, "a review result"));
       }
     });
@@ -165,7 +159,7 @@
 
   function isLinkableEvidence(identifier, index) {
     var item = index[identifier];
-    return isPublished(item) && !!safeEvidencePath(item.path);
+    return object(item) && item.status === "included" && !!safeEvidencePath(item.path);
   }
 
   function hasLinkableEvidence(identifiers, index) {
@@ -319,7 +313,7 @@
       metric("Acceptance criteria", list(proof.specification && proof.specification.acceptance_criteria).length),
       metric("Rounds", list(run.rounds).length),
       metric("Evidence items", evidence.length),
-      metric("Readable evidence", evidence.filter(isPublished).length),
+      metric("Included evidence", evidence.filter(function (item) { return object(item) && item.status === "included"; }).length),
       metric("Findings", list(proof.findings).length),
       metric("Commits", list(proof.commits).length)
     );
@@ -536,29 +530,6 @@
     return fallback;
   }
 
-  function unverifiableCause(finding) {
-    // Two different situations share `unverifiable`, and a maintainer must
-    // never read one as the other: an unconfirmed fix is not the same claim
-    // as a problem whose own discovery evidence this profile withheld. Spec
-    // section G makes them distinguishable by whether the finding's
-    // found_round review result is published in this Bundle.
-    var round = finding.found_round;
-    if (typeof round !== "number") {
-      return "";
-    }
-    var items = object(proof) ? list(proof.evidence) : [];
-    var path = "round-" + String(round) + "-review-result.md";
-    for (var position = 0; position < items.length; position += 1) {
-      var item = items[position];
-      if (object(item) && string(item.path, "") === path) {
-        return isPublished(item)
-          ? "a later review result is missing or unparseable; a fix may have been attempted, but nothing in this Bundle confirms or denies it"
-          : "the review that discovered it is not published in this Bundle; the problem is recorded, and nothing about a fix is knowable here";
-      }
-    }
-    return "the review that discovered it is not published in this Bundle; the problem is recorded, and nothing about a fix is knowable here";
-  }
-
   function renderFindings() {
     var content = section("Findings", "Lifecycle links stay conservative: a resolved finding without a linked re-review is shown as unverifiable.");
     var findings = list(proof.findings);
@@ -598,12 +569,6 @@
         fact("Fix commit", findingValue(finding, ["fix_commit", "fixed_by_commit"], "not linked")),
         fact("Fix round", findingValue(finding, ["fix_round"], "not linked"))
       );
-      if (status === "unverifiable") {
-        var cause = unverifiableCause(finding);
-        if (cause) {
-          append(facts, fact("Unverifiable because", cause));
-        }
-      }
       var raw = element("div", "finding-evidence");
       append(raw, element("h4", "", "Raw evidence"), evidenceLinks(finding.evidence_refs, index));
       var reReviewRef = finding.re_review_ref || finding.rereview_ref || finding.re_review_evidence_ref;
@@ -623,9 +588,6 @@
     if (item.status === "truncated") {
       return "truncated";
     }
-    // "masked" is deliberately its own treatment rather than a shade of
-    // "redacted": user story 36 requires withheld and altered-but-present to
-    // be impossible to confuse, and here they mean opposite things.
     return string(item.status, "included");
   }
 
@@ -640,7 +602,7 @@
   }
 
   function renderEvidence() {
-    var content = section("Evidence & Integrity", "Raw Evidence files are linked directly when the Bundle carries them. Masked, withheld, missing, and unparseable data use distinct treatments; a masked file is present but its absolute local paths were replaced, so its hash matches masked_sha256 rather than the source hash beside it.");
+    var content = section("Evidence & Integrity", "Raw Evidence files are linked directly when included. Withheld, missing, and unparseable data use distinct treatments.");
     var items = list(proof.evidence);
     var index = evidenceById();
     if (items.length) {
@@ -659,28 +621,14 @@
         }
         var state = evidenceClass(item);
         var row = element("tr", "evidence-row evidence-row--" + state);
-        var name = isPublished(item) ? evidenceLink(String(item.id), index) : element("span", "", string(item.path));
-        var masked = item.status === "masked";
+        var name = item.status === "included" ? evidenceLink(String(item.id), index) : element("span", "", string(item.path));
         append(
           row,
           append(element("td"), name),
           element("td", "", string(item.kind)),
-          // A masked row shows both hashes, because they answer different
-          // questions: masked_sha256 is what the reader can check against the
-          // file here, sha256 is what a local-v0 Bundle of the same Run would
-          // have to match for the masking to be shown faithful.
-          append(
-            element("td", "hash"),
-            element("span", "", string(masked ? item.masked_sha256 : item.sha256)),
-            masked ? element("span", "muted", " source " + string(item.sha256)) : null
-          ),
-          element("td", "", byteCount(masked ? item.masked_bytes : item.bytes)),
-          append(
-            element("td"),
-            statusChip(state),
-            item.omitted_reason ? element("span", "muted", " · " + item.omitted_reason) : null,
-            masked ? element("span", "muted", " · absolute-path") : null
-          )
+          element("td", "hash", string(item.sha256)),
+          element("td", "", byteCount(item.bytes)),
+          append(element("td"), statusChip(state), item.omitted_reason ? element("span", "muted", " · " + item.omitted_reason) : null)
         );
         append(body, row);
       });
@@ -710,12 +658,11 @@
     append(content, warningsSection);
 
     var disclosure = object(proof.disclosure) ? proof.disclosure : {};
-    var disclosureSection = section("Disclosure", "Profile-directed omissions, maskings, and field redactions remain visible to the reviewer.");
+    var disclosureSection = section("Disclosure", "Profile-directed omissions and field redactions remain visible to the reviewer.");
     var omitted = list(disclosure.omitted);
-    var maskedDeclared = list(disclosure.masked);
     var redactions = list(disclosure.field_redactions);
-    if (!omitted.length && !maskedDeclared.length && !redactions.length) {
-      append(disclosureSection, empty("No omissions, maskings, or field redactions were declared."));
+    if (!omitted.length && !redactions.length) {
+      append(disclosureSection, empty("No omissions or field redactions were declared."));
     } else {
       if (omitted.length) {
         var omissionList = element("ul", "disclosure-list");
@@ -723,15 +670,6 @@
           append(omissionList, element("li", "", string(entry.path) + " · " + string(entry.reason)));
         });
         append(disclosureSection, element("h3", "", "Withheld evidence"), omissionList);
-      }
-      if (maskedDeclared.length) {
-        // Declared apart from the omissions so a reader is never left to
-        // tell "you cannot see this" from "you can see this, altered".
-        var maskedList = element("ul", "disclosure-list");
-        maskedDeclared.forEach(function (entry) {
-          append(maskedList, element("li", "", string(entry.path) + " · published with " + string(entry.rule) + " content masked"));
-        });
-        append(disclosureSection, element("h3", "", "Masked evidence"), maskedList);
       }
       if (redactions.length) {
         var redactionList = element("ul", "disclosure-list");

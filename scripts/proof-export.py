@@ -55,9 +55,9 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--profile",
-        default="public-v0",
+        default="public-v1",
         metavar="NAME",
-        help="verification profile (default: public-v0)",
+        help="verification profile (default: public-v1)",
     )
     parser.add_argument(
         "--out",

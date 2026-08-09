@@ -276,8 +276,8 @@ def _criteria_list_items(section: str) -> List[str]:
     space; a blank line ends the item.
 
     Only prose continues an item. Markdown block structure -- a nested
-    heading, a thematic break, a table row, a code fence, an HTML comment, or
-    a nested list bullet -- ends the item where it stands and is never folded
+    heading, a thematic break, a table row, a code fence, an HTML comment, a
+    block quote, or a nested list bullet -- ends the item where it stands and is never folded
     into the criterion the Acceptance Matrix attests to; prose after such a
     block is commentary on the list, not part of any item. Continuation prose
     is deliberately not required to be indented: a flush-left hard wrap is
@@ -331,6 +331,9 @@ def _criteria_list_items(section: str) -> List[str]:
             _NESTED_HEADING.match(stripped)
             or _THEMATIC_BREAK.match(stripped)
             or stripped.startswith("|")
+            # Block quotes can interrupt a paragraph (CommonMark), so a `>`
+            # line is never lazy continuation of the criterion above it.
+            or stripped.startswith(">")
         ):
             flush()
             current = None
@@ -1001,7 +1004,7 @@ def _default_profile(name: str) -> Dict[str, Any]:
     raise ProofError(f"unknown verification profile {name!r}")
 
 
-def load_profile(name: str = "public-v0") -> Dict[str, Any]:
+def load_profile(name: str = "public-v1") -> Dict[str, Any]:
     """Load a profile document and fail closed when it is malformed."""
     profile = _default_profile(name)
     result = validate_instance(profile, load_schema("verification-profile-v0"))
@@ -1403,6 +1406,13 @@ class EvidenceCompiler:
             }
             omit_reason: Optional[str] = None
             masked_data: Optional[bytes] = None
+            # Size is a property of the source evidence, not of what masking
+            # leaves of it. Deciding it after substitution let one long
+            # masked-out path publish an item under public-v1 that local-v0
+            # truncates, so the thinner profile carried the more complete
+            # Bundle -- and no local Bundle held the source bytes that could
+            # corroborate the masking (ADR-0004's trust boundary).
+            oversized = len(data) > max_item_bytes
             if _profile_omits_evidence(relative, kind, self.profile):
                 omit_reason = "profile-redaction"
             elif _has_absolute_path(data):
@@ -1413,7 +1423,10 @@ class EvidenceCompiler:
                 # maintainer most needs. Only kinds the profile names may be
                 # masked, and only when the substitution actually cleans the
                 # bytes; anything else falls through to the omission rule.
-                if profile_masks_kind(kind, "absolute-path", self.profile):
+                # An oversized source is never rescued by masking: it falls
+                # through to the omission rule exactly as it did before
+                # masking existed.
+                if not oversized and profile_masks_kind(kind, "absolute-path", self.profile):
                     masked_data = mask_absolute_paths(data)
                 if masked_data is not None:
                     warnings.append(
@@ -2131,7 +2144,7 @@ class BundleCompiler:
     def __init__(
         self,
         run_dir: Union[str, os.PathLike[str]],
-        profile: str = "public-v0",
+        profile: str = "public-v1",
         repo_root: Optional[Union[str, os.PathLike[str]]] = None,
         exporter_version: str = "proof-mvp-v0",
     ) -> None:
@@ -3041,6 +3054,32 @@ class BundleValidator:
                 "disclosure.omitted",
                 "Disclosure omissions must list each and only each omitted evidence item.",
             )
+        # The masked declaration is reconciled exactly as the omitted one is:
+        # issue #32 introduced `disclosure.masked` so a reader is never left
+        # to tell "you cannot see this" from "you can see this, altered", and
+        # an unreconciled declaration is one a producer can silently drop.
+        # The rule is re-derived, not believed: v0 admits exactly one masking
+        # rule, so every masked item declares `absolute-path`. The field may
+        # be absent only in a Bundle that masks nothing, which is every
+        # Bundle distributed before masking existed.
+        expected_masked = {
+            (item["path"], "absolute-path")
+            for item in items
+            if item.get("status") == "masked"
+        }
+        declared_masked = bundle.get("disclosure", {}).get("masked", [])
+        actual_masked = {
+            (item.get("path"), item.get("rule")) for item in declared_masked
+        }
+        if declared_masked or expected_masked:
+            if (
+                len(declared_masked) != len(actual_masked)
+                or actual_masked != expected_masked
+            ):
+                profile_violation(
+                    "disclosure.masked",
+                    "Disclosure maskings must list each and only each masked evidence item with its rule.",
+                )
         expected_redactions = list(profile.get("field_redactions", []))
         if bundle.get("disclosure", {}).get("field_redactions", []) != expected_redactions:
             profile_violation(
@@ -3186,7 +3225,7 @@ class BundleValidator:
 def compile_bundle(
     run_dir: Union[str, os.PathLike[str]],
     output_dir: Union[str, os.PathLike[str]],
-    profile: str = "public-v0",
+    profile: str = "public-v1",
     repo_root: Optional[Union[str, os.PathLike[str]]] = None,
 ) -> Path:
     """Convenience function used by scripts and embedders."""
@@ -3197,7 +3236,7 @@ def compile_bundle(
 def export_run(
     run_dir: Union[str, os.PathLike[str]],
     output_dir: Optional[Union[str, os.PathLike[str]]] = None,
-    profile: str = "public-v0",
+    profile: str = "public-v1",
     repo_root: Optional[Union[str, os.PathLike[str]]] = None,
 ) -> ExportResult:
     """Compile and write a Run, using the identity-addressed default if needed."""

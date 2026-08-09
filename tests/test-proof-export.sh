@@ -114,7 +114,7 @@ import json
 import sys
 
 bundle = json.load(open(sys.argv[1], encoding="utf-8"))
-assert bundle["profile"]["name"] == "public-v0"
+assert bundle["profile"]["name"] == "public-v1"
 assert bundle["run"]["terminal_state"] == "complete"
 assert bundle["run"]["rounds"] == [{"index": 0}]
 assert bundle["proof_id"].startswith("sha256:")
@@ -130,7 +130,7 @@ PY
 then
     pass "manifest defaults to the public profile and records completed Run facts"
 else
-    fail "manifest Run facts" "public-v0 with only completed round 0" "unexpected manifest"
+    fail "manifest Run facts" "public-v1 with only completed round 0" "unexpected manifest"
 fi
 
 if python3 - "$PROJECT_ROOT" "$TEST_DIR/bundle-a/proof.json" "$TEST_DIR/bundle-a/proof-data.js" "$TEST_DIR/bundle-a/index.html" "$TEST_DIR/bundle-a/app.js" "$TEST_DIR/bundle-a/styles.css" <<'PY'
@@ -621,7 +621,7 @@ PY
 
 loop proof export --run "$PUBLIC_PROFILE_DIR" --out "$TEST_DIR/public-profile-bundle" >/dev/null 2>&1
 public_profile_status=$?
-assert_exit "public-v0 is the default export profile" 0 "$public_profile_status"
+assert_exit "public-v1 is the default export profile" 0 "$public_profile_status"
 loop proof export --run "$PUBLIC_PROFILE_DIR" --profile local-v0 --out "$TEST_DIR/local-profile-bundle" >/dev/null 2>&1
 local_profile_status=$?
 assert_exit "local-v0 remains available as an explicit full-detail profile" 0 "$local_profile_status"
