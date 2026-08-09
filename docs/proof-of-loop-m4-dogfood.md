@@ -110,7 +110,8 @@ that completed with six criteria.
 
 Fixed in two parts.
 
-`public-v0` now publishes a path-citing review result **masked** rather than
+`public-v1` (the revision of `public-v0`; the old profile is frozen per
+ADR-0006) publishes a path-citing review result **masked** rather than
 withholding it: the absolute home paths are replaced with a placeholder, the
 item is declared `status: "masked"`, and a second hash covers the bytes the
 Bundle carries so tamper detection still bites on what a recipient receives.
@@ -164,7 +165,7 @@ Not a Proof-layer issue, recorded because it costs a real Run.
 ## Reproducing the observations
 
 ```bash
-python3 scripts/proof-export.py --run <run-dir> --profile public-v0 --out <bundle>
+python3 scripts/proof-export.py --run <run-dir> --profile public-v1 --out <bundle>
 python3 scripts/proof-verify.py <bundle>            # 0 valid, 2 incomplete, 3 invalid
 python3 scripts/proof-open.py   <bundle>
 ```

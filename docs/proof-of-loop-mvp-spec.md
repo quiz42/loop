@@ -21,7 +21,7 @@ Proof of Loop adds an evidence product layer above Loop that compiles one finish
 Three commands form the complete loop:
 
 ```bash
-loop proof export --latest --profile public-v0   # compile: read-only Run + Git -> Proof Bundle
+loop proof export --latest --profile public-v1   # compile: read-only Run + Git -> Proof Bundle
 loop proof verify .loop/proofs/<proof-id>/       # validate: schema / hash / references / required evidence
 loop proof open   .loop/proofs/<proof-id>/       # verified browse: validate Bundle + renderer, then open
 ```
@@ -40,7 +40,7 @@ The product's core promise is **honesty rather than good looks**: Proof Integrit
 6. As a developer, I want a specific warning when export hits a legacy format or a missing file (which file, what is missing, which conclusion it affects) rather than a crash or a silent skip, so that I know where this Bundle is weak.
 7. As a developer, I want unknown fields to produce a warning rather than be discarded, so that new artifacts added by a Loop upgrade do not quietly vanish from the evidence.
 8. As a developer, I want to choose `--profile local-v0` to get a self-use version containing all local detail, so that I lose no information during my own retrospective.
-9. As a developer, I want `--profile public-v0` (the default) to automatically exclude prompts, transcripts, absolute paths, and BitLesson body text, so that I can send the directory out without inspecting every file by hand.
+9. As a developer, I want `--profile public-v1` (the default) to automatically exclude prompts, transcripts, absolute paths, and BitLesson body text, so that I can send the directory out without inspecting every file by hand.
 10. As a developer, I want a public export that detects a suspected secret to **fail outright**, telling me the file and the match type without echoing the secret itself, so that I never send credentials to a public channel.
 11. As a developer, I want re-exporting the same Run under the same profile to produce exactly the same `proof_id`, so that I can confirm two Bundles are the same evidence.
 12. As a maintainer, I want the public and local versions of one Run to share one `run_id`, so that when I ask the author for the full version I can verify it really is the same Run and not a prettier second attempt.
@@ -133,7 +133,7 @@ Top-level objects in `proof.json` (`proof-bundle-v0.schema.json`):
   "schema_version": "proof-bundle-v0",
   "proof_id":  "sha256:...",   // see D
   "run_id":    "sha256:...",   // see D
-  "profile":   { "name": "public-v0", "version": "0", "schema_hash": "sha256:..." },
+  "profile":   { "name": "public-v1", "version": "0", "schema_hash": "sha256:..." },
   "source":    { "repo_name": "...", "base_commit": "...", "head_commit": "...|null",
                  "reviewed_commit": "...|null", "loop_version": "0.1.0", "exporter_version": "..." },
   "commits":   [ { "sha": "...", "subject": "...", "authored_at": "...",
@@ -195,7 +195,7 @@ not implement.
 - Evidence ID = the first 16 hex characters of `sha256(canonical_json({path, sha256}))`, extended to full length on collision. The path distinguishes position within the Run; the hash detects whether that file was tampered with (D4).
 - Hashes are computed over **raw bytes**, with no newline or encoding normalization.
 - **File evidence is all-or-nothing, with one declared exception**: a profile does not rewrite file content. To withhold an item, mark it `status: "omitted"`, keep its `path` and `sha256` (the source file's hash), and do not write the content into the Bundle. This keeps AC-3's tamper detection meaningful and avoids "a laundered file whose hash matches nothing". The exception, added by [ADR-0004](adr/0004-masked-publication-of-path-bearing-evidence.md) after the Milestone 4 dogfood, is **masked publication**: a profile may name evidence kinds in `secret_scan.mask_kinds` whose absolute home paths are replaced with a fixed placeholder and published as `status: "masked"`. Such an item keeps `sha256` and `bytes` describing the source, and adds `masked_sha256` and `masked_bytes` for the bytes the Bundle carries, so the published copy is still hashed and still tamper-evident. What it gives up is stated plainly: only a `local-v0` Bundle of the same Run can show the masking was faithful. v0 admits exactly one maskable kind, `round_review_result`, because every other required kind feeds structured projections into `proof.json`.
-- **Derived records (commit metadata) do allow field-level redaction**: the optional top-level `commits[]` records are not files and are checked against Git at export time rather than a file hash. `local-v0` retains `sha`, subject, author time/name, and author email; `public-v0` retains the non-email fields, omits `author_email`, and declares that omission in `disclosure.field_redactions`. In v0, `commit.author_email` is the sole supported field-redaction rule. A copied Run whose recorded range is unavailable in the current checkout emits an empty `commits[]` array rather than guessing a different range.
+- **Derived records (commit metadata) do allow field-level redaction**: the optional top-level `commits[]` records are not files and are checked against Git at export time rather than a file hash. `local-v0` retains `sha`, subject, author time/name, and author email; the public profiles retain the non-email fields, omits `author_email`, and declares that omission in `disclosure.field_redactions`. In v0, `commit.author_email` is the sole supported field-redaction rule. A copied Run whose recorded range is unavailable in the current checkout emits an empty `commits[]` array rather than guessing a different range.
 - Items exceeding `max_item_bytes` are written as `status: "truncated"`: a summary plus the original `sha256` and original byte count. The Validator only checks the declaration's self-consistency and records `truncated-evidence`.
 
 ### D. Canonicalization and the two IDs
@@ -250,8 +250,8 @@ Factual basis: `hooks/lib/loop-common.sh` (the `EXIT_*` constants, `end_loop()` 
 | `round-N-summary.md` | Builder self-report evidence (never a basis for AC judgment) |
 | `round-N-review-result.md` | Findings (`[P0]`-`[P9]` markers), the `COMPLETE` marker, `Mainline Progress Verdict: ADVANCED/STALLED/REGRESSED` |
 | `.review-phase-started` (`build_finish_round=N`) | Timeline Review Phase start point |
-| `finalize-summary.md` / `methodology-analysis-report.md` / `methodology-analysis-done.md` | Finalize and methodology analysis events (the latter omitted by default under `public-v0`) |
-| `.loop/bitlesson.md` | An evidence entry; the body is always omitted under `public-v0` (AC-6) |
+| `finalize-summary.md` / `methodology-analysis-report.md` / `methodology-analysis-done.md` | Finalize and methodology analysis events (the latter omitted by default under the public profiles) |
+| `.loop/bitlesson.md` | An evidence entry; the body is always omitted under the public profiles (AC-6) |
 | `git log base_commit..head_commit` | Commit evidence records |
 
 Unrecognized files are not silently discarded: they are recorded as `kind: unknown` and produce a warning (AC-10).
@@ -288,23 +288,23 @@ Both the verdict and per-AC statuses are **relative to this export's profile and
 
 `local-v0`: contains all Run artifacts and full commit metadata; `required_evidence_kinds` covers plan, goal_tracker, state, and each round's contract/summary/review_result.
 
-`public-v0` (default):
+`public-v1` (default) and `public-v0` (frozen):
 
 - **whole-item omit**: `round-N-prompt.md`, `round-N-review-prompt.md`, any transcript or log, `.loop/bitlesson.md`, `methodology-analysis-report.md`;
 - **field-level redaction**: commit author email;
 - **required evidence**: plan, goal_tracker, terminal state, and each round's summary and review_result; missing → `incomplete`;
-- **scanning**: a `secret`-class hit (PEM headers, common cloud credential prefixes, `token=`/`api_key=` assignments, high-entropy strings) → **export fails**, with an error naming the file and match type but never echoing the secret value; a `path`-class hit (absolute home paths such as `/Users/<name>/`, `/home/<name>/`) → the item is published masked when the profile names its kind in `secret_scan.mask_kinds`, and otherwise downgraded to omitted, in both cases with a warning and a disclosure record, without blocking the export.
+- **scanning**: a `secret`-class hit (PEM headers, common cloud credential prefixes, `token=`/`api_key=` assignments, high-entropy strings) → **export fails**, with an error naming the file and match type but never echoing the secret value; a `path`-class hit (absolute home paths such as `/Users/<name>/`, `/home/<name>/`) → under `public-v1` the item is published masked when the profile names its kind in `secret_scan.mask_kinds` and its source fits `max_item_bytes`, and otherwise downgraded to omitted — under `public-v0`, always omitted — in both cases with a warning and a disclosure record, without blocking the export.
 
 The rationale for two tiers: a secret leak is irreversible and its target metric is zero, while absolute paths are privacy noise rather than an incident, and hard-failing on them would make public export unusable on real projects.
 
-Masking exists because omission alone turned out to be too blunt for one kind. `codex review` cites the file it faults by absolute path, so the path rule withheld precisely the review results that reported findings — see [`proof-of-loop-m4-dogfood.md`](proof-of-loop-m4-dogfood.md) and ADR-0004. `public-v0` therefore sets `mask_on: ["absolute-path"]` and `mask_kinds: ["round_review_result"]`, keeping `omit_on` as the fallback for anything masking cannot clean (bytes that are not UTF-8, or a substitution that would leave a match behind).
+Masking exists because omission alone turned out to be too blunt for one kind. `codex review` cites the file it faults by absolute path, so the path rule withheld precisely the review results that reported findings — see [`proof-of-loop-m4-dogfood.md`](proof-of-loop-m4-dogfood.md) and ADR-0004. The revision ships as a new profile name, `public-v1`, because a profile document is immutable once a Bundle has pinned its hash (ADR-0006); `public-v0` stays frozen so Bundles that pinned it keep verifying. `public-v1` sets `mask_on: ["absolute-path"]` and `mask_kinds: ["round_review_result"]`, keeping `omit_on` as the fallback for anything masking cannot clean (bytes that are not UTF-8, an oversized source, or a substitution that would leave a match behind).
 
 ### I. Loop-Verified badge
 
 Displayed only when all hold: Proof Integrity `valid`; Delivery Verdict `accept`; `reviewed_commit == head_commit` (D8 — either being `null` fails the condition); the profile is explicit and version-pinned. The UI must display the coverage scope alongside it, in the form:
 
 ```text
-Loop-Verified · public-v0 · 8/8 AC met · reviewed at 8f31c2a
+Loop-Verified · public-v1 · 8/8 AC met · reviewed at 8f31c2a
 ```
 
 Head Commit is always the true HEAD at the end of the Run, never narrowed to "wherever review reached" in order to earn a badge (D8).
@@ -427,7 +427,7 @@ Following the repository's existing shell suite form (`tests/test-*.sh`, temp di
 - AC-2 determinism: exporting the same Run with the same profile twice yields the same `proof_id`; changing export time or output directory does not affect `proof_id`;
 - `run_id` consistent across profiles, `proof_id` different across profiles;
 - AC-8 read-only: take a recursive hash snapshot of the whole Run directory before and after export and compare, plus `git status --porcelain` showing no change;
-- AC-6 privacy: `public-v0` output contains no prompt files, BitLesson body text, or absolute home paths; a fixture with a planted fake secret fails export with exit code 3 and an error that does not echo the secret value;
+- AC-6 privacy: public-profile output contains no prompt files, BitLesson body text, or absolute home paths; a fixture with a planted fake secret fails export with exit code 3 and an error that does not echo the secret value;
 - AC-4: a fixture whose AC section is placeholder text → every AC `unverifiable`, none `met`; a deferred fixture → the AC leaves the required set and carries a replan reference;
 - AC-10: fixtures for a missing file, a legacy format, and an unparseable review result each produce a specific warning without crashing;
 - a legacy Run (no `head_commit`/`reviewed_commit`) → export succeeds with `legacy-version-gap` and the badge condition unmet;
@@ -499,7 +499,7 @@ Not in this MVP, left to P1 and beyond:
 - **AC-3 Tamper detection**: modifying the manifest or any non-redacted Evidence Item → `invalid` with the target named.
 - **AC-4 AC traceability**: every AC has a status, a rationale, and evidence references; zero evidence must never be `met`; a deferred AC must cite a replan record.
 - **AC-5 Finding lifecycle**: the Explorer shows discovery, fix commit, and re-review result; when it cannot be linked it is `unverifiable`, never `resolved`.
-- **AC-6 Privacy by default**: `public-v0` contains no full prompts, transcripts, absolute paths, secrets, or BitLesson body text, and emits a redaction declaration.
+- **AC-6 Privacy by default**: the public profiles contain no full prompts, transcripts, absolute paths, secrets, or BitLesson body text, and emits a redaction declaration.
 - **AC-7 Offline review**: the copied directory shows all public evidence by double-clicking `index.html`, with no network and no login; that direct display visibly remains non-verifying, while `proof open` is the verified viewing entry point.
 - **AC-8 Read-only export**: export does not modify the source Run, Git index, working tree, or commit history.
 - **AC-9 Honest status**: Proof Integrity, Terminal State, and Delivery Verdict stay mutually independent in both data and UI.
