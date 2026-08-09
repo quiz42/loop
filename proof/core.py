@@ -190,9 +190,12 @@ def _first_heading_section(text: str, heading: str) -> Optional[str]:
 
 
 _EXPLICIT_AC_LABEL = re.compile(r"^AC-?([0-9]+)\s*:\s*(.*)$", re.IGNORECASE)
-_AC_REFERENCE = re.compile(
-    r"\bAC-?([0-9]+)(?=(?:\s|[,;|)]|$|:\s|:$))", re.IGNORECASE
-)
+# The boundary every reference form must stop at. Shared between the single
+# and the range pattern so the range grammar can never be narrower than the
+# single-reference grammar: `AC1-AC5:` in a table cell ends exactly as `AC5:`
+# does.
+_AC_BOUNDARY = r"(?=(?:\s|[,;|)]|$|:\s|:$))"
+_AC_REFERENCE = re.compile(r"\bAC-?([0-9]+)" + _AC_BOUNDARY, re.IGNORECASE)
 _AC_REFERENCE_ATTEMPT = re.compile(
     r"(?<![A-Za-z0-9_])AC(?:[-_ ]?[^\s,;|)]*|[-_])",
     re.IGNORECASE,
@@ -201,11 +204,33 @@ _AC_REFERENCE_ATTEMPT = re.compile(
 # form, both of which a real Goal Tracker writes. Anchored on both ends so a
 # hyphenated word is not mistaken for one.
 _AC_RANGE = re.compile(
-    r"(?<![A-Za-z0-9_])AC-?([0-9]+)\s*-\s*(?:AC-?)?([0-9]+)(?=(?:\s|[,;|)]|$))",
+    r"(?<![A-Za-z0-9_])AC-?([0-9]+)\s*-\s*(?:AC-?)?([0-9]+)" + _AC_BOUNDARY,
     re.IGNORECASE,
 )
 # A range wider than this is a typo, not a reference to that many criteria.
 _AC_RANGE_MAX_SPAN = 63
+# A criterion number or round ordinal longer than this is not a number a
+# tracker wrote. CPython additionally refuses int() past 4,300 digits, so an
+# unbounded token would abort the whole export with a conversion error
+# instead of producing a Bundle that reports what it could not read.
+_NUMERIC_TOKEN_MAX_DIGITS = 9
+
+
+def _bounded_int(digits: str) -> Optional[int]:
+    """Convert a digit token a tracker plausibly wrote, or return None."""
+    normalized = digits.lstrip("0") or "0"
+    if len(normalized) > _NUMERIC_TOKEN_MAX_DIGITS:
+        return None
+    try:
+        return int(normalized)
+    except ValueError:
+        return None
+
+
+def _reference_token(token: str) -> str:
+    """Shorten a reported reference token so one absurd cell cannot bloat
+    every warning that quotes it."""
+    return token if len(token) <= 120 else token[:117] + "..."
 
 
 def _ac_id(number: str) -> str:
@@ -222,6 +247,11 @@ def _looks_like_malformed_ac_label(raw: str) -> bool:
 
 
 _CRITERION_BULLET = re.compile(r"^(?:[-*]|[0-9]+[.)])\s+(.*)$")
+# Markdown block structure a criterion never continues across. A heading, a
+# thematic break, a table row, or a fence is layout, not more criterion text.
+_NESTED_HEADING = re.compile(r"^#{1,6}\s")
+_THEMATIC_BREAK = re.compile(r"^[-_*](?:\s*[-_*]){2,}\s*$")
+_CODE_FENCE = re.compile(r"^(?:`{3,}|~{3,})")
 
 
 def _criteria_list_items(section: str) -> List[str]:
@@ -239,9 +269,21 @@ def _criteria_list_items(section: str) -> List[str]:
     maintainer a criterion cut off mid-sentence, and `text_sha256` committed to
     the fragment. Continuation lines are folded back in, joined with a single
     space; a blank line ends the item.
+
+    Only prose continues an item. Markdown block structure -- a nested
+    heading, a thematic break, a table row, a code fence, an HTML comment, or
+    a nested list bullet -- ends the item where it stands and is never folded
+    into the criterion the Acceptance Matrix attests to; prose after such a
+    block is commentary on the list, not part of any item. Continuation prose
+    is deliberately not required to be indented: a flush-left hard wrap is
+    exactly the shape this reader exists to keep, and dropping it because of
+    its indentation would silently re-truncate the criterion.
     """
     items: List[str] = []
     current: Optional[List[str]] = None
+    base_indent: Optional[int] = None
+    in_comment = False
+    in_fence = False
 
     def flush() -> None:
         if current is not None:
@@ -249,14 +291,48 @@ def _criteria_list_items(section: str) -> List[str]:
 
     for line in section.splitlines():
         stripped = line.strip()
+        if in_comment:
+            if "-->" in stripped:
+                in_comment = False
+            continue
+        if in_fence:
+            if _CODE_FENCE.match(stripped):
+                in_fence = False
+            continue
         if not stripped:
             flush()
             current = None
             continue
-        if stripped.startswith("<!--") or stripped.endswith("-->"):
+        if stripped.startswith("<!--"):
+            flush()
+            current = None
+            if "-->" not in stripped:
+                in_comment = True
+            continue
+        if _CODE_FENCE.match(stripped):
+            flush()
+            current = None
+            in_fence = True
+            continue
+        if (
+            _NESTED_HEADING.match(stripped)
+            or _THEMATIC_BREAK.match(stripped)
+            or stripped.startswith("|")
+        ):
+            flush()
+            current = None
             continue
         match = _CRITERION_BULLET.match(stripped)
         if match:
+            indent = len(line) - len(line.lstrip())
+            if base_indent is None:
+                base_indent = indent
+            if indent > base_indent:
+                # A nested list belongs to the criterion above it the way a
+                # table does: structure, not a criterion and not more text.
+                flush()
+                current = None
+                continue
             flush()
             current = [match.group(1).strip()]
         elif current is not None:
@@ -322,8 +398,9 @@ def _parse_criteria(goal_tracker: Optional[str]) -> Tuple[List[Dict[str, str]], 
     return criteria, problems
 
 
-def _expand_ac_ranges(raw: str) -> Tuple[List[str], str]:
-    """Return the IDs an inclusive AC range names, and the text without it.
+def _expand_ac_ranges(raw: str) -> Tuple[List[str], str, List[str]]:
+    """Return the IDs the AC ranges name, the text without any range, and the
+    range-shaped tokens that name no readable criteria.
 
     A Goal Tracker row that covers several criteria at once is written as a
     range: four of the nine M4 dogfood Runs put `AC1-AC5` in the Completed and
@@ -336,41 +413,54 @@ def _expand_ac_ranges(raw: str) -> Tuple[List[str], str]:
 
     A range is a label form, not prose: `AC1-AC5` states which criteria it
     names as exactly as `AC1, AC2, AC3, AC4, AC5` does, so reading it stays
-    inside ADR-0002. A descending range is not a reference form and is left to
-    the malformed report, and the span is bounded so a typo cannot expand into
-    thousands of identifiers.
+    inside ADR-0002. A range that is shaped like one but names no readable
+    criteria -- descending, absurdly wide, or with an endpoint no tracker
+    would number -- is consumed whole and reported malformed: leaving it in
+    the remainder let the single-reference scan accept one endpoint of a
+    reference this reader had already rejected.
     """
     identifiers: List[str] = []
+    malformed: List[str] = []
     remainder: List[str] = []
     last = 0
     for match in _AC_RANGE.finditer(raw):
-        first_number = int(match.group(1))
-        last_number = int(match.group(2))
-        if last_number < first_number or last_number - first_number > _AC_RANGE_MAX_SPAN:
-            continue
         remainder.append(raw[last : match.start()])
         last = match.end()
+        first_number = _bounded_int(match.group(1))
+        last_number = _bounded_int(match.group(2))
+        if (
+            first_number is None
+            or last_number is None
+            or last_number < first_number
+            or last_number - first_number > _AC_RANGE_MAX_SPAN
+        ):
+            token = _reference_token(match.group(0))
+            if token not in malformed:
+                malformed.append(token)
+            continue
         for number in range(first_number, last_number + 1):
             identifier = _ac_id(str(number))
             if identifier not in identifiers:
                 identifiers.append(identifier)
     remainder.append(raw[last:])
-    return identifiers, " ".join(remainder)
+    return identifiers, " ".join(remainder), malformed
 
 
-def _ac_ids_and_remainder(raw: str) -> Tuple[List[str], str]:
-    """Return every criterion ID the text names, and the text ranges left over.
+def _ac_ids_and_remainder(raw: str) -> Tuple[List[str], str, List[str]]:
+    """Return the criterion IDs the text names, the text no range explained,
+    and the range-shaped tokens that are not valid references.
 
-    Ranges are consumed first so the malformed-reference scan never sees a
-    range it would report; what it does see is everything a range did not
-    explain.
+    Ranges are consumed first -- valid or not -- so the malformed-reference
+    scan never sees a range and the single-reference scan never reads an
+    endpoint out of one; what they do see is everything a range did not
+    claim.
     """
-    identifiers, remainder = _expand_ac_ranges(raw)
+    identifiers, remainder, malformed = _expand_ac_ranges(raw)
     for match in _AC_REFERENCE.finditer(remainder):
         identifier = _ac_id(match.group(1))
         if identifier not in identifiers:
             identifiers.append(identifier)
-    return identifiers, remainder
+    return identifiers, remainder, malformed
 
 
 def _ac_ids(raw: str) -> List[str]:
@@ -380,11 +470,12 @@ def _ac_ids(raw: str) -> List[str]:
 
 def _ac_references(raw: str) -> Tuple[List[str], List[str]]:
     """Return valid AC IDs and any malformed AC-like references in the text."""
-    identifiers, remainder = _ac_ids_and_remainder(raw)
-    malformed: List[str] = []
+    identifiers, remainder, malformed_ranges = _ac_ids_and_remainder(raw)
+    malformed: List[str] = list(malformed_ranges)
     for match in _AC_REFERENCE_ATTEMPT.finditer(remainder):
         token = match.group(0)
         if not re.fullmatch(r"AC-?[0-9]+(?::)?", token, flags=re.IGNORECASE):
+            token = _reference_token(token)
             if token not in malformed:
                 malformed.append(token)
     return identifiers, malformed
@@ -428,7 +519,10 @@ def _plan_evolution_events(goal_tracker: Optional[str]) -> List[Dict[str, Any]]:
         match = re.fullmatch(r"(?:round\s+)?([0-9]+)", row[round_column], re.IGNORECASE)
         if match is None:
             continue
-        events.append({"kind": "plan_evolution", "at": None, "round": int(match.group(1))})
+        round_number = _bounded_int(match.group(1))
+        if round_number is None:
+            continue
+        events.append({"kind": "plan_evolution", "at": None, "round": round_number})
     return events
 
 
@@ -439,7 +533,7 @@ def _round_value(raw: str) -> Optional[int]:
     still in flight. Only the first form is a recorded round.
     """
     match = re.fullmatch(r"(?:round\s+)?([0-9]+)", raw.strip(), re.IGNORECASE)
-    return int(match.group(1)) if match else None
+    return _bounded_int(match.group(1)) if match else None
 
 
 def _parse_completed_and_deferred(
@@ -1629,9 +1723,18 @@ def _withheld_review_findings(
     ``active`` -- a later review may not clear a finding whose own evidence
     this profile withheld (D9). The direction is one-way on purpose: withheld
     evidence may show that a problem existed, never that one was fixed.
+
+    A malformed marker fails this reader closed, exactly as it fails the
+    included-review reader: partial facts from a review that also contains
+    markers the parser rejected are not facts, and the two readers must not
+    disagree about that just because one review's bytes were withheld. The
+    malformed tokens themselves are never reported here -- they are content
+    from bytes the profile chose not to publish.
     """
     facts = parse_review_result(text)
     if not facts.present:
+        return []
+    if facts.malformed_markers:
         return []
     known = set(known_ac_ids)
     findings: List[Dict[str, Any]] = []
