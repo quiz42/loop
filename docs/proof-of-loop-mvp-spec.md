@@ -144,8 +144,8 @@ Top-level objects in `proof.json` (`proof-bundle-v0.schema.json`):
   "evidence":  [ { "id": "...", "path": "...", "sha256": "...", "bytes": 1234,
                    "kind": "round_summary", "status": "included|omitted|truncated|masked",
                    "omitted_reason": "profile-redaction|null",
-                   "masked_sha256": "sha256:...",  // masked items only: hash of the published copy
-                   "masked_bytes": 1230 } ],       // masked items only; sha256/bytes keep naming the source
+                   "masked_sha256": "...",   // masked items only: 64 lowercase hex chars, no prefix -- the hash of the published copy
+                   "masked_bytes": 1230 } ], // masked items only; sha256/bytes keep naming the source
   "findings":  [ { "id": "...", "severity": "P0..P9", "status": "open|resolved|waived|unverifiable",
                    "found_round": 2, "evidence_refs": [...], "ac_refs": [...] } ],
   "verdict":   { "decision": "accept|changes_required|unverifiable",

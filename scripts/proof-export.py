@@ -37,11 +37,15 @@ class _ArgumentParser(argparse.ArgumentParser):
         raise ValueError(message)
 
 
-def _parser() -> argparse.ArgumentParser:
+def _default_export_profile() -> str:
     try:
-        from proof.core import DEFAULT_EXPORT_PROFILE as default_profile
+        from proof.core import DEFAULT_EXPORT_PROFILE
     except Exception:  # pragma: no cover - main() reports the broken import
-        default_profile = "public-v1"
+        return "unavailable"
+    return DEFAULT_EXPORT_PROFILE
+
+
+def _parser(default_profile: str) -> argparse.ArgumentParser:
     parser = _ArgumentParser(
         prog="loop proof export",
         description="Export a terminal Loop Run as a Proof Bundle.",
@@ -103,7 +107,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
         return EXIT_USAGE
 
-    parser = _parser()
+    parser = _parser(_default_export_profile())
     try:
         args = parser.parse_args(argv)
     except ValueError as error:
