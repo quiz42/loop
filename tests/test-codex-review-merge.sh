@@ -308,6 +308,132 @@ else
 fi
 
 # ========================================
+# Test 3d: The shell reads a marker exactly where the Proof layer does
+# ========================================
+# `_FINDING_MARKER` in proof/core.py anchors `^.{0,9}?` before the marker: the
+# token has to *start* within the first ten columns. The shell used to truncate
+# each line to ten characters and require the whole token inside them, which is
+# a different and narrower rule. A marker indented by seven spaces closes in
+# column 11, so the shell threw the closing bracket away and read the line as
+# clean while the Proof layer read it as a finding.
+#
+# A gate that reads less than the Proof layer is worse than no gate: the
+# difference is exactly the set of findings it certifies as absent. Measured
+# before this fix -- an indented [P1] took a Run to `accept` with the finding
+# `resolved`, while the review still reported it.
+echo "Test 3d: an indented marker is read the same way on both sides"
+
+setup_test_env
+
+# Column 8. Extraction now sees it, so this is a findings run, not a clean one.
+printf 'Reviewing the diff\n       [P1] Indented finding - f.py:1-2\nDone.\n' \
+    > "$CACHE_DIR/round-30-codex-review.log"
+set +e
+detect_review_issues 30 >/dev/null 2>&1
+RESULT=$?
+set -e
+if [[ $RESULT -eq 0 ]] && grep -q '\[P1\]' "$LOOP_DIR/round-30-review-result.md" 2>/dev/null; then
+    pass "an indented canonical marker is extracted, not called clean"
+else
+    fail "indented marker extraction" "return 0 and a findings record" \
+        "return $RESULT, file: $(cat "$LOOP_DIR/round-30-review-result.md" 2>/dev/null || echo none)"
+fi
+
+# The same marker outside the extraction window. Extraction cannot see it; the
+# whole-log guard must, or the all-clear returns by the back door.
+{
+    for i in $(seq 1 4); do echo "Debug line $i"; done
+    printf '       [P1] Indented and out of window - f.py:1\n'
+    for i in $(seq 6 70); do echo "More output line $i"; done
+} > "$CACHE_DIR/round-31-codex-review.log"
+assert_no_clean_record 31 "an indented marker outside the window"
+
+# Indented and malformed, at the far edge of the anchor.
+printf 'output\n         [P0-9] Indented literal class - f.py:1\n' \
+    > "$CACHE_DIR/round-32-codex-review.log"
+assert_no_clean_record 32 "an indented [P0-9] at column 10"
+
+printf 'output\n       [P10] Indented severity out of range - f.py:1\n' \
+    > "$CACHE_DIR/round-33-codex-review.log"
+assert_no_clean_record 33 "an indented [P10]"
+
+# Column 11 is past the anchor on both sides. If this stopped being ignored the
+# fix would have widened the rule rather than corrected it.
+printf 'output\n          [P1] Past the anchor - f.py:1\n' \
+    > "$CACHE_DIR/round-34-codex-review.log"
+set +e
+detect_review_issues 34 >/dev/null 2>&1
+set -e
+if [[ -f "$LOOP_DIR/round-34-review-result.md" ]]; then
+    pass "a marker past column 10 is still outside the rule, as it is for the Proof layer"
+else
+    fail "column 11 boundary" "a clean record" "no record written"
+fi
+
+# An active finding from an earlier round must not be cleared by a round whose
+# review the detector could not read. This is the shape that reached `accept`.
+# Round numbers here are unique across the file: setup_test_env reuses one
+# directory, so a number an earlier test used already has a record on disk.
+setup_test_env
+printf -- '- [P1] Earlier genuine finding - f.py:1-2\n' \
+    > "$LOOP_DIR/round-35-review-result.md"
+{
+    for i in $(seq 1 4); do echo "Debug line $i"; done
+    printf '       [P1] Still reported, indented and out of window - f.py:1-2\n'
+    for i in $(seq 6 70); do echo "More output line $i"; done
+} > "$CACHE_DIR/round-36-codex-review.log"
+set +e
+detect_review_issues 36 >/dev/null 2>&1
+set -e
+if [[ ! -f "$LOOP_DIR/round-36-review-result.md" ]] && \
+   grep -q '\[P1\]' "$LOOP_DIR/round-35-review-result.md"; then
+    pass "an unreadable round writes nothing that could resolve an open finding"
+else
+    fail "active finding protection" "no round-36 record, round-35 intact" \
+        "round-36 exists: $(test -f "$LOOP_DIR/round-36-review-result.md" && echo yes || echo no)"
+fi
+
+# ========================================
+# Test 3e: Deleting a stale record is decided structurally
+# ========================================
+# The ambiguity path drops an all-clear it can no longer support. Deciding which
+# record that is from a *line in the file* does not work: a findings record is
+# copied verbatim from review output, so review output containing that same line
+# makes a real finding look like our own record and deletes it. Reproduced: a
+# genuine [P1] record was removed and the caller proceeded to finalize.
+#
+# A findings record always begins at the marker line that triggered extraction,
+# so "carries no marker" is a property of the all-clear that review output
+# cannot forge.
+echo "Test 3e: an ambiguous retry never deletes an extracted findings record"
+
+setup_test_env
+printf 'scanning\n- [P1] Genuine finding - f.py:1-2\n  Detail line.\n%s\n' \
+    "$CLEAN_REVIEW_MARKER" > "$CACHE_DIR/round-40-codex-review.log"
+set +e
+detect_review_issues 40 >/dev/null 2>&1
+set -e
+if grep -q "^${CLEAN_REVIEW_MARKER}$" "$LOOP_DIR/round-40-review-result.md" 2>/dev/null; then
+    pass "the extracted record does contain the colliding line"
+else
+    fail "collision setup" "an extracted record carrying the line" \
+        "$(cat "$LOOP_DIR/round-40-review-result.md" 2>/dev/null || echo none)"
+fi
+
+printf 'retrying\n- [P10] ambiguous token - f.py:1\n' \
+    > "$CACHE_DIR/round-40-codex-review.log"
+set +e
+detect_review_issues 40 >/dev/null 2>&1
+set -e
+if [[ -f "$LOOP_DIR/round-40-review-result.md" ]] && \
+   grep -q '\[P1\]' "$LOOP_DIR/round-40-review-result.md"; then
+    pass "and the genuine finding survives the ambiguous retry"
+else
+    fail "collision protection" "the [P1] record preserved" \
+        "$(cat "$LOOP_DIR/round-40-review-result.md" 2>/dev/null || echo deleted)"
+fi
+
+# ========================================
 # Test 4: Missing log file - should return 2
 # ========================================
 echo "Test 4: detect_review_issues returns error code 2 when log file is missing"

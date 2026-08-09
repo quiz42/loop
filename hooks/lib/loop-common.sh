@@ -768,12 +768,30 @@ upsert_state_fields() {
     ' "$state_file" > "$temp_file" && mv "$temp_file" "$state_file"
 }
 
-# The line that identifies a clean-review record as one this function wrote.
-# Machine-readable on purpose: it lets an ambiguous re-run drop its own stale
-# all-clear without ever touching an extracted findings record. It carries no
-# bracketed token, because the review readers score one that is not a single
-# digit as a malformed marker.
+# A human-readable note that a review came back clean. It is NOT provenance:
+# nothing decides anything from it, because a findings record is copied verbatim
+# from review output and could contain any line at all. It carries no bracketed
+# token, because the review readers score one that is not a single digit as a
+# malformed marker.
 readonly CLEAN_REVIEW_MARKER="Result: clean"
+
+# Print the number of the first line of <file> that carries a marker-shaped
+# token starting within the first ten columns, or nothing.
+#
+# This is the shell side of `_FINDING_MARKER_ATTEMPT` in `proof/core.py`:
+# `^.{0,9}?(\[P[^\]]*\])` there, `match(...) && RSTART <= 10` here. Anything
+# `[P...]` counts, not only a single digit, so `[P10]` and `[P0-9]` -- which the
+# Proof layer reads as *malformed* markers and treats as unparseable -- are seen
+# here too. One spelling, one place, so the two cannot drift.
+# Usage: review_marker_line <file>
+review_marker_line() {
+    awk '
+        match($0, /\[P[^]]*\]/) && RSTART <= 10 {
+            print NR
+            exit
+        }
+    ' "$1" 2>/dev/null
+}
 
 # Detect review issues from codex review log file
 # Returns:
@@ -826,10 +844,18 @@ detect_review_issues() {
     local scan_lines=50
     local start_line=$((total_lines > scan_lines ? total_lines - scan_lines + 1 : 1))
 
-    # Use awk on the tail to find the first line where [P?] appears in first 10 chars
+    # Find the first line whose marker *starts* within the first ten columns.
+    #
+    # `substr($0, 1, 10) ~ /.../` was the older spelling and it means something
+    # different: it required the whole marker to fit inside ten characters. A
+    # marker indented by seven spaces closes in column 11, so truncation threw
+    # the bracket away and the line read as clean -- while `_FINDING_MARKER` in
+    # `proof/core.py`, which anchors `^.{0,9}?` before the marker, read the same
+    # line as a finding. RSTART is the position of the match in the whole line,
+    # so `RSTART <= 10` is that anchor exactly, and the two readers agree.
     local relative_line
     relative_line=$(tail -n "$scan_lines" "$log_file" | awk '
-        substr($0, 1, 10) ~ /\[P[0-9]\]/ {
+        match($0, /\[P[0-9]\]/) && RSTART <= 10 {
             print NR
             exit
         }
@@ -870,19 +896,26 @@ detect_review_issues() {
     # So the whole log decides whether the record may be written. A false
     # positive here costs a resolution the Run could have earned; a false
     # negative costs the truth. Those are not comparable, so this fails closed.
+    # Same anchor as the extraction scan and as `_FINDING_MARKER_ATTEMPT`: the
+    # token starts within the first ten columns of the line. A gate that reads
+    # *less* than the Proof layer is worse than no gate, because the difference
+    # is exactly the set of findings it would certify as absent.
     local marker_anywhere
-    marker_anywhere=$(awk '
-        substr($0, 1, 10) ~ /\[P[^]]*\]/ {
-            print NR
-            exit
-        }
-    ' "$log_file")
+    marker_anywhere=$(review_marker_line "$log_file")
 
     if [[ -n "$marker_anywhere" ]]; then
         # An earlier attempt at this same round may have left an all-clear on
         # disk. It cannot stand once the outcome is ambiguous, so drop it --
-        # but only ever our own clean record, never an extracted findings one.
-        if [[ -f "$result_file" ]] && grep -q "^${CLEAN_REVIEW_MARKER}$" "$result_file" 2>/dev/null; then
+        # but never an extracted findings record.
+        #
+        # Which is which is decided structurally, not by a line in the file.
+        # A findings record is copied verbatim from review output and begins at
+        # the marker line that triggered extraction, so it always carries a
+        # marker; the all-clear this function writes never does. Keying the
+        # decision on any *content* instead would let review output that merely
+        # contained that content delete a real finding -- and review output is
+        # not ours to trust.
+        if [[ -f "$result_file" ]] && [[ -z "$(review_marker_line "$result_file")" ]]; then
             rm -f "$result_file"
             echo "Removed a stale clean-review record for round $round" >&2
         fi

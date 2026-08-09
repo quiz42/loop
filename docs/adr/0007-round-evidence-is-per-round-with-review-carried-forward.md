@@ -113,6 +113,18 @@ a changed profile document is a new profile name, so this choice also avoids a
   gap into positive evidence: a `[P1]` outside the window took a Run from
   `changes_required` with the finding `open` to `accept` with it `resolved`.
   Extraction may keep its window; assertion may not.
+- The gate reads a marker by the same rule the Proof layer does: the token
+  starts within the first ten columns. The first gate truncated each line to ten
+  characters and required the whole token inside them, which is narrower — a
+  marker indented by seven spaces closes in column 11, so the gate read the line
+  as clean while `parse_review_result` read it as a finding, and the same false
+  green returned by a different input. A gate that reads less than the layer it
+  protects certifies exactly the findings it cannot see.
+- An all-clear that can no longer be supported is dropped, and which record that
+  is gets decided structurally, by the absence of any marker. Keying it on a
+  line in the file did not hold: a findings record is copied verbatim from
+  review output, so output containing that line made a real finding look like a
+  generated all-clear and deleted it.
 - A new gap is reachable that was not before: an implementation round holding
   only a review result, its summary absent or withheld, is `incomplete` and
   cannot derive `accept`. Previously the per-round check inspected only the
