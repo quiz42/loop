@@ -246,12 +246,17 @@ def _looks_like_malformed_ac_label(raw: str) -> bool:
     )
 
 
-_CRITERION_BULLET = re.compile(r"^(?:[-*]|[0-9]+[.)])\s+(.*)$")
+_CRITERION_BULLET = re.compile(r"^(?:[-*+]|[0-9]+[.)])\s+(.*)$")
 # Markdown block structure a criterion never continues across. A heading, a
 # thematic break, a table row, or a fence is layout, not more criterion text.
 _NESTED_HEADING = re.compile(r"^#{1,6}\s")
 _THEMATIC_BREAK = re.compile(r"^[-_*](?:\s*[-_*]){2,}\s*$")
 _CODE_FENCE = re.compile(r"^(?:`{3,}|~{3,})")
+# A setext H1 underline: the line above it is a heading, never criterion
+# text. `-` underlines are deliberately not read this way -- a real tracker
+# writes `---` as a separator, and reading it as an underline would eat the
+# last wrapped line of the criterion above it.
+_SETEXT_UNDERLINE = re.compile(r"^={3,}\s*$")
 
 
 def _criteria_list_items(section: str) -> List[str]:
@@ -313,6 +318,14 @@ def _criteria_list_items(section: str) -> List[str]:
             flush()
             current = None
             in_fence = True
+            continue
+        if _SETEXT_UNDERLINE.match(stripped):
+            # The underline promotes the line above it into a heading, so
+            # that line was never criterion text: unfold it before flushing.
+            if current is not None and len(current) > 1:
+                current.pop()
+            flush()
+            current = None
             continue
         if (
             _NESTED_HEADING.match(stripped)

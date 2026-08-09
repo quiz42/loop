@@ -1152,11 +1152,13 @@ else
     fail "colon-range export" "a bundle" "export failed"
 fi
 
-# The same boundary in the Explicitly Deferred reader: a deferral written as
-# a range with a trailing colon defers every criterion the range names.
+# The same boundary in the Explicitly Deferred and Plan Evolution readers: a
+# deferral written as a range with a trailing colon defers every criterion
+# the range names, and _replan_ac_rounds reads the same colon form out of the
+# Impact on AC column -- the deferral is only authorized if both parse.
 RANGE_DEFER_RUN=$(make_run range-defer)
 append_table_row "$RANGE_DEFER_RUN/goal-tracker.md" "Plan Evolution Log" \
-    "| 0 | Dropped AC4 and AC5 from scope | Out of scope after review | AC4-AC5 deferred |"
+    "| 0 | Dropped AC4 and AC5 from scope | Out of scope after review | AC4-AC5: deferred |"
 append_table_row "$RANGE_DEFER_RUN/goal-tracker.md" "Explicitly Deferred" \
     "| Limit the change surface | AC4-AC5: | 0 | Superseded by the round 0 replan | Next milestone |"
 RANGE_DEFER_BUNDLE=$(export_run "$RANGE_DEFER_RUN" range-defer)
@@ -1235,8 +1237,12 @@ the string `"hello"`.
 This prose explains the list and must not join any criterion.
 2. AC2: `test_greeting.py` verifies `greeting()` using the `unittest` module.
    - a nested checklist entry that is structure, not a criterion
+   + a plus-marker nested entry that is structure just the same
    nested continuation that must stay out as well
 3. AC3: The implementation and test files are committed to git before review begins.
+Reviewer heading
+====
+prose under a setext heading that must not join the criterion
 <!--
 a multiline comment between items
 must not fold into any criterion
@@ -1257,6 +1263,9 @@ if [[ -n "$STRUCTURED_BUNDLE" ]]; then
     assert_equals "a nested list and its continuation stay out of the criterion" \
         '`test_greeting.py` verifies `greeting()` using the `unittest` module.' \
         "$(probe "$STRUCTURED_BUNDLE" ac_text:ac-2)"
+    assert_equals "a setext heading and its underline stay out of the criterion" \
+        'The implementation and test files are committed to git before review begins.' \
+        "$(probe "$STRUCTURED_BUNDLE" ac_text:ac-3)"
     assert_equals "structure between items leaves five clean criteria" \
         "met" "$(probe "$STRUCTURED_BUNDLE" statuses)"
     assert_equals "and the Run still derives accept" \
