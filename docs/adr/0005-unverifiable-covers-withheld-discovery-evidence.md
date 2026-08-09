@@ -17,7 +17,8 @@ established from the evidence this Bundle admits*, with exactly two causes,
 and the cause must stay derivable from the Bundle itself — a consumer tells
 them apart by whether the finding's `found_round` review result is published.
 The Explorer renders the cause on the finding card so the two situations
-cannot be confused. Spec section G and `CONTEXT.md` are amended accordingly.
+cannot be confused. Spec section G, decision record D6, and `CONTEXT.md` are
+amended accordingly.
 
 ## Considered Options
 
