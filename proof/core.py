@@ -252,14 +252,30 @@ def _looks_like_malformed_ac_label(raw: str) -> bool:
 _CRITERION_BULLET = re.compile(r"^(?:[-*+]|[0-9]+[.)])\s+(.*)$")
 # Markdown block structure a criterion never continues across. A heading, a
 # thematic break, a table row, or a fence is layout, not more criterion text.
-_NESTED_HEADING = re.compile(r"^#{1,6}\s")
-_THEMATIC_BREAK = re.compile(r"^[-_*](?:\s*[-_*]){2,}\s*$")
+_NESTED_HEADING = re.compile(r"^#{1,6}(?:\s|$)")
+_THEMATIC_BREAK = re.compile(r"^([-_*])(?:\s*\1){2,}\s*$")
 _CODE_FENCE = re.compile(r"^(?:`{3,}|~{3,})")
 # A setext H1 underline: the line above it is a heading, never criterion
 # text. `-` underlines are deliberately not read this way -- a real tracker
 # writes `---` as a separator, and reading it as an underline would eat the
-# last wrapped line of the criterion above it.
+# last wrapped line of the criterion above it. Reading `=` lines as
+# underlines is itself a deliberate divergence from CommonMark, whose
+# lazy-continuation rule would fold both the heading text and the `=` line
+# into the criterion's paragraph -- exactly the absorption into attested
+# text this reader exists to prevent.
 _SETEXT_UNDERLINE = re.compile(r"^={3,}\s*$")
+# The HTML block tags that can interrupt a paragraph (CommonMark type 6).
+# A generic tag (type 7) cannot, so inline HTML at the start of a wrapped
+# continuation line still folds.
+_HTML_BLOCK_TAG = re.compile(
+    r"^</?(?:address|article|aside|base|basefont|blockquote|body|caption"
+    r"|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset"
+    r"|figcaption|figure|footer|form|frame|frameset|h1|h2|h3|h4|h5|h6|head"
+    r"|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav"
+    r"|noframes|ol|optgroup|option|p|param|search|section|summary|table"
+    r"|tbody|td|tfoot|th|thead|title|tr|track|ul)(?:\s|/?>|$)",
+    re.IGNORECASE,
+)
 
 
 def _criteria_list_items(section: str) -> List[str]:
@@ -334,9 +350,11 @@ def _criteria_list_items(section: str) -> List[str]:
             _NESTED_HEADING.match(stripped)
             or _THEMATIC_BREAK.match(stripped)
             or stripped.startswith("|")
-            # Block quotes can interrupt a paragraph (CommonMark), so a `>`
-            # line is never lazy continuation of the criterion above it.
+            # Block quotes and type-6 HTML blocks can interrupt a paragraph
+            # (CommonMark), so neither is ever lazy continuation of the
+            # criterion above it.
             or stripped.startswith(">")
+            or _HTML_BLOCK_TAG.match(stripped)
         ):
             flush()
             current = None
@@ -1533,7 +1551,7 @@ def _finding_key(severity: str, summary: str) -> str:
     finding keeps one identity whether it is read from a source review or from
     the masked copy a profile published. `codex review` names the faulted file
     in the finding summary, so without this the same finding would carry
-    different ids in a Run's `local-v0` and `public-v0` Bundles -- and a
+    different ids in a Run's `local-v0` and `public-v1` Bundles -- and a
     maintainer holding both could not line them up, which is the whole point of
     asking the author for the fuller profile.
     """

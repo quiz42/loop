@@ -35,8 +35,13 @@ Two of the nine are now compatibility fixtures: `wrapped-ac-complete`
 
 ## Observations
 
-Eighteen Bundles: nine Runs under `local-v0` and `public-v0`. "Before" is the
-exporter as of `68c756b`; "after" is this branch.
+Eighteen Bundles: nine Runs under `local-v0` and the public profile of the
+day. "Before" is the exporter as of `68c756b`, whose public profile was
+`public-v0`; "after" is this branch, where the masking revision ships as
+`public-v1` (ADR-0006) -- the After column reproduces under
+`--profile public-v1`, and the corpus Bundles exported while masking briefly
+lived in `public-v0` pin a hash no shipped document carries and are being
+re-exported.
 
 | Observation | Before | After |
 | --- | --- | --- |
@@ -58,7 +63,7 @@ Both finding rows count each Run twice, once per profile, because a public
 Bundle now reports the same findings its local counterpart does. The one Run
 that links any of them still links three, and observation 4 explains why that
 number cannot yet be higher. The single Bundle that remains `incomplete` is
-`token-bucket` under `public-v0`, for the reason in observation 3.
+`token-bucket` under the public profile, for the reason in observation 3.
 
 ### 1. A wrapped acceptance criterion lost everything after its first line
 

@@ -18,8 +18,9 @@ and validator tests copy them and create any tampered Bundles programmatically.
 | `path-cited-review-complete` | Real Claude+Codex RLCR Run from the M4 dogfood, in `--skip-impl` review-only mode | `complete` |
 
 The three real Runs are kept whole, including prompt and review-prompt files.
-Their raw source paths are intentional input to later `public-v0` omission
-tests; this corpus itself is not a public-profile export.
+Their raw source paths are intentional input to later public-profile tests --
+`public-v1` masking and frozen `public-v0` omission alike; this corpus itself
+is not a public-profile export.
 
 `noncontiguous-ac-complete` is a minimal synthetic Run used to ensure explicit
 acceptance-criterion labels, rather than list positions, remain stable IDs.
@@ -38,6 +39,7 @@ intact or those assertions stop testing anything.
   the range `AC1-AC5`.
 - `path-cited-review-complete` is a review-only Run whose
   `round-1-review-result.md` carries four `[P0-9]` findings and cites the files
-  it faults by absolute path, so `public-v0` withholds that review result. It
-  is the corpus's only Run where a public Bundle must still report findings
-  whose evidence it does not carry.
+  it faults by absolute path. `public-v1` publishes that review masked, which
+  the masked-publication tests assert; the withheld-findings property the Run
+  was captured for is still exercised by truncating the same review past
+  `max_item_bytes`.

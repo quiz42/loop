@@ -1281,7 +1281,11 @@ must not fold into any criterion
 > a block quote interrupting the paragraph, per CommonMark
 | noise | table |
 |-------|-------|
-5. AC5: The change is limited to the greeting module and its test (no unrelated files touched)."""
+5. AC5: The change is limited to the greeting module and its test (no unrelated files touched).
+<details>
+<summary>collapsed commentary</summary>
+hidden commentary that must not join any criterion
+</details>"""
 if old not in text:
     raise SystemExit("fixture criteria not found")
 open(path, "w", encoding="utf-8").write(text.replace(old, new, 1))
@@ -1300,6 +1304,9 @@ if [[ -n "$STRUCTURED_BUNDLE" ]]; then
     assert_equals "a block quote stays out of the criterion" \
         'Only the Python standard library is used (no third-party dependencies).' \
         "$(probe "$STRUCTURED_BUNDLE" ac_text:ac-4)"
+    assert_equals "an HTML block and its content stay out of the criterion" \
+        'The change is limited to the greeting module and its test (no unrelated files touched).' \
+        "$(probe "$STRUCTURED_BUNDLE" ac_text:ac-5)"
     assert_equals "structure between items leaves five clean criteria" \
         "met" "$(probe "$STRUCTURED_BUNDLE" statuses)"
     assert_equals "and the Run still derives accept" \

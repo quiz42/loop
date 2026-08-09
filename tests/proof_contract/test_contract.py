@@ -132,23 +132,40 @@ class ProofIdVectorTests(unittest.TestCase):
 
 
 class PublicProfileTests(unittest.TestCase):
-    """The committed public profile freezes its minimum evidence contract."""
+    """The committed public profiles freeze their minimum evidence contract.
+
+    `public-v0` is immutable (ADR-0006): distributed Bundles pin its document
+    hash, so its bytes must never change and it must never gain a masking
+    licence. `public-v1` is the default revision and carries the masking
+    contract; its required evidence set is pinned here so a future edit to
+    the default profile is a deliberate revision, not a drive-by.
+    """
+
+    _REQUIRED_EVIDENCE = [
+        "plan",
+        "goal_tracker",
+        "state",
+        "round_summary",
+        "round_review_result",
+    ]
 
     def test_public_v0_is_schema_valid_and_requires_the_frozen_evidence_set(self):
         profile = load_profile("public-v0")
         result = validate_instance(profile, load_schema("verification-profile-v0"))
 
         self.assertTrue(result.is_valid, result.errors)
-        self.assertEqual(
-            profile["required_evidence_kinds"],
-            [
-                "plan",
-                "goal_tracker",
-                "state",
-                "round_summary",
-                "round_review_result",
-            ],
-        )
+        self.assertEqual(profile["required_evidence_kinds"], self._REQUIRED_EVIDENCE)
+        self.assertNotIn("mask_on", profile["secret_scan"])
+        self.assertNotIn("mask_kinds", profile["secret_scan"])
+
+    def test_public_v1_is_schema_valid_and_pins_the_masking_contract(self):
+        profile = load_profile("public-v1")
+        result = validate_instance(profile, load_schema("verification-profile-v0"))
+
+        self.assertTrue(result.is_valid, result.errors)
+        self.assertEqual(profile["required_evidence_kinds"], self._REQUIRED_EVIDENCE)
+        self.assertEqual(profile["secret_scan"]["mask_on"], ["absolute-path"])
+        self.assertEqual(profile["secret_scan"]["mask_kinds"], ["round_review_result"])
 
 
 class SchemaValidationTests(unittest.TestCase):
