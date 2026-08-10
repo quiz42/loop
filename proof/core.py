@@ -164,6 +164,16 @@ def _read_text(path: Path) -> Optional[str]:
         return None
 
 
+def _decode_text(data: Optional[bytes]) -> Optional[str]:
+    """Decode published Bundle bytes, or None when there are none to read."""
+    if data is None:
+        return None
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
 def _first_heading_section(text: str, heading: str) -> Optional[str]:
     """Return content until the next heading at the same or higher level."""
     lines = text.splitlines()
@@ -770,7 +780,12 @@ def _kind_for_path(relative_path: str) -> str:
     return "unknown"
 
 
-_RECOGNIZED_METADATA_PATHS = frozenset({".cancel-requested", ".review-phase-started"})
+# The marker Loop writes when a Run leaves implementation. Its `build_finish_round`
+# is the only Run fact that separates the rounds which had to deliver work from
+# the rounds that only reviewed it, so it is named once and read everywhere.
+REVIEW_PHASE_MARKER = ".review-phase-started"
+
+_RECOGNIZED_METADATA_PATHS = frozenset({".cancel-requested", REVIEW_PHASE_MARKER})
 
 
 def _iter_files(run_dir: Path) -> Iterable[Tuple[str, Path]]:
@@ -1606,6 +1621,49 @@ class ReviewFacts:
         }
 
 
+_CANONICAL_MARKER_TOKEN = re.compile(r"\[P[0-9]\]")
+
+
+def first_review_marker(
+    text: str, canonical_only: bool = False
+) -> Optional[Dict[str, Any]]:
+    """Return the first review marker in ``text``, or None if there is none.
+
+    This is the single definition of "where is a review marker", and Loop's
+    Stop hook reads it through `scripts/review-markers.py` rather than keeping
+    its own. The hook used to re-implement the grammar in awk, and the two
+    drifted three times: on whether a marker had to *fit* inside ten columns or
+    merely *start* there, on byte offsets versus character offsets for non-ASCII
+    prefixes, and on a token spanning a line break. Each divergence let the hook
+    record "no finding was reported" about a review this module reads as
+    reporting one, which resolves every finding still open in the Run.
+
+    ``canonical_only`` selects `_FINDING_MARKER`, an actionable `[P0]`-`[P9]`
+    finding line -- what the hook extracts. The default selects
+    `_FINDING_MARKER_ATTEMPT`, canonical *or* malformed, which is exactly the
+    set `parse_review_result` reacts to, and so exactly what must be absent
+    before anyone may call a review clean.
+
+    ``line`` is 1-based and derived from the match offset, so the caller never
+    counts positions a second time. ``offset`` is the character offset of the
+    start of the marker's line -- both patterns anchor on ``^``, which in
+    MULTILINE mode matches only after ``\n``, so slicing the scanned text at
+    ``offset`` yields the marker's line and everything after it without any
+    reader having to translate a line number into some other view of the text.
+    """
+    pattern = _FINDING_MARKER if canonical_only else _FINDING_MARKER_ATTEMPT
+    match = pattern.search(text)
+    if match is None:
+        return None
+    marker = match.group("marker")
+    return {
+        "line": text.count("\n", 0, match.start("marker")) + 1,
+        "offset": match.start(),
+        "marker": marker,
+        "canonical": _CANONICAL_MARKER_TOKEN.fullmatch(marker) is not None,
+    }
+
+
 def parse_review_result(text: Optional[str]) -> ReviewFacts:
     """Read a round review result into the facts both readers need."""
     if text is None or not text.strip():
@@ -1628,9 +1686,87 @@ def parse_review_result(text: Optional[str]) -> ReviewFacts:
     )
 
 
+# Every line that declares the boundary, whatever it declares. The value is
+# matched separately so a malformed declaration is *seen* rather than skipped
+# over in favour of a later well-formed one.
+_BUILD_FINISH_ROUND_LINE = re.compile(r"^build_finish_round=(.*)$", re.MULTILINE)
+# A bounded value. The digit cap is what keeps int() total: CPython raises
+# ValueError above 4300 digits, and a Bundle is not trusted input, so an
+# unbounded conversion here turns a crafted marker into an unhandled failure
+# instead of a verdict.
+_BUILD_FINISH_ROUND_VALUE = re.compile(r"^([0-9]{1,9})[ \t]*$")
+
+
+# One spelling of a round's artifact paths, so the coverage rule and the
+# projection of that rule into the Bundle can never disagree about which file
+# they are talking about.
+def _round_summary_path(index: int) -> str:
+    return f"round-{index}-summary.md"
+
+
+def _round_review_path(index: int) -> str:
+    return f"round-{index}-review-result.md"
+
+
+def _path_is_published(status_by_path: Mapping[str, str], path: str) -> bool:
+    """Return whether the Bundle carries readable bytes at this evidence path.
+
+    A path absent from the mapping was never collected. One whose status is not
+    `included` or `masked` is in the Bundle in name only. Both the coverage rule
+    and the projection of that rule ask this question, and answering it in each
+    of them separately is how a masked item ends up trusted in one place and
+    ignored in the other.
+    """
+    return _evidence_is_published({"status": status_by_path.get(path)})
+
+
+def review_phase_boundary(
+    marker_text: Optional[str],
+    recorded_indices: Optional[Iterable[int]] = None,
+) -> Optional[int]:
+    """Return the round implementation finished at, or None if unestablished.
+
+    Read from the `.review-phase-started` marker, which the Stop hook writes as
+    `build_finish_round=N` the moment a Run leaves implementation. Loop then
+    numbers every review-phase artifact N+1 and upward, so this one fact says
+    which rounds had to deliver work and which only reviewed it.
+
+    The marker is ordinary hashed evidence, so both readers take it from the
+    bytes the Bundle publishes rather than from a field the producer wrote into
+    the manifest. That is the difference between a rule the recipient can check
+    and one they have to take on trust.
+
+    Because it is read out of a Bundle rather than out of a trusted Run, this
+    accepts **exactly one** complete, bounded declaration naming a round the Run
+    actually recorded. Everything else -- absent, withheld, malformed,
+    duplicated, contradictory, oversized, or pointing at no recorded round --
+    returns None. A boundary excuses a round from having to publish a summary,
+    so an ambiguous one must not be resolved in the producer's favour: the
+    caller then falls back to the stricter rule. Reading the first of two
+    conflicting declarations was how `build_finish_round=0` next to
+    `build_finish_round=1` could quietly excuse round 1.
+    """
+    if marker_text is None:
+        return None
+    declarations = _BUILD_FINISH_ROUND_LINE.findall(marker_text)
+    if len(declarations) != 1:
+        # No declaration says nothing; two say two things. Neither establishes
+        # a boundary, and picking one of two would be a guess.
+        return None
+    value_match = _BUILD_FINISH_ROUND_VALUE.match(declarations[0])
+    if value_match is None:
+        return None
+    boundary = int(value_match.group(1))
+    if recorded_indices is not None and boundary not in set(recorded_indices):
+        # A boundary that names no recorded round describes some other Run.
+        return None
+    return boundary
+
+
 def round_coverage_gaps(
     rounds: Sequence[Mapping[str, Any]],
     status_by_path: Mapping[str, str],
+    build_finish_round: Optional[int] = None,
 ) -> List[Dict[str, str]]:
     """Return the round-evidence gaps in a Bundle, as reason records.
 
@@ -1642,63 +1778,171 @@ def round_coverage_gaps(
 
     ``status_by_path`` maps an evidence path to its status; a path absent from
     the mapping was never collected, and one whose status is not ``included``
-    is in the Bundle in name only.
+    or ``masked`` is in the Bundle in name only.
 
-    Two rules, both narrower than spec section H's "each round's summary and
-    review_result". See issue #30: applying H literally rejects
-    cancel-after-review, a real captured Run, so the stricter reading needs a
-    product decision before it can be enforced.
+    The rule is per round, and what a round owes depends on what kind of round
+    it is (ADR-0007, spec section H):
+
+    - every recorded round needs some evidence of what happened in it;
+    - an **implementation round** (``index <= build_finish_round``) delivered
+      work, so it must publish a summary;
+    - a round that recorded a summary must be **covered**: a published review
+      result at its own index or a later recorded one. `codex review` reviews
+      the cumulative diff from the Run's base commit, so a later review covers
+      the earlier work -- which is why cancel-after-review, whose round 0 is
+      reviewed in round 1, is a sound Run and not a gap;
+    - a **review-phase round** (``index > build_finish_round``) records a
+      review, not new work, and owes no summary. Without that carve-out a clean
+      re-review -- the artifact that closes a finding -- would turn every Run
+      that passed it `incomplete` (issue #33).
+
+    ``build_finish_round`` of None means the Bundle could not establish the
+    boundary, and the older, stricter rule applies unchanged: the final round
+    needs both artifacts.
     """
     gaps: List[Dict[str, str]] = []
-    indices = [round_data["index"] for round_data in rounds]
+    indices = sorted(round_data["index"] for round_data in rounds)
     if not indices:
         return gaps
 
     def included(path: str) -> bool:
-        return _evidence_is_published({"status": status_by_path.get(path)})
+        return _path_is_published(status_by_path, path)
 
-    # Every recorded round needs some evidence of what happened in it.
-    for index in indices:
-        summary = f"round-{index}-summary.md"
-        review = f"round-{index}-review-result.md"
-        if included(summary) or included(review):
-            continue
+    def state_of(path: str) -> str:
+        return "absent" if path not in status_by_path else "omitted or truncated"
+
+    def gap(target: str, detail: str) -> None:
         gaps.append(
             {
                 "reason": "profile-required-evidence-missing",
-                "target": f"round-{index}",
-                "detail": "Round "
-                + str(index)
-                + " has neither a summary nor a review result in this Bundle, "
-                "so what happened in it is unrecorded.",
+                "target": target,
+                "detail": detail,
             }
         )
 
-    # The final round needs both: it delivered the work, and a Run cannot have
-    # exited the loop as complete without that work being summarized and
-    # reviewed.
-    final_index = max(indices)
-    for path, missing in (
-        (f"round-{final_index}-summary.md", "summary"),
-        (f"round-{final_index}-review-result.md", "review result"),
-    ):
-        if included(path):
+    # Every recorded round needs some evidence of what happened in it.
+    for index in indices:
+        if included(_round_summary_path(index)) or included(_round_review_path(index)):
             continue
-        state = "absent" if path not in status_by_path else "omitted or truncated"
-        gaps.append(
-            {
-                "reason": "profile-required-evidence-missing",
-                "target": path,
-                "detail": "Final round "
+        gap(
+            f"round-{index}",
+            "Round "
+            + str(index)
+            + " has neither a summary nor a review result in this Bundle, "
+            "so what happened in it is unrecorded.",
+        )
+
+    if build_finish_round is None:
+        # The Bundle does not say where implementation ended, so no round can
+        # be excused as review-only. The final round needs both: it delivered
+        # the work, and a Run cannot have exited the loop without that work
+        # being summarized and reviewed.
+        final_index = max(indices)
+        for path, missing in (
+            (_round_summary_path(final_index), "summary"),
+            (_round_review_path(final_index), "review result"),
+        ):
+            if included(path):
+                continue
+            gap(
+                path,
+                "Final round "
                 + str(final_index)
                 + " "
                 + missing
                 + " is "
-                + state
+                + state_of(path)
                 + "; the delivered work is unrecorded in this Bundle.",
-            }
+            )
+        return gaps
+
+    for index in indices:
+        summary = _round_summary_path(index)
+        if index <= build_finish_round and not included(summary):
+            gap(
+                summary,
+                "Implementation round "
+                + str(index)
+                + " summary is "
+                + state_of(summary)
+                + "; the work it delivered is unrecorded in this Bundle.",
+            )
+        # A summary the Run recorded is work, whichever phase it fell in, and
+        # work is only evidenced once a review has covered it. Withheld here
+        # too: a round whose summary this profile does not publish still had
+        # work in it.
+        if summary not in status_by_path:
+            continue
+        if any(included(_round_review_path(later)) for later in indices if later >= index):
+            continue
+        gap(
+            _round_review_path(index),
+            "Round "
+            + str(index)
+            + " recorded a summary that no review result at round "
+            + str(index)
+            + " or later covers in this Bundle; its work is unreviewed.",
         )
     return gaps
+
+
+# The three round kinds, in one place. `ROUND_KIND_UNKNOWN` is the value a
+# Bundle carries when it cannot establish the boundary, and it is deliberately
+# a stated fact rather than an absent field: "this Bundle does not say" is
+# itself something a recipient needs to read. The schema's enum is checked
+# against this tuple by tests/proof_contract, so the two cannot drift.
+ROUND_KIND_IMPLEMENTATION = "implementation"
+ROUND_KIND_REVIEW_PHASE = "review_phase"
+ROUND_KIND_UNKNOWN = "unknown"
+ROUND_KINDS = (
+    ROUND_KIND_IMPLEMENTATION,
+    ROUND_KIND_REVIEW_PHASE,
+    ROUND_KIND_UNKNOWN,
+)
+
+
+def round_projection(
+    rounds: Sequence[Mapping[str, Any]],
+    status_by_path: Mapping[str, str],
+    build_finish_round: Optional[int],
+) -> List[Dict[str, Any]]:
+    """Return each round carrying the phase and coverage facts the rule uses.
+
+    Issue #30 asked for "covered by" to be modelled rather than inferred, so a
+    recipient can read which review covers which round instead of reconstructing
+    it. Both facts are derived, never asserted: the Validator recomputes them
+    from the same evidence statuses and the same published marker and rejects a
+    Bundle whose manifest disagrees. A producer-declared round kind would be the
+    `integrity.compile_warnings` mistake again -- an account of itself that the
+    only check consults.
+
+    `kind` is `unknown` when the Bundle cannot establish the boundary; that is a
+    fact about this Bundle, not a licence, and the stricter rule applies.
+    """
+    indices = sorted(round_data["index"] for round_data in rounds)
+
+    projected: List[Dict[str, Any]] = []
+    for index in indices:
+        if build_finish_round is None:
+            kind = ROUND_KIND_UNKNOWN
+        elif index <= build_finish_round:
+            kind = ROUND_KIND_IMPLEMENTATION
+        else:
+            kind = ROUND_KIND_REVIEW_PHASE
+        covering = [
+            later
+            for later in indices
+            if later >= index
+            and _path_is_published(status_by_path, _round_review_path(later))
+        ]
+        projected.append(
+            {
+                "index": index,
+                "kind": kind,
+                "reviewed_by": covering[0] if covering else None,
+            }
+        )
+    return projected
 
 
 def _waiver_targets(goal_tracker: Optional[str]) -> List[Tuple[str, int]]:
@@ -1870,11 +2114,10 @@ def _derive_findings(
                 # An intermediate round can legitimately lack one: work
                 # summarized in round N and reviewed in round N+1 is reviewed
                 # work, and cancel-after-review is a real Run shaped exactly
-                # that way. Whether the round that lacks one is required to
-                # have it is decided by round_coverage_gaps, which both the
-                # compiler and the validator consult; this branch only declines
-                # to read a lifecycle conclusion out of a review that is not
-                # there.
+                # that way. ADR-0007 makes that the written rule, and
+                # round_coverage_gaps enforces it for the compiler and the
+                # validator alike; this branch only declines to read a
+                # lifecycle conclusion out of a review that is not there.
                 continue
             # A profile cannot use source content it did not retain to make a
             # finding judgment. One included review result of the required kind
@@ -2325,13 +2568,25 @@ class BundleCompiler:
         warnings.extend(finding_warnings)
         # Round-evidence coverage, evaluated by the shared rule so the
         # validator reaches the same conclusion from the same inputs rather
-        # than trusting the warnings recorded here.
+        # than trusting the warnings recorded here. The boundary is read from
+        # the bytes this Bundle publishes, not from the source Run, so a
+        # profile that withholds the marker leaves the compiler on the same
+        # stricter fallback the recipient will be on.
+        round_status_by_path = {
+            path: item.get("status", "") for path, item in evidence_by_path.items()
+        }
+        marker_item = evidence_by_path.get(REVIEW_PHASE_MARKER)
+        build_finish_round = review_phase_boundary(
+            _decode_text(evidence.contents.get(REVIEW_PHASE_MARKER))
+            if _evidence_is_published(marker_item)
+            else None,
+            [round_data["index"] for round_data in run.rounds],
+        )
+        projected_rounds = round_projection(
+            run.rounds, round_status_by_path, build_finish_round
+        )
         coverage_gaps = round_coverage_gaps(
-            run.rounds,
-            {
-                path: item.get("status", "")
-                for path, item in evidence_by_path.items()
-            },
+            run.rounds, round_status_by_path, build_finish_round
         )
         if coverage_gaps:
             findings_parseable = False
@@ -2512,7 +2767,7 @@ class BundleCompiler:
             "run": {
                 "session_timestamp": run.session_timestamp if state_included else None,
                 "terminal_state": run.terminal_state,
-                "rounds": run.rounds,
+                "rounds": projected_rounds,
                 "events": projected_events,
             },
             "evidence": evidence.items,
@@ -2743,6 +2998,64 @@ class BundleValidator:
         report.reasons.append(
             {"reason": "schema-violation", "target": target, "detail": detail}
         )
+
+    def _check_round_projection(
+        self,
+        report: "ValidationReport",
+        recorded_rounds: Any,
+        status_by_path: Mapping[str, str],
+        build_finish_round: Optional[int],
+    ) -> None:
+        """Fail a Bundle whose round phase or coverage facts it cannot support.
+
+        A Bundle written before these facts existed carries neither, and stays
+        valid: the field is absent, so nothing is being claimed. What is
+        rejected is a Bundle that states a round's kind or covering review and
+        disagrees with the evidence it ships.
+        """
+        if not isinstance(recorded_rounds, list):
+            return
+        expected_by_index = {
+            entry["index"]: entry
+            for entry in round_projection(
+                [
+                    round_data
+                    for round_data in recorded_rounds
+                    if isinstance(round_data, Mapping)
+                    and isinstance(round_data.get("index"), int)
+                ],
+                status_by_path,
+                build_finish_round,
+            )
+        }
+        for round_data in recorded_rounds:
+            if not isinstance(round_data, Mapping):
+                continue
+            expected = expected_by_index.get(round_data.get("index"))
+            if expected is None:
+                continue
+            for field_name in ("kind", "reviewed_by"):
+                if field_name not in round_data:
+                    continue
+                if round_data[field_name] == expected[field_name]:
+                    continue
+                report.status = "invalid"
+                report.reasons.append(
+                    {
+                        "reason": "schema-violation",
+                        "target": "run.rounds[" + str(round_data["index"]) + "]."
+                        + field_name,
+                        "detail": "Round "
+                        + str(round_data["index"])
+                        + " declares "
+                        + field_name
+                        + " "
+                        + json.dumps(round_data[field_name])
+                        + ", but this Bundle's evidence derives "
+                        + json.dumps(expected[field_name])
+                        + ".",
+                    }
+                )
 
     def validate(self) -> ValidationReport:
         report = ValidationReport("valid", proof_path=str(self.proof_path))
@@ -3160,13 +3473,43 @@ class BundleValidator:
         # a three-round Bundle whose middle round held only a contract then
         # verified `valid`. The producer's account of itself cannot be the only
         # thing checked.
-        for gap in round_coverage_gaps(
-            bundle.get("run", {}).get("rounds", []),
-            {
-                item.get("path", ""): item.get("status", "")
+        recorded_rounds = bundle.get("run", {}).get("rounds", [])
+        round_status_by_path = {
+            item.get("path", ""): item.get("status", "")
+            for item in items
+            if isinstance(item, Mapping)
+        }
+        marker_item = next(
+            (
+                item
                 for item in items
                 if isinstance(item, Mapping)
-            },
+                and item.get("path") == REVIEW_PHASE_MARKER
+            ),
+            None,
+        )
+        build_finish_round = review_phase_boundary(
+            _read_text(self.bundle_dir / "evidence" / REVIEW_PHASE_MARKER)
+            if _evidence_is_published(marker_item)
+            else None,
+            [
+                round_data["index"]
+                for round_data in recorded_rounds
+                if isinstance(round_data, Mapping)
+                and isinstance(round_data.get("index"), int)
+            ]
+            if isinstance(recorded_rounds, list)
+            else [],
+        )
+        # The same reason the gaps are recomputed applies to the phase and
+        # coverage facts the manifest publishes: a round that declares itself
+        # review-only owes no summary, so an unchecked declaration is a way to
+        # excuse a missing one. Re-derive, then require the manifest to agree.
+        self._check_round_projection(
+            report, recorded_rounds, round_status_by_path, build_finish_round
+        )
+        for gap in round_coverage_gaps(
+            recorded_rounds, round_status_by_path, build_finish_round
         ):
             if report.status == "valid":
                 report.status = "incomplete"

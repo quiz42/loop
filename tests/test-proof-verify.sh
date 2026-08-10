@@ -262,6 +262,65 @@ else
     fail "proof-id mismatch target" "proof.json" "$manifest_report"
 fi
 
+# A review-phase round owes no builder summary, so a Bundle that relabels an
+# implementation round as one is claiming an exemption from the round-evidence
+# rule. The claim is re-derived from the published .review-phase-started marker
+# rather than read off the manifest, so re-hashing proof_id does not carry it.
+cp -R "$TEST_DIR/clean" "$TEST_DIR/round-kind-tamper"
+python3 - "$TEST_DIR/round-kind-tamper/proof.json" <<'PY'
+import hashlib
+import json
+import sys
+
+path = sys.argv[1]
+bundle = json.load(open(path, encoding="utf-8"))
+assert bundle["run"]["rounds"][0]["kind"] == "implementation"
+bundle["run"]["rounds"][0]["kind"] = "review_phase"
+payload = dict(bundle)
+payload.pop("proof_id", None)
+payload.pop("transport", None)
+bundle["proof_id"] = "sha256:" + hashlib.sha256(
+    json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+).hexdigest()
+with open(path, "w", encoding="utf-8") as output:
+    json.dump(bundle, output, ensure_ascii=False, sort_keys=True)
+PY
+round_kind_report=$(loop proof verify "$TEST_DIR/round-kind-tamper" --json)
+round_kind_status=$?
+assert_exit "a re-hashed round kind claim is still invalid" 3 "$round_kind_status"
+assert_report "round kind mismatch is actionable" "$round_kind_report" invalid schema-violation
+if [[ "$round_kind_report" == *'run.rounds[0].kind'* ]]; then
+    pass "round kind mismatch names the round it disagrees about"
+else
+    fail "round kind mismatch target" "run.rounds[0].kind" "$round_kind_report"
+fi
+
+# The same for the coverage edge: which review covers a round is derived, so
+# naming a different one does not make it so.
+cp -R "$TEST_DIR/clean" "$TEST_DIR/round-coverage-tamper"
+python3 - "$TEST_DIR/round-coverage-tamper/proof.json" <<'PY'
+import hashlib
+import json
+import sys
+
+path = sys.argv[1]
+bundle = json.load(open(path, encoding="utf-8"))
+assert bundle["run"]["rounds"][0]["reviewed_by"] == 0
+bundle["run"]["rounds"][0]["reviewed_by"] = 7
+payload = dict(bundle)
+payload.pop("proof_id", None)
+payload.pop("transport", None)
+bundle["proof_id"] = "sha256:" + hashlib.sha256(
+    json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+).hexdigest()
+with open(path, "w", encoding="utf-8") as output:
+    json.dump(bundle, output, ensure_ascii=False, sort_keys=True)
+PY
+round_coverage_report=$(loop proof verify "$TEST_DIR/round-coverage-tamper" --json)
+round_coverage_status=$?
+assert_exit "a re-hashed coverage claim is still invalid" 3 "$round_coverage_status"
+assert_report "coverage mismatch is actionable" "$round_coverage_report" invalid schema-violation
+
 cp -R "$TEST_DIR/clean" "$TEST_DIR/missing-evidence"
 rm "$TEST_DIR/missing-evidence/evidence/plan.md"
 missing_report=$(loop proof verify "$TEST_DIR/missing-evidence" --json)

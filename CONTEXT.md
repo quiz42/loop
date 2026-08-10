@@ -20,6 +20,18 @@ _Avoid_: Job, task, session
 One complete implementation attempt followed by an exit gate and independent review outcome.
 _Avoid_: Step, task, milestone
 
+**Implementation Round**:
+A Round at or before the Run's `build_finish_round` — one that had to deliver work, and so must record a summary. What it delivered is only evidenced once a review has covered it.
+_Avoid_: Build round, work round
+
+**Review-Phase Round**:
+A Round after the Run's `build_finish_round`. It records a review rather than new work and carries no builder summary, so its missing summary is a shape, not a gap. A clean re-review creates one.
+_Avoid_: Empty round, review round
+
+**Round Coverage**:
+The relation between a Round's summarized work and the review result that assessed it. `codex review` reads the cumulative diff from the base commit, so a review at Round N covers Round N and every earlier Round; work summarized in Round N and reviewed in Round N+1 is reviewed work. Coverage is derived from evidence and published per Round, never asserted by the producer.
+_Avoid_: Reviewed round, review linkage
+
 **Head Commit**:
 The commit at the end of a Loop Run, including any commits produced during Finalize (e.g. methodology analysis). A Proof Bundle always records the true Head Commit, even when it is newer than the Reviewed Commit — the Bundle is never scoped down to hide unreviewed tail changes.
 _Avoid_: Reviewed commit, base commit

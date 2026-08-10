@@ -424,11 +424,28 @@
     return content;
   }
 
+  // The recorded facts for one round, by index. A review-phase round carries a
+  // review result and no builder summary, so without saying so the Timeline
+  // reads it as a round missing its evidence.
+  function roundRecord(index) {
+    var rounds = list(proof.run && proof.run.rounds);
+    for (var position = 0; position < rounds.length; position += 1) {
+      if (object(rounds[position]) && rounds[position].index === index) {
+        return rounds[position];
+      }
+    }
+    return null;
+  }
+
   function timelineLabel(event, roundIndex) {
     var kind = string(event.kind, "event");
     var hasRecordedRound = typeof event.round === "number" && isFinite(event.round);
     var eventRound = hasRecordedRound ? event.round : roundIndex;
     if (kind === "round") {
+      var record = roundRecord(eventRound);
+      if (record && record.kind === "review_phase") {
+        return "Round " + eventRound + " (review phase)";
+      }
       return "Round " + eventRound;
     }
     if (kind === "mainline_verdict") {
@@ -459,6 +476,23 @@
       }
       if (typeof event.last_mainline_verdict === "string" && event.last_mainline_verdict.length) {
         rendered.push("Last mainline verdict: " + event.last_mainline_verdict);
+      }
+    }
+    if (event.kind === "round") {
+      var record = roundRecord(typeof event.round === "number" ? event.round : -1);
+      if (record) {
+        if (record.kind === "review_phase") {
+          rendered.push("Review-phase round: it records a review, not new work, so it carries no builder summary.");
+        }
+        if (typeof record.reviewed_by === "number" && isFinite(record.reviewed_by)) {
+          rendered.push(
+            record.reviewed_by === event.round
+              ? "Reviewed in this round."
+              : "Reviewed in round " + record.reviewed_by + "."
+          );
+        } else if (record.reviewed_by === null) {
+          rendered.push("No review result in this Bundle covers this round.");
+        }
       }
     }
     if (rendered.length) {

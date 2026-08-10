@@ -156,6 +156,30 @@ So the Proof layer is not being conservative here; it has no evidence to be
 conservative about. This is the root cause of the finding-to-fix linkage rate,
 and it is a Loop-side artifact gap, not a derivation gap.
 
+Fixed, together with the rule it was blocked on. `detect_review_issues` now
+writes a fact-only `round-N-review-result.md` on a clean pass — the round, the
+reviewed base and commit, and that no severity-marked finding was reported. The
+cache log is not copied: it is hundreds of lines of prompt and exec trace with
+absolute paths in it, and none of that is what closes a finding.
+
+Recording it creates a round holding a review result and no builder summary,
+which the round-evidence rule counted as missing evidence — the reason this
+could not be done on its own. [ADR-0007](adr/0007-round-evidence-is-per-round-with-review-carried-forward.md)
+settles that rule: evidence is owed per round, a round after the Run's
+`build_finish_round` is a Review-Phase Round and owes no summary, and a round's
+summarized work is covered by a review at its own index or a later one.
+
+**The corpus numbers above do not move, and should not.** These nine Runs were
+captured before Loop recorded a clean review, so the artifact is simply not in
+them; re-exporting them under this change reproduces the After column exactly —
+18/18 exported, 17/18 `valid`, zero leakage, the same 6/18 linkage. Writing the
+missing record into a captured Run to improve the figure would be manufacturing
+the evidence the whole layer exists to check. The gain is demonstrated instead
+on `clean-rereview-derived`, the `csv-writer` Run kept as a fixture and labelled
+a derivative, with the record Loop now writes appended: all four of its findings
+resolve, each carrying `fix_round` and `re_review_ref`, under both profiles.
+Runs recorded from here on carry it for real.
+
 ### 5. An interrupted Run cannot be resumed by a new session
 
 Every Run is pinned to the `session_id` in its state frontmatter, and
@@ -182,13 +206,6 @@ number from `verdict.per_ac`, `findings`, `evidence` and
 `integrity.compile_warnings`.
 
 ## Not done in this milestone
-
-**Observation 4, the discarded clean re-review.** Writing
-`round-N-review-result.md` on a clean pass would close the finding lifecycle,
-but it also adds round N to `run.rounds`, and `round_coverage_gaps` requires a
-final round to carry both a summary and a review result. A review-phase round
-has no builder summary, so the rule needs a matching refinement -- which is the
-question issue #30 already holds open. The dogfood evidence for it is above.
 
 **Observation 3's remaining half, a path-bearing Goal Tracker.** Masking is
 restricted to `round_review_result` because every other required kind feeds

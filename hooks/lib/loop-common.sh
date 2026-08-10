@@ -768,24 +768,132 @@ upsert_state_fields() {
     ' "$state_file" > "$temp_file" && mv "$temp_file" "$state_file"
 }
 
+# A human-readable note that a review came back clean. It is NOT provenance:
+# nothing decides anything from it, because a findings record is copied verbatim
+# from review output and could contain any line at all. It carries no bracketed
+# token, because the review readers score one that is not a single digit as a
+# malformed marker.
+readonly CLEAN_REVIEW_MARKER="Result: clean"
+
+REVIEW_MARKER_SCANNER="$LOOP_COMMON_PLUGIN_ROOT/scripts/review-markers.py"
+
+# Ask the shared scanner about the first review marker in <file>.
+#
+# The grammar lives in `proof/core.py` and nowhere else. Keeping a second copy
+# of it here in awk failed three times in a row -- on whether a marker must fit
+# inside ten columns or merely start there, on byte versus character offsets
+# once a line carried non-ASCII text, and on a token spanning a line break.
+# Every one of them had the same shape: the shell called a review clean that the
+# Proof layer reads as reporting a finding, and that record then resolves every
+# finding still open in the Run.
+#
+# Prints the 1-based line number on stdout when it finds one, or with
+# `--extract` the findings tail itself, cut from the same decoded text the
+# grammar scanned. The line number must never be handed to another reader to
+# re-locate the marker: `sed` and `wc` count raw `\n` bytes while the scanner
+# counts lines of the decoded text, and that difference once moved an
+# extraction past the marker it was extracting. Returns:
+#   0 - found
+#   1 - scanned, and there is no marker
+#   2 - could not scan (no python3, unreadable or undecodable file, any error)
+#
+# 2 is never 1, and callers must not collapse them. Issue #28 is what that costs:
+# a hook that tested only for its own failure codes treated `python3: command
+# not found` (127) as a pass and skipped the gate silently.
+# Usage: review_marker_line <file> [--canonical] [--tail N] [--extract]
+review_marker_line() {
+    local file="$1"
+    shift
+    local output
+    local status=0
+    output=$(python3 "$REVIEW_MARKER_SCANNER" "$file" "$@" 2>/dev/null) || status=$?
+    case "$status" in
+        0)
+            printf '%s' "$output"
+            return 0
+            ;;
+        1)
+            return 1
+            ;;
+        *)
+            return 2
+            ;;
+    esac
+}
+
+# Best-effort ASCII scan for the extraction path only, used when the shared
+# scanner cannot run. It is deliberately NOT used for the clean-review gate:
+# extraction that misses a finding is the detection gap issue #36 already
+# tracks, but an assertion that misses one is a false green.
+#
+# LC_ALL=C, deliberately: this scan is byte-oriented by design, and under a
+# UTF-8 locale BSD awk aborts with "towc: multibyte conversion failure" on the
+# first invalid byte -- before it reaches an ASCII marker on a later line, so
+# the finding vanished and the loop finalized. The C locale makes awk read
+# bytes, which is the only reading a fallback that exists for undecodable
+# input can afford.
+# Usage: review_marker_line_fallback <file>
+review_marker_line_fallback() {
+    LC_ALL=C awk '
+        match($0, /\[P[0-9]\]/) && RSTART <= 10 {
+            print NR
+            exit
+        }
+    ' "$1" 2>/dev/null
+}
+
 # Detect review issues from codex review log file
 # Returns:
 #   0 - issues found (caller should continue review loop)
-#   1 - no issues found (caller can proceed to finalize)
-#   2 - log file missing/empty (hard error - caller must block and require retry)
+#   1 - no issues found, or the outcome is ambiguous (caller can proceed)
+#   2 - hard analysis failure (caller must block and require retry): the log
+#       is missing or empty, a stale all-clear was found and could not be
+#       invalidated, or an existing record could not be classified safely.
+#       Either way nothing about this round is established.
 # Outputs: extracted review content to stdout if issues found
 # Arguments: $1=round_number
 # Required globals: LOOP_DIR, CACHE_DIR
 #
 # Algorithm:
-# 1. Scan the last 50 lines of the log file for [P?] markers in the first 10
-#    characters of each line. Real review issues only appear near the end of the
-#    log; scanning the full file risks false positives from earlier debug output
-#    and can hit argument-list-too-long limits on very large logs.
-# 2. Find the first such line where [P?] (? is a digit) appears in the first 10
-#    characters.
-# 3. If found: extract from that line to the end and output it.
-# 4. If not found: no issues, return 1.
+# 1. Drop the round's previous all-clear, if one exists. An all-clear is an
+#    assertion, not evidence, and each attempt must re-establish it; deciding
+#    which record is an all-clear uses raw bytes (`grep -F '[P'`), so the
+#    invalidation works even when the scanner cannot run -- which is exactly
+#    when a stale assertion is most dangerous. An extracted findings record IS
+#    evidence and is never dropped here. A stale all-clear that cannot be
+#    removed, or a record the probe cannot classify at all, is a hard failure
+#    (2): the unclassifiable record is preserved as evidence, and proceeding
+#    would let a later ambiguous return of 1 finalize against it.
+# 2. Ask the shared scanner for the findings tail: the first actionable [P?]
+#    line within the last 50 lines, and everything after it, cut from the text
+#    the scanner itself read. Real review issues only appear near the end of
+#    the log; scanning the full file for extraction invites false positives
+#    from earlier debug output.
+# 3. If found: publish it as the round record and output it -- but only after
+#    the scanner has re-read the exact bytes being published as still carrying
+#    an actionable marker. A record that fails that re-scan is not published at
+#    all: the caller still sees the findings, and the round simply has no
+#    record, which resolves nothing.
+# 4. If not found, scan the WHOLE log for any marker-shaped token. Record the
+#    clean result as a fact only when there is none -- and, symmetrically, only
+#    after the written bytes re-scan as marker-free. Otherwise the outcome is
+#    ambiguous and nothing is recorded.
+#
+# Extraction and assertion deliberately use different windows. Missing a finding
+# in the window is a detection gap the loop has always had. Asserting a clean
+# review that the log contradicts is a false green in the Proof Bundle, which is
+# worse, so step 4 fails closed where step 2 does not.
+#
+# The publish-time re-scan in steps 3 and 4 is the load-bearing part. Four
+# false-green paths in a row were each some reader disagreeing with some writer
+# about the same bytes -- window, column, byte offset, line break. The re-scan
+# asks the one authoritative reader about the one artifact that matters, the
+# bytes being published, so a disagreement of any future shape withholds the
+# record instead of publishing it.
+#
+# Optional globals: CODEX_REVIEWED_BASE, CODEX_REVIEWED_COMMIT -- recorded into
+# the clean-review result when the caller captured them, "not recorded" when it
+# did not, so this stays usable outside the Stop hook.
 #
 # Note: codex review outputs to stderr, so we analyze the combined log file
 # which contains both stdout and stderr (redirected with 2>&1).
@@ -800,39 +908,198 @@ detect_review_issues() {
         return 2
     fi
 
-    local total_lines
-    total_lines=$(wc -l < "$log_file")
-    echo "Analyzing log file: $log_file ($total_lines lines)" >&2
+    # A new attempt supersedes the round's previous all-clear before anything
+    # is scanned. The all-clear is an assertion the attempt has yet to earn;
+    # leaving the old one on disk means a retry whose scan cannot run finalizes
+    # against an assertion nobody re-established. The byte probe below is the
+    # structural test -- a findings record is copied verbatim from review
+    # output and begins at the marker line that triggered extraction, so it
+    # always carries "[P"; the all-clear this function writes never does --
+    # and it deliberately needs no scanner: grep over raw bytes cannot diverge
+    # on decoding, columns or line breaks.
+    #
+    # The probe's three outcomes each get their own answer, and the third is
+    # the one that used to fail open. 0 is a findings record: evidence, kept,
+    # scanning continues. 1 is the stale all-clear: deleted, or a hard failure
+    # when deletion cannot be verified. Anything else means the record could
+    # not be classified at all -- unreadable, ACL, transient I/O -- and that
+    # is preserved AND blocking: deleting it might destroy a findings record,
+    # while proceeding lets a later ambiguous return of 1 finalize against an
+    # assertion nobody could even read. Keeping the bytes and refusing the
+    # round is the only pairing that does neither.
+    if [[ -f "$result_file" ]]; then
+        local record_probe=0
+        LC_ALL=C grep -qF '[P' "$result_file" || record_probe=$?
+        if [[ "$record_probe" -eq 1 ]]; then
+            # "Dropped" is itself an assertion, and it gets the same treatment
+            # as every other one here: verified, or not made. An all-clear
+            # classified stale but left on disk -- ACL, immutable flag,
+            # read-only filesystem -- must surface as a hard failure, because
+            # a later ambiguous path returns 1, the caller reads 1 as safe to
+            # finalize, and export would then consume the exact record this
+            # block exists to remove. -e and -L cover a failed unlink and a
+            # concurrent recreation, symlink or otherwise.
+            if ! rm -f "$result_file" 2>/dev/null; then
+                echo "Error: could not invalidate the previous all-clear for round $round" >&2
+                return 2
+            fi
+            if [[ -e "$result_file" || -L "$result_file" ]]; then
+                echo "Error: previous all-clear remains for round $round; refusing to proceed against stale evidence" >&2
+                return 2
+            fi
+            echo "Dropped the previous all-clear for round $round; this attempt must re-establish it" >&2
+        elif [[ "$record_probe" -ne 0 ]]; then
+            echo "Error: could not classify the previous review record for safe invalidation (status $record_probe)" >&2
+            return 2
+        fi
+    fi
 
-    # Only scan the last 50 lines - real issues always appear near the end
+    echo "Analyzing log file: $log_file" >&2
+
+    # Only extract from the last 50 lines - real issues appear near the end
     local scan_lines=50
-    local start_line=$((total_lines > scan_lines ? total_lines - scan_lines + 1 : 1))
 
-    # Use awk on the tail to find the first line where [P?] appears in first 10 chars
-    local relative_line
-    relative_line=$(tail -n "$scan_lines" "$log_file" | awk '
-        substr($0, 1, 10) ~ /\[P[0-9]\]/ {
-            print NR
-            exit
-        }
-    ')
+    # The shared scanner cuts the findings tail out of the text it scanned, so
+    # no line number crosses back into shell arithmetic. `sed` counting raw
+    # `\n` bytes against the scanner counting decoded lines is how a bare-CR
+    # progress line once moved the extraction past the marker -- publishing a
+    # marker-free record that read as a clean review.
+    local extracted_content=""
+    local extract_status=0
+    extracted_content=$(review_marker_line "$log_file" --canonical --tail "$scan_lines" --extract) \
+        || extract_status=$?
 
-    if [[ -n "$relative_line" && "$relative_line" -gt 0 ]]; then
-        # Convert relative line (within tail) to absolute line in the full file
-        local found_line=$((start_line + relative_line - 1))
-        echo "Found [P?] issue at line $found_line" >&2
+    if [[ "$extract_status" -eq 2 ]]; then
+        # No scanner. Extraction falls back to a best-effort ASCII scan, which
+        # is what this function did before the scanner existed -- but the
+        # fallback only informs the caller; it publishes no record. Publishing
+        # is an assertion about what the review said, and every assertion here
+        # must pass the shared grammar's re-scan, which is exactly what is
+        # unavailable. A round without a record resolves nothing.
+        echo "Marker scanner unavailable; falling back to an ASCII-only scan" >&2
+        local total_lines start_line relative_line
+        total_lines=$(wc -l < "$log_file")
+        start_line=$((total_lines > scan_lines ? total_lines - scan_lines + 1 : 1))
+        relative_line=$(tail -n "$scan_lines" "$log_file" | review_marker_line_fallback /dev/stdin)
+        if [[ -n "$relative_line" && "$relative_line" -gt 0 ]]; then
+            # tail, awk and sed all count raw "\n" bytes of the same file, so
+            # this arithmetic is consistent with itself, unlike a scanner line
+            # number would be.
+            local found_line=$((start_line + relative_line - 1))
+            extracted_content=$(sed -n "${found_line},\$p" "$log_file")
+            echo "Found [P?] issue at line $found_line (fallback scan; no record published)" >&2
+            printf '## Codex Review Issues\n\n%s\n' "$extracted_content"
+            return 0
+        fi
+        extracted_content=""
+    fi
 
-        # Extract from found_line to end
-        local extracted_content
-        extracted_content=$(sed -n "${found_line},\$p" "$log_file")
+    if [[ "$extract_status" -eq 0 && -n "$extracted_content" ]]; then
+        # Publish through a temp file, atomically renamed only after the
+        # scanner has re-read the exact bytes being published as still carrying
+        # an actionable marker. This is the writer asking the authoritative
+        # reader about the artifact itself: whatever future shape a
+        # writer/reader disagreement takes, its product fails this re-scan and
+        # is withheld rather than published. The caller still gets the
+        # findings either way -- a withheld record costs the round its
+        # evidence, never the loop its review.
+        local tmp_file="${result_file}.tmp.$$"
+        # `|| true`: a failed write must not abort the function under set -e --
+        # the re-scan below reads the truncated or absent file, fails, and
+        # withholds the record, which is the intended response to it.
+        printf '%s\n' "$extracted_content" > "$tmp_file" || true
+        local verify_status=0
+        review_marker_line "$tmp_file" --canonical >/dev/null || verify_status=$?
+        if [[ "$verify_status" -eq 0 ]]; then
+            mv -f "$tmp_file" "$result_file"
+            echo "Review issues extracted to: $result_file" >&2
+        else
+            rm -f "$tmp_file"
+            echo "Extracted content failed its own re-scan (status $verify_status); no round record published" >&2
+        fi
 
-        # Save to result file for audit purposes
-        printf '%s\n' "$extracted_content" > "$result_file"
-        echo "Review issues extracted to: $result_file" >&2
-
-        # Output the content for the caller
         printf '## Codex Review Issues\n\n%s\n' "$extracted_content"
         return 0
+    fi
+
+    # Nothing canonical in the extraction window. That is NOT the same as "the
+    # review was clean", and the difference decides whether an all-clear may be
+    # written at all.
+    #
+    # The window above is 50 lines because findings appear at the end and a
+    # full-file scan invites false positives from earlier debug output. That
+    # trade is right for *extraction*. It is wrong for *assertion*: a canonical
+    # marker earlier in the log, or a marker-shaped token that is not a single
+    # digit (`[P10]`, `[P0-9]`), means this function has not established that
+    # the review was clean. Writing an all-clear there converts a silent miss
+    # into durable evidence that no finding was reported -- and the Proof layer
+    # then resolves every finding still open in the Run against it, which can
+    # carry a Run with unfixed work to `accept`.
+    #
+    # So the whole log decides whether the record may be written, through the
+    # shared scanner and with no fallback. Only "scanned, and there is no
+    # marker" earns an all-clear. A marker anywhere withholds it, and so does a
+    # scan that could not run: not looking is not the same as looking and seeing
+    # nothing, and treating them alike is the fail-open shape of issue #28.
+    local marker_anywhere=""
+    local gate_status=0
+    marker_anywhere=$(review_marker_line "$log_file") || gate_status=$?
+
+    if [[ "$gate_status" -ne 1 ]]; then
+        if [[ "$gate_status" -eq 2 ]]; then
+            echo "Marker scanner could not read the log; not recording a clean review" >&2
+        else
+            echo "Marker at line $marker_anywhere is outside the extraction window or malformed; not recording a clean review" >&2
+        fi
+        return 1
+    fi
+
+    # A clean review is a fact, and until now it was the one review outcome the
+    # Run did not keep. The verdict went only to the cache log, outside the Run,
+    # so a finding raised in an earlier round had nothing later to close it: a
+    # Run that fixed everything and passed its re-review still carried `open`
+    # findings forever (issue #33).
+    #
+    # What is written is a fact-only record -- this round, the base it was
+    # reviewed against, and that no severity-marked finding was reported. The
+    # cache log is not copied: it runs to hundreds of lines of prompt and exec
+    # trace with absolute paths in it, which a public profile would then have to
+    # withhold, and none of it is what closes a finding.
+    #
+    # The text must not contain a bracketed severity token anywhere in the first
+    # ten characters of a line. That is what the review readers scan for, and a
+    # token that is not a single digit reads as a *malformed* marker, which
+    # would make this round unparseable and leave the findings it was meant to
+    # resolve `unverifiable` instead. Say "P0-P9" in prose, never in brackets.
+    # The re-scan before the rename holds that rule the way the extraction
+    # branch holds its own: the all-clear is published only if the written
+    # bytes still read as marker-free to the grammar that will judge them.
+    local tmp_file="${result_file}.tmp.$$"
+    {
+        printf '# Round %s Code Review Result\n\n' "$round"
+        printf '%s\n' "$CLEAN_REVIEW_MARKER"
+        printf 'Reviewed base: %s\n' "${CODEX_REVIEWED_BASE:-not recorded}"
+        printf 'Reviewed commit: %s\n' "${CODEX_REVIEWED_COMMIT:-not recorded}"
+        printf '\nNo severity-marked finding (P0 through P9) was reported by '
+        printf 'codex review for this round.\n'
+    } > "$tmp_file" || true
+    # Two probes, both required: the grammar re-scan (what the Proof layer will
+    # read) and the raw-byte probe (what the up-front invalidation will use to
+    # classify this record on the next attempt). Publishing only what satisfies
+    # both keeps the two classifiers in agreement by construction -- an
+    # all-clear that carried "[P" anywhere would read clean to the grammar yet
+    # be retained as a findings record by the probe, outliving the attempt it
+    # belongs to.
+    local verify_status=0
+    review_marker_line "$tmp_file" >/dev/null || verify_status=$?
+    local byte_probe=0
+    LC_ALL=C grep -qF '[P' "$tmp_file" || byte_probe=$?
+    if [[ "$verify_status" -eq 1 && "$byte_probe" -eq 1 ]]; then
+        mv -f "$tmp_file" "$result_file"
+        echo "Clean review recorded to: $result_file" >&2
+    else
+        rm -f "$tmp_file"
+        echo "Clean record failed its own re-scan (grammar $verify_status, bytes $byte_probe); withholding it" >&2
     fi
 
     echo "No [P?] issues found in log file" >&2

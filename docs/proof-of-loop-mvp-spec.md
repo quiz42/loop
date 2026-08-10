@@ -140,7 +140,10 @@ Top-level objects in `proof.json` (`proof-bundle-v0.schema.json`):
                    "author_name": "...", "author_email": "..." } ],
   "specification": { "goal": "...", "acceptance_criteria": [ { "id": "ac-1", "text": "...", "text_sha256": "..." } ] },
   "run": { "session_timestamp": "...", "terminal_state": "complete|stop|cancel|maxiter|unexpected",
-           "rounds": [ ... ], "events": [ ... ] },
+           "rounds": [ { "index": 0,
+                         "kind": "implementation|review_phase|unknown",  // derived; see H
+                         "reviewed_by": 1 } ],                           // covering round, or null
+           "events": [ ... ] },
   "evidence":  [ { "id": "...", "path": "...", "sha256": "...", "bytes": 1234,
                    "kind": "round_summary", "status": "included|omitted|truncated|masked",
                    "omitted_reason": "profile-redaction|null",
@@ -279,6 +282,16 @@ Finding lifecycle (D6):
 - `resolved`: a later, parseable, successfully produced review result exists in which the finding key no longer appears;
 - `waived`: only when the Goal Tracker's Queued/Deferred tables carry an explicit record — neither silence nor a failed re-review constitutes `waived`.
 
+A clean re-review is a recorded artifact. Loop writes `round-N-review-result.md` on a clean pass as well as a failing one — a fact-only record naming the round, the reviewed base and commit, and that no severity-marked finding was reported. It used to write nothing, sending the verdict only to the cache log outside the Run, so the one artifact that can move a finding to `resolved` was produced and discarded and a Run that fixed everything carried `open` findings forever. The round that record creates is a Review-Phase Round under section H's round rule, which is why the two changes land together.
+
+**The record asserts only what the detector established.** Loop extracts findings from the tail of the review log, because that is where they appear; it writes the all-clear only when the *whole* log carries no severity-marked token, canonical or malformed. The two windows differ on purpose. Missing a finding during extraction is a detection gap; asserting a clean review the log contradicts is a false green that resolves every finding still open in the Run, and can carry unfixed work to `accept`.
+
+Both of Loop's scans call the Proof layer's own marker grammar rather than repeating it, so a gate cannot certify as absent a finding the Proof layer would have read — the two agree by construction, not by matching test cases. The findings tail is likewise cut out of the very text the grammar scanned, never re-located through a line number handed to a second reader that counts lines differently. Where the detector cannot establish a clean review it records nothing. A scan that could not run counts as not established: "could not look" is never "looked and saw nothing".
+
+No record is published without a re-scan of the published bytes. Every record is written to a temporary file, re-read through the same grammar, and atomically renamed into place only if it still reads as what it claims — a findings record as carrying an actionable marker, an all-clear as carrying none. A record that fails its own re-scan is withheld, so a writer/reader disagreement of any future shape costs the round its record rather than producing a false one.
+
+Each detection attempt that reaches its review log drops the round's previous all-clear before scanning it. An all-clear is an assertion the new attempt has yet to earn, not evidence, and it must not survive an attempt that could not re-establish it — least of all one whose scanner could not run. An attempt with no log to read blocks for retry without touching the record: it learned nothing, and the last completed review's earned record outranks a retry that never looked. If raw-byte classification of an existing record fails, Loop preserves the record as evidence and blocks the attempt; an unclassifiable record can never authorize finalization. Which record is an all-clear is decided structurally, over raw bytes and without the scanner: a findings record is copied verbatim from review output and begins at the marker line that triggered extraction, so it always carries `[P`; the all-clear never does, and review output cannot make itself look like one and be deleted. When the scanner is unavailable, the ASCII fallback still surfaces findings to the loop but publishes no record at all: publishing is an assertion, and the grammar that must verify assertions is exactly what is missing.
+
 Overall Delivery Verdict:
 
 - `accept`: every AC in the required set is `met`, no blocking finding is `open` or `unverifiable`, Terminal State is `complete`, and the evidence the profile requires is complete;
@@ -290,14 +303,24 @@ Both the verdict and per-AC statuses are **relative to this export's profile and
 
 ### H. Profiles and redaction
 
-`local-v0`: contains all Run artifacts and full commit metadata; `required_evidence_kinds` covers plan, goal_tracker, state, and each round's contract/summary/review_result.
+`local-v0`: contains all Run artifacts and full commit metadata; `required_evidence_kinds` covers plan, goal_tracker, state, round_contract, and each round's summary and review_result under the round rule below.
 
 `public-v1` (default) and `public-v0` (frozen):
 
 - **whole-item omit**: `round-N-prompt.md`, `round-N-review-prompt.md`, any transcript or log, `.loop/bitlesson.md`, `methodology-analysis-report.md`;
 - **field-level redaction**: commit author email;
-- **required evidence**: plan, goal_tracker, terminal state, and each round's summary and review_result; missing → `incomplete`;
+- **required evidence**: plan, goal_tracker, terminal state, and each round's summary and review_result under the round rule below; missing → `incomplete`;
 - **scanning**: a `secret`-class hit (PEM headers, common cloud credential prefixes, `token=`/`api_key=` assignments, high-entropy strings) → **export fails**, with an error naming the file and match type but never echoing the secret value; a `path`-class hit (absolute home paths such as `/Users/<name>/`, `/home/<name>/`) → under `public-v1` the item is published masked when the profile names its kind in `secret_scan.mask_kinds` and its source fits `max_item_bytes`, and otherwise downgraded to omitted — under `public-v0`, always omitted — in both cases with a warning and a disclosure record, without blocking the export.
+
+**The round rule** (both profiles; [ADR-0007](adr/0007-round-evidence-is-per-round-with-review-carried-forward.md)). Evidence is owed per round, and what a round owes depends on which kind of round it is. Loop records the boundary in `.review-phase-started` as `build_finish_round`, and numbers every review-phase artifact from `build_finish_round + 1` upward:
+
+- an **Implementation Round** (`index <= build_finish_round`) delivered work and must publish a summary;
+- a round that recorded a summary must be **covered**: a published review result at its own index or at a later recorded round. `codex review` reads the cumulative diff from the Run's base commit, so a later review covers the earlier work — a round reviewed in round N+1 is reviewed, not unreviewed;
+- a **Review-Phase Round** (`index > build_finish_round`) records a review, not new work, and owes no summary;
+- every recorded round needs at least one of summary or review result, or what happened in it is unrecorded;
+- `round_contract` is required **once per Run**, not per round: only round 0's contract is scaffolded, and no hook requires the rest.
+
+A violation is `incomplete`, never `invalid` — the evidence is thin, not forged — and an `incomplete` Bundle cannot derive `accept`. Each round's derived `kind` and `reviewed_by` are published in `run.rounds[]`; the Validator re-derives both from the Bundle's own evidence and the published marker, and a manifest that disagrees is `invalid`. Where a Bundle does not publish the marker, `kind` is `unknown` and the stricter reading applies: the final round needs both artifacts.
 
 The rationale for two tiers: a secret leak is irreversible and its target metric is zero, while absolute paths are privacy noise rather than an incident, and hard-failing on them would make public export unusable on real projects.
 

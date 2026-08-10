@@ -266,6 +266,15 @@
               "index": {
                 "description": "The zero-based ordinal used by the Run identity projection.",
                 "type": "integer"
+              },
+              "kind": {
+                "description": "Whether the round had to deliver work or only reviewed it, derived from the build_finish_round recorded in .review-phase-started. 'unknown' when this Bundle does not publish that marker, in which case the stricter round-evidence rule applies. Absent in Bundles written before ADR-0007.",
+                "type": "string",
+                "enum": ["implementation", "review_phase", "unknown"]
+              },
+              "reviewed_by": {
+                "description": "The earliest recorded round at or after this one whose review result this Bundle publishes, or null when none does. A review covers the cumulative diff from the base commit, so a later review covers this round's work.",
+                "type": ["integer", "null"]
               }
             },
             "additionalProperties": true

@@ -928,18 +928,97 @@ fi
 #                              check-todos-from-transcript.py. A real
 #                              hook-layer Python dependency; replacing it means
 #                              reimplementing a transcript parser in shell.
+#
+# One narrow exception inside the covered set: the `$REVIEW_MARKER_SCANNER`
+# call in loop-common.sh, which asks proof/core.py where a review marker is
+# (ADR-0007).
+#
+# It is admitted because it is not the shape this rule exists to stop. The two
+# offenders it names were fallback rungs inside utilities every code path uses,
+# and their absence broke basic behaviour in silence. This one sits on a single
+# branch of one function, called by one hook; when python3 is missing it says so
+# on stderr and withholds the clean-review record, which is exactly the state
+# the loop was in before that record existed. Nothing degrades; one optional
+# piece of evidence is not written.
+#
+# The alternative was tried and failed three times in three review rounds of
+# PR #35: a second copy of the marker grammar in awk diverged from
+# proof/core.py on column semantics, then on byte versus character offsets for
+# non-ASCII prefixes, then on a token spanning a line break -- each divergence
+# writing "no finding was reported" about a review the Proof layer reads as
+# reporting one, and each reaching `accept`. Measured against the 18 real review
+# logs of the M4 dogfood, the only shell rule crude enough to be safe without
+# Python (withhold on any `[P` at all) withholds the record from 6 of the 10
+# genuinely clean logs, so the safe shell version is not worth having.
+#
+# The exception is this one call and no other: any further python3 in these
+# files still fails, and tests/test-codex-review-merge.sh pins the fail-closed
+# behaviour when the scanner cannot run.
+#
+# "One call" is counted, not pattern-excused. Excusing every line that mentions
+# the variable name would let a second invocation ride in on a trailing
+# comment; instead, the one approved file must contain EXACTLY one non-comment
+# python3 line, and that line must be, in whole, the approved scanner
+# invocation -- a second call sharing the approved line would otherwise ride in
+# the same way. Every other covered file must contain none. The whole-line
+# anchor is brittle against refactoring on purpose: changing that line means
+# re-arguing the ADR-0007 exception, and this failing is how the argument is
+# requested.
+#
+# The exception names an exact path, not a basename: a future
+# scripts/lib/loop-common.sh carrying the same call is still a violation.
+APPROVED_CALL_LINE='^[0-9]+:[[:space:]]*output=\$\(python3 "\$REVIEW_MARKER_SCANNER" "\$file" "\$@" 2>/dev/null\) \|\| status=\$\?$'
+APPROVED_CALL_FILE="$PROJECT_ROOT/hooks/lib/loop-common.sh"
+
+# Prints a violation tag for <lib-path>, or nothing when the file satisfies
+# the policy. Factored so the policy itself can be probed with a decoy below.
+# Usage: runtime_python_violation <lib-path>
+runtime_python_violation() {
+    local lib="$1"
+    local python_lines total approved
+    python_lines=$(grep -n 'python3' "$lib" | grep -vE '^[0-9]+:[[:space:]]*#' || true)
+    [[ -z "$python_lines" ]] && return 0
+    if [[ "$lib" == "$APPROVED_CALL_FILE" ]]; then
+        total=$(printf '%s\n' "$python_lines" | grep -c .)
+        approved=$(printf '%s\n' "$python_lines" \
+            | grep -cE "$APPROVED_CALL_LINE") || true
+        if [[ "$total" -ne 1 || "$approved" -ne 1 ]]; then
+            printf '%s(python3-lines=%s,approved=%s) ' "${lib##*/}" "$total" "$approved"
+        fi
+    else
+        printf '%s ' "${lib##*/}"
+    fi
+}
+
 RUNTIME_PYTHON_REFS=""
 for lib in "$PROJECT_ROOT"/hooks/lib/*.sh "$PROJECT_ROOT"/scripts/lib/*.sh "$PROJECT_ROOT/scripts/portable-timeout.sh"; do
     [[ -f "$lib" ]] || continue
-    if grep -n 'python3' "$lib" | grep -vE '^[0-9]+:[[:space:]]*#' | grep -q .; then
-        RUNTIME_PYTHON_REFS="${RUNTIME_PYTHON_REFS}${lib##*/} "
-    fi
+    RUNTIME_PYTHON_REFS="${RUNTIME_PYTHON_REFS}$(runtime_python_violation "$lib")"
 done
 if [[ -z "$RUNTIME_PYTHON_REFS" ]]; then
-    pass "runtime shell libraries contain no python3 calls"
+    pass "runtime shell libraries hold exactly the one approved python3 call"
 else
-    fail "runtime shell libraries are Python-free" "no python3 references" "$RUNTIME_PYTHON_REFS"
+    fail "runtime shell libraries are Python-free" \
+        "one approved scanner call in $APPROVED_CALL_FILE, none elsewhere" "$RUNTIME_PYTHON_REFS"
 fi
+
+# Probe the policy itself, in both directions: the real file passes, and a
+# decoy at a different path -- same basename, same approved line -- fails.
+# Without this pair the path comparison above could quietly regress to a
+# basename comparison and no test would notice.
+DECOY_PYTHON_DIR=$(mktemp -d)
+cat > "$DECOY_PYTHON_DIR/loop-common.sh" <<'DECOY'
+    output=$(python3 "$REVIEW_MARKER_SCANNER" "$file" "$@" 2>/dev/null) || status=$?
+DECOY
+if [[ -z "$(runtime_python_violation "$APPROVED_CALL_FILE")" ]] && \
+   [[ -n "$(runtime_python_violation "$DECOY_PYTHON_DIR/loop-common.sh")" ]]; then
+    pass "the python3 exception holds for the exact path, not the basename"
+else
+    fail "python3 exception scope" \
+        "approved path clean, decoy path flagged" \
+        "approved: '$(runtime_python_violation "$APPROVED_CALL_FILE")' decoy: '$(runtime_python_violation "$DECOY_PYTHON_DIR/loop-common.sh")'"
+fi
+rm -rf "$DECOY_PYTHON_DIR"
 
 # ========================================
 # Static guards

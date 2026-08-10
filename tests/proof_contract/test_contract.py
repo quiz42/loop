@@ -460,6 +460,21 @@ class SchemaValidationTests(unittest.TestCase):
                     "enum", error_keywords(validate_instance(profile, self.profile_schema))
                 )
 
+    def test_round_kind_enum_matches_the_deriving_code(self):
+        """The schema's round kinds and the code's must not drift apart.
+
+        `round_projection` writes one of these strings into every Bundle and the
+        Validator compares against what it re-derives. If the schema admitted a
+        kind the code never produces, or refused one it does, the disagreement
+        would surface as an unexplained `invalid` on an honest Bundle.
+        """
+        from proof.core import ROUND_KINDS
+
+        schema_kinds = self.bundle_schema["properties"]["run"]["properties"][
+            "rounds"
+        ]["items"]["properties"]["kind"]["enum"]
+        self.assertEqual(tuple(schema_kinds), ROUND_KINDS)
+
     def test_anchored_patterns_reject_trailing_newlines(self):
         cases = [
             ("proof_id", lambda value: value.__setitem__("proof_id", value["proof_id"] + "\n")),
