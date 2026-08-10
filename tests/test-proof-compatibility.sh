@@ -812,6 +812,32 @@ bundle["integrity"]["status"] = "valid"
 PY
     assert_equals "declaring it valid is invalid, not accepted" "3|invalid" \
         "$(verify_run "$LYING_BUNDLE")"
+
+    # The other half of "the Validator checks the declaration's self-
+    # consistency" (spec section C): a truncated item must carry the size
+    # reason. That guard is the only check the Validator applies to a truncated
+    # declaration and nothing exercised it -- turning it off left all five
+    # suites green -- so a refactor could drop it and let `truncated` be used
+    # as an undisclosed omission that escapes the omission rules entirely.
+    MISLABELLED_BUNDLE="$TEST_DIR/bundles/truncated-mislabelled"
+    cp -R "$SILENT_SOURCE" "$MISLABELLED_BUNDLE"
+    # `integrity.status` is deliberately left at the exported `incomplete`.
+    # Declaring `invalid` here would make the exit code right for the wrong
+    # reason -- integrity-status-mismatch -- and the assertion would hold with
+    # the guard switched off.
+    rehash_bundle "$MISLABELLED_BUNDLE/proof.json" <<'PY'
+for item in bundle["evidence"]:
+    if item["path"] == "round-0-prompt.md":
+        item["omitted_reason"] = "profile-redaction"
+PY
+    assert_equals "a truncated item with the wrong omission reason is invalid at exit 3" \
+        "3|invalid" "$(verify_run "$MISLABELLED_BUNDLE")"
+    MISLABELLED_REASONS=$(verify_reasons "$MISLABELLED_BUNDLE")
+    if [[ "$MISLABELLED_REASONS" == *profile-violation* ]]; then
+        pass "and it is reported as a profile-violation"
+    else
+        fail "mislabelled truncation reason" "profile-violation" "$MISLABELLED_REASONS"
+    fi
 else
     fail "silent truncation export" "a bundle" "export failed"
 fi
