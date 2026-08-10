@@ -53,6 +53,11 @@ TEST_DIR=$(mktemp -d)
 cleanup() { rm -rf "$TEST_DIR"; }
 trap cleanup EXIT
 
+# `max_item_bytes` in both shipped profiles. Named once because the boundary
+# cases below have to agree with each other: one builds a source at exactly the
+# cap and another asserts no item is declared truncated at or under it.
+MAX_ITEM_BYTES=1048576
+
 echo "========================================"
 echo "Proof Compatibility Tests"
 echo "========================================"
@@ -473,14 +478,14 @@ fi
 # declaration contradicting the only fact that justifies it, while the
 # identical source under local-v0 and the same cap was `included`.
 MASKGROW_RUN=$(make_run maskgrow path-cited-review-complete)
-python3 - "$MASKGROW_RUN/round-1-review-result.md" <<'PY'
+python3 - "$MASKGROW_RUN/round-1-review-result.md" "$MAX_ITEM_BYTES" <<'PY'
 import sys
 
-path = sys.argv[1]
+path, cap = sys.argv[1], int(sys.argv[2])
 data = open(path, "rb").read().rstrip(b"\n")
 data += b"\n\nSee /Users/q for the workspace.\n"
 # Exactly max_item_bytes: within the limit, so the source is not oversized.
-data += b"." * (1048576 - len(data) - 1) + b"\n"
+data += b"." * (cap - len(data) - 1) + b"\n"
 open(path, "wb").write(data)
 PY
 
@@ -493,18 +498,19 @@ item = next(i for i in bundle['evidence'] if i['path'] == 'round-1-review-result
 print('%s|%s|%s' % (item['status'], item['omitted_reason'], item['bytes']))
 " "$MASKGROW_BUNDLE")
     assert_equals "a source that fits the cap is withheld as omitted, not truncated" \
-        "omitted|absolute-path|1048576" "$MASKGROW_ITEM"
+        "omitted|absolute-path|$MAX_ITEM_BYTES" "$MASKGROW_ITEM"
 
     # The general invariant, asserted over every item so a future size rule
     # cannot reintroduce the contradiction somewhere else in the Bundle.
     MASKGROW_CONTRADICTIONS=$(python3 -c "
 import json, sys
 bundle = json.load(open(sys.argv[1] + '/proof.json', encoding='utf-8'))
+cap = int(sys.argv[2])
 print(','.join(sorted(
     i['path'] for i in bundle['evidence']
-    if i['status'] == 'truncated' and i['bytes'] <= 1048576
+    if i['status'] == 'truncated' and i['bytes'] <= cap
 )))
-" "$MASKGROW_BUNDLE")
+" "$MASKGROW_BUNDLE" "$MAX_ITEM_BYTES")
     assert_equals "no truncated item declares a byte count within the limit" \
         "" "$MASKGROW_CONTRADICTIONS"
 
@@ -526,6 +532,12 @@ print(','.join(sorted(
 else
     fail "maskgrow export" "a bundle" "export failed"
 fi
+
+# The rule above withholds the item only because public-v1 can omit on the same
+# scan class it masks. A profile that masks a class it cannot omit has no floor
+# to fall to, so `load_profile` refuses it; that check is asserted in
+# tests/proof_contract/test_contract.py, where importing the module is the
+# seam, rather than here, where the CLI subprocess is.
 
 # ========================================
 # Verify contract (spec section J)
@@ -1128,7 +1140,7 @@ assert_equals "an archived pre-masking public-v0 Bundle verifies valid unchanged
 # ========================================
 
 echo ""
-echo "Section 9: An unrecognised file is kept, named, and costs the badge"
+echo "Section 9: An unrecognized file is kept, named, and costs the badge"
 
 # spec section F: an unrecognized file is recorded as `kind: unknown` and
 # produces a warning. The warning reuses `unparseable-artifact`, which section
@@ -1139,7 +1151,7 @@ STRAY_RUN=$(make_run stray clean-complete)
 printf 'scratch notes\n' > "$STRAY_RUN/scratch-notes.txt"
 STRAY_BUNDLE=$(export_run "$STRAY_RUN" stray)
 if [[ -n "$STRAY_BUNDLE" ]]; then
-    assert_equals "an unrecognised file is kept as kind unknown and named in a warning" \
+    assert_equals "an unrecognized file is kept as kind unknown and named in a warning" \
         "unknown/included|incomplete|unparseable-artifact" \
         "$(item_report_of "$STRAY_BUNDLE" scratch-notes.txt)"
 
@@ -1174,9 +1186,9 @@ else
     fail "stray export" "a bundle" "export failed"
 fi
 
-# A Loop-authored control marker is recognised metadata, not an unrecognised
+# A Loop-authored control marker is recognized metadata, not an unrecognized
 # artifact: it is kept as evidence and costs nothing. `.cancel-requested` and
-# `.review-phase-started` were already recognised. `.methodology-exit-reason`
+# `.review-phase-started` were already recognized. `.methodology-exit-reason`
 # is written by hooks/lib/methodology-analysis.sh and is the third of the same
 # family; it was classified as a stray file.
 MARKER_RUN=$(make_run marker clean-complete)
@@ -1261,6 +1273,10 @@ done
 # empty-review export from `incomplete` to `valid` with no warnings at all,
 # and all five suites stayed green. The non-UTF-8 half was unexercised
 # entirely.
+#
+# Defined here rather than in the shared helper block at the top of the file:
+# this runs a whole scenario for one input shape and is local to this section,
+# where the helpers above are utilities every section uses.
 unreadable_review_case() {
     local label="$1"
     local description="$2"
@@ -1313,7 +1329,7 @@ echo "Section 11: The exit codes the CLI reserves for its callers"
 # all five suites green.
 assert_equals "verify with no arguments is a usage error, not a verdict" "1" \
     "$(proof_exit verify)"
-assert_equals "verify with an unrecognised flag is a usage error" "1" \
+assert_equals "verify with an unrecognized flag is a usage error" "1" \
     "$(proof_exit verify --no-such-flag "$CLEAN_BUNDLE")"
 
 # A path that is not a Bundle reports `invalid` rather than a usage error,

@@ -7,6 +7,7 @@ import sys
 import unittest
 from copy import deepcopy
 from pathlib import Path
+from unittest import mock
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -166,6 +167,36 @@ class PublicProfileTests(unittest.TestCase):
         self.assertEqual(profile["required_evidence_kinds"], self._REQUIRED_EVIDENCE)
         self.assertEqual(profile["secret_scan"]["mask_on"], ["absolute-path"])
         self.assertEqual(profile["secret_scan"]["mask_kinds"], ["round_review_result"])
+
+    def test_every_masked_scan_class_has_an_omit_fallback(self):
+        """Masking is never the whole answer for a scan class, so it needs a floor.
+
+        Bytes that are not UTF-8 cannot be rewritten, a substitution leaving a
+        match behind must not be published, and one that no longer fits
+        `max_item_bytes` cannot be carried. All three fall through to the
+        omission rule, so a profile masking a class it cannot omit would
+        publish the source with the paths masking exists to remove. The schema
+        cannot express a dependency between two lists, so it is asserted here
+        for the shipped profiles and enforced in `load_profile` for any other.
+        """
+        for name in ("local-v0", "public-v0", "public-v1"):
+            secret_scan = load_profile(name)["secret_scan"]
+            self.assertLessEqual(
+                set(secret_scan.get("mask_on", [])),
+                set(secret_scan.get("omit_on", [])),
+                f"{name} masks a scan class it cannot omit",
+            )
+
+    def test_load_profile_refuses_a_masking_licence_with_no_fallback(self):
+        from proof.core import ProofError
+        from proof.core import load_profile as load_profile_checked
+
+        broken = deepcopy(load_profile("public-v1"))
+        broken["secret_scan"]["omit_on"] = []
+        with mock.patch("proof.core._default_profile", return_value=broken):
+            with self.assertRaises(ProofError) as raised:
+                load_profile_checked("public-v1")
+        self.assertIn("omit_on", str(raised.exception))
 
 
 class SchemaValidationTests(unittest.TestCase):

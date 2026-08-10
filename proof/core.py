@@ -1069,6 +1069,23 @@ def load_profile(name: str = DEFAULT_EXPORT_PROFILE) -> Dict[str, Any]:
     if not result.is_valid:
         detail = "; ".join(f"{issue.path}: {issue.message}" for issue in result.errors)
         raise ProofError(f"invalid verification profile {name!r}: {detail}")
+    # Masking is never the whole answer for a scan class: bytes that are not
+    # UTF-8 cannot be rewritten, a substitution that leaves a match behind must
+    # not be published, and one that no longer fits `max_item_bytes` cannot be
+    # carried. Every one of those falls through to the omission rule, so a
+    # profile that masks a class it cannot also omit has no floor -- the source
+    # bytes get published with the very paths masking exists to remove. The
+    # schema cannot express the dependency between the two lists, so it is
+    # checked here, where every reader of a profile passes.
+    secret_scan = profile.get("secret_scan", {}) or {}
+    unbacked = sorted(
+        set(secret_scan.get("mask_on", []) or []) - set(secret_scan.get("omit_on", []) or [])
+    )
+    if unbacked:
+        raise ProofError(
+            f"invalid verification profile {name!r}: secret_scan.mask_on names "
+            f"{', '.join(unbacked)} without the matching omit_on fallback"
+        )
     return profile
 
 
@@ -1502,9 +1519,17 @@ class EvidenceCompiler:
                         # `included`. Bytes that cannot be masked into the
                         # budget are bytes this profile cannot publish, so the
                         # item falls through to the omission rule and is
-                        # disclosed. Guarded on `omit_on` because that rule is
-                        # the only thing standing between the source and a raw
-                        # publication of the paths masking exists to remove.
+                        # disclosed.
+                        #
+                        # `load_profile` rejects a profile that masks a class it
+                        # cannot also omit, so for any profile the CLI can load
+                        # this condition holds and the rule is unconditional.
+                        # It is still written as a condition because a caller
+                        # constructing a profile mapping directly bypasses that
+                        # check, and the omission rule is the only thing between
+                        # the source and a raw publication of the paths masking
+                        # exists to remove: keeping the contradictory truncation
+                        # is the safer failure of the two.
                         masked_data = None
                 if masked_data is not None:
                     warnings.append(

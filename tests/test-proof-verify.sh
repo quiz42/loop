@@ -376,7 +376,8 @@ fi
 cp -R "$TEST_DIR/schema-invalid" "$TEST_DIR/schema-first"
 rm "$TEST_DIR/schema-first/evidence/plan.md"
 schema_first_report=$(loop proof verify "$TEST_DIR/schema-first" --json)
-assert_exit "a doubly-damaged Bundle is invalid" 3 "$?"
+schema_first_status=$?
+assert_exit "a doubly-damaged Bundle is invalid" 3 "$schema_first_status"
 if [[ "$schema_first_report" == *schema-violation* && "$schema_first_report" != *missing-file* ]]; then
     pass "the schema phase short-circuits before file existence is checked"
 else
