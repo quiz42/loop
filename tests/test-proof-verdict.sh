@@ -178,6 +178,28 @@ elif query == "warning_reasons":
             sorted({w["reason"] for w in bundle["integrity"]["compile_warnings"]})
         )
     )
+elif query.startswith("warning_for:"):
+    # Warnings naming one exact file. `warning_reasons` cannot distinguish two
+    # branches that raise the same reason about different artifacts.
+    target = query[len("warning_for:") :]
+    print(
+        ",".join(
+            sorted(
+                w["reason"]
+                for w in bundle["integrity"]["compile_warnings"]
+                if w.get("target") == target
+            )
+        )
+    )
+elif query.startswith("warning_detail_for:"):
+    target = query[len("warning_detail_for:") :]
+    print(
+        " ".join(
+            w.get("detail", "")
+            for w in bundle["integrity"]["compile_warnings"]
+            if w.get("target") == target
+        )
+    )
 elif query == "integrity":
     print(bundle["integrity"]["status"])
 elif query == "deferred_has_replan_ref":
@@ -1346,6 +1368,34 @@ if [[ -n "$MIXED_LOCAL" && -n "$MIXED_PUBLIC" && -n "$MIXED_HELD" ]]; then
                 "warning_reasons containing unparseable-artifact" "$MIXED_HELD_WARNINGS"
             ;;
     esac
+
+    # The withheld Bundle above raises `unparseable-artifact` from the
+    # truncation branch, not from the malformed marker, so it cannot stand in
+    # for the included ones -- and nothing else looked at their warnings.
+    # Deleting the malformed-marker warning, keeping the fail-closed behaviour
+    # the assertions above cover, left all five suites green. The included
+    # Bundles are the only place that branch is the sole source.
+    # public-v1 masks this review, so it carries the redaction record too; the
+    # exact set is asserted rather than a substring so neither warning can be
+    # lost behind the other.
+    for mixed in "local-v0:unparseable-artifact:$MIXED_LOCAL" \
+                 "public-v1:redacted-by-profile,unparseable-artifact:$MIXED_PUBLIC"; do
+        MIXED_PROFILE="${mixed%%:*}"
+        MIXED_REST="${mixed#*:}"
+        MIXED_EXPECTED="${MIXED_REST%%:*}"
+        MIXED_BUNDLE="${MIXED_REST#*:}"
+        assert_equals "$MIXED_PROFILE names the review the rejected marker came from" \
+            "$MIXED_EXPECTED" \
+            "$(probe "$MIXED_BUNDLE" warning_for:round-1-review-result.md)"
+        # Naming the token is what makes the warning actionable: a reader has
+        # to know which marker to fix, not merely that one of them is wrong.
+        MIXED_DETAIL=$(probe "$MIXED_BUNDLE" warning_detail_for:round-1-review-result.md)
+        if [[ "$MIXED_DETAIL" == *'[P?]'* ]]; then
+            pass "$MIXED_PROFILE quotes the rejected marker in the detail"
+        else
+            fail "$MIXED_PROFILE malformed-marker detail" "a detail quoting [P?]" "$MIXED_DETAIL"
+        fi
+    done
 else
     fail "mixed-markers export" "three bundles" "export failed"
 fi
