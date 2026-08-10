@@ -1340,6 +1340,16 @@ run_and_handle_code_review() {
         block_review_failure "$round" "Codex review produced no stdout output" "N/A"
     fi
 
+    # 0, 1 and 2 are the whole of detect_review_issues' documented contract.
+    # Anything else is the analysis itself dying -- a signal, a set -e abort
+    # mid-function -- and finalizing on it would read "the checker did not run"
+    # as "the checker found nothing", the issue #28 shape one level up the
+    # stack. A crash is transient the way the causes block_review_failure
+    # already lists are, so retrying is the right response to it too.
+    if [[ "$detect_exit" -ne 0 && "$detect_exit" -ne 1 ]]; then
+        block_review_failure "$round" "Review analysis exited outside its 0/1/2 contract" "$detect_exit"
+    fi
+
     # D17 Run Recorder: only now is the review confirmed to have actually run
     # and produced a real result (either issues found, or a clean pass) --
     # write the facts captured in run_codex_code_review. A run that hit
@@ -1354,6 +1364,11 @@ run_and_handle_code_review() {
     if [[ "$detect_exit" -eq 0 ]] && [[ -n "$merged_content" ]]; then
         # Issues found - continue review loop
         continue_review_loop_with_issues "$round" "$merged_content"
+    elif [[ "$detect_exit" -eq 0 ]]; then
+        # Status 0 promises extracted findings on stdout; an empty capture
+        # means the two halves of that promise disagree, and neither "issues
+        # found" nor "review passed" is established.
+        block_review_failure "$round" "Review analysis reported issues but produced no content" "$detect_exit"
     else
         # No issues found (exit code 1) - proceed to finalize
         echo "Code review passed with no issues. Proceeding to finalize phase." >&2
