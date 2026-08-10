@@ -905,13 +905,29 @@ class RunAdapter:
         plan_text = _read_text(plan_path)
         tracker_text = _read_text(tracker_path)
         warnings: List[Dict[str, str]] = []
+        # AC-10 asks each warning to name the file *and* the conclusion it
+        # costs, so a reader does not have to infer the damage from the final
+        # integrity status. These two are not interchangeable: the plan is the
+        # delivery's stated scope, while the Goal Tracker is where every
+        # acceptance criterion and every waiver is recorded.
         if plan_text is None:
             warnings.append(
-                {"reason": "missing-file", "target": "plan.md", "detail": "plan.md is missing or unreadable."}
+                {
+                    "reason": "missing-file",
+                    "target": "plan.md",
+                    "detail": "plan.md is missing or unreadable; the delivery's "
+                    "stated scope is absent from the Bundle.",
+                }
             )
         if tracker_text is None:
             warnings.append(
-                {"reason": "missing-file", "target": "goal-tracker.md", "detail": "goal-tracker.md is missing or unreadable."}
+                {
+                    "reason": "missing-file",
+                    "target": "goal-tracker.md",
+                    "detail": "goal-tracker.md is missing or unreadable; no "
+                    "acceptance criterion can be assessed and no waiver can be "
+                    "corroborated.",
+                }
             )
         criteria, criteria_problems = _parse_criteria(tracker_text)
         if criteria_problems:
@@ -1069,23 +1085,6 @@ def load_profile(name: str = DEFAULT_EXPORT_PROFILE) -> Dict[str, Any]:
     if not result.is_valid:
         detail = "; ".join(f"{issue.path}: {issue.message}" for issue in result.errors)
         raise ProofError(f"invalid verification profile {name!r}: {detail}")
-    # Masking is never the whole answer for a scan class: bytes that are not
-    # UTF-8 cannot be rewritten, a substitution that leaves a match behind must
-    # not be published, and one that no longer fits `max_item_bytes` cannot be
-    # carried. Every one of those falls through to the omission rule, so a
-    # profile that masks a class it cannot also omit has no floor -- the source
-    # bytes get published with the very paths masking exists to remove. The
-    # schema cannot express the dependency between the two lists, so it is
-    # checked here, where every reader of a profile passes.
-    secret_scan = profile.get("secret_scan", {}) or {}
-    unbacked = sorted(
-        set(secret_scan.get("mask_on", []) or []) - set(secret_scan.get("omit_on", []) or [])
-    )
-    if unbacked:
-        raise ProofError(
-            f"invalid verification profile {name!r}: secret_scan.mask_on names "
-            f"{', '.join(unbacked)} without the matching omit_on fallback"
-        )
     return profile
 
 
@@ -1521,15 +1520,17 @@ class EvidenceCompiler:
                         # item falls through to the omission rule and is
                         # disclosed.
                         #
-                        # `load_profile` rejects a profile that masks a class it
-                        # cannot also omit, so for any profile the CLI can load
-                        # this condition holds and the rule is unconditional.
-                        # It is still written as a condition because a caller
-                        # constructing a profile mapping directly bypasses that
-                        # check, and the omission rule is the only thing between
-                        # the source and a raw publication of the paths masking
-                        # exists to remove: keeping the contradictory truncation
-                        # is the safer failure of the two.
+                        # The fallback is a precondition of masking, not a
+                        # choice: this cause and the two older ones (bytes that
+                        # are not UTF-8, a substitution leaving a match behind)
+                        # all land on the omission rule, so a profile masking a
+                        # class it cannot omit would publish the source with the
+                        # paths masking exists to remove. Every shipped profile
+                        # satisfies that, and
+                        # tests/proof_contract/test_contract.py holds them to
+                        # it. The condition stays here because keeping the
+                        # contradictory truncation is the safer of the two
+                        # failures if a profile ever stops satisfying it.
                         masked_data = None
                 if masked_data is not None:
                     warnings.append(
@@ -3150,6 +3151,11 @@ class BundleValidator:
         secret_scan = profile.get("secret_scan", {}) or {}
         fail_on = list(secret_scan.get("fail_on", []))
         omit_on = set(secret_scan.get("omit_on", []))
+        # The Bundle pins the profile it was written under, so its size cap is
+        # part of what the Bundle declares about itself rather than an external
+        # parameter -- which is what makes a truncated item's byte count
+        # checkable here at all.
+        max_item_bytes = profile.get("max_item_bytes")
         ids: Dict[str, Dict[str, Any]] = {}
         # Compute the expected D4 short IDs before walking references.  A full
         # hash is valid only when two distinct path/hash pairs actually share
@@ -3251,11 +3257,28 @@ class BundleValidator:
                         relative,
                         "Omitted evidence must use a profile-supported omission reason.",
                     )
-            elif status == "truncated" and omitted_reason != "size-limit":
-                profile_violation(
-                    relative,
-                    "Truncated evidence must carry the size-limit omission reason.",
-                )
+            elif status == "truncated":
+                if omitted_reason != "size-limit":
+                    profile_violation(
+                        relative,
+                        "Truncated evidence must carry the size-limit omission reason.",
+                    )
+                elif isinstance(max_item_bytes, int) and item["bytes"] <= max_item_bytes:
+                    # `truncated` is the one withholding status whose reason was
+                    # taken on trust. `omitted` has its reason checked against
+                    # the profile, so a producer could withhold any optional
+                    # item by calling it truncated, deleting the bytes and
+                    # re-hashing -- and be told `incomplete`, which reads as a
+                    # size problem rather than a withheld artifact. The claim is
+                    # checkable from the Bundle's own two numbers: `bytes`
+                    # describes the source, and the profile it pins declares the
+                    # cap. The Compiler already refuses to produce this, so
+                    # accepting it here let the two disagree about the same rule.
+                    profile_violation(
+                        relative,
+                        f"Truncated evidence declares {item['bytes']} bytes, which does "
+                        f"not exceed the profile's max_item_bytes ({max_item_bytes}).",
+                    )
             if (
                 status != "omitted"
                 and _profile_omits_evidence(relative, kind, profile)

@@ -7,7 +7,6 @@ import sys
 import unittest
 from copy import deepcopy
 from pathlib import Path
-from unittest import mock
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -176,8 +175,12 @@ class PublicProfileTests(unittest.TestCase):
         `max_item_bytes` cannot be carried. All three fall through to the
         omission rule, so a profile masking a class it cannot omit would
         publish the source with the paths masking exists to remove. The schema
-        cannot express a dependency between two lists, so it is asserted here
-        for the shipped profiles and enforced in `load_profile` for any other.
+        cannot express a dependency between two lists, and profiles load by
+        name from the package directory only, so an incoherent profile could
+        only be one this repository ships. Asserting it over the shipped set is
+        therefore the whole of the rule; a run-time check in `load_profile`
+        would guard a case that cannot arise, and testing it would need a seam
+        past the CLI boundary the spec's Testing Decisions permit.
         """
         for name in ("local-v0", "public-v0", "public-v1"):
             secret_scan = load_profile(name)["secret_scan"]
@@ -186,17 +189,6 @@ class PublicProfileTests(unittest.TestCase):
                 set(secret_scan.get("omit_on", [])),
                 f"{name} masks a scan class it cannot omit",
             )
-
-    def test_load_profile_refuses_a_masking_licence_with_no_fallback(self):
-        from proof.core import ProofError
-        from proof.core import load_profile as load_profile_checked
-
-        broken = deepcopy(load_profile("public-v1"))
-        broken["secret_scan"]["omit_on"] = []
-        with mock.patch("proof.core._default_profile", return_value=broken):
-            with self.assertRaises(ProofError) as raised:
-                load_profile_checked("public-v1")
-        self.assertIn("omit_on", str(raised.exception))
 
 
 class SchemaValidationTests(unittest.TestCase):

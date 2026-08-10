@@ -261,6 +261,25 @@ print(
 PY
 }
 
+# Every compile-warning detail naming one exact source path, joined. AC-10
+# wants the conclusion a warning costs, and that lives in the detail rather
+# than in the reason code.
+warning_detail_of() {
+    python3 - "$1" "$2" <<'PY'
+import json
+import sys
+
+bundle = json.load(open(sys.argv[1] + "/proof.json", encoding="utf-8"))
+print(
+    " ".join(
+        warning.get("detail", "")
+        for warning in bundle["integrity"]["compile_warnings"]
+        if warning.get("target") == sys.argv[2]
+    )
+)
+PY
+}
+
 warnings_of() {
     python3 - "$1" <<'PY'
 import json
@@ -408,6 +427,34 @@ else
     fail "onlygap export" "a bundle" "export failed"
 fi
 
+# `legacy-version-gap` means "this Run predates the Recorder", which is why it
+# requires all three Recorder facts to be absent. A modern Run where no review
+# ran is missing only `reviewed_commit`, and calling that legacy would report a
+# current Run as an old one. The distinction is asserted because the obvious
+# widening -- warn when any Recorder fact is absent -- is wrong in exactly this
+# case, and nothing else here would catch it. `ended_at` cannot be the odd one
+# out: Loop writes it only alongside `head_commit`.
+NOREVIEW_RUN=$(make_run noreview clean-complete)
+python3 - "$NOREVIEW_RUN/complete-state.md" <<'PY'
+import re
+import sys
+
+path = sys.argv[1]
+text = open(path, encoding="utf-8").read()
+open(path, "w", encoding="utf-8").write(
+    re.sub(r"^reviewed_commit:.*\n", "", text, count=1, flags=re.MULTILINE)
+)
+PY
+NOREVIEW_BUNDLE=$(export_run "$NOREVIEW_RUN" noreview)
+if [[ -n "$NOREVIEW_BUNDLE" ]]; then
+    assert_equals "a Run that recorded no review is not reported as legacy" \
+        "reviewed-commit-unknown" "$(warnings_of "$NOREVIEW_BUNDLE")"
+    assert_equals "it is incomplete for the reason that is true of it" "2|incomplete" \
+        "$(verify_run "$NOREVIEW_BUNDLE")"
+else
+    fail "noreview export" "a bundle" "export failed"
+fi
+
 # ========================================
 # Oversized evidence
 # ========================================
@@ -535,9 +582,8 @@ fi
 
 # The rule above withholds the item only because public-v1 can omit on the same
 # scan class it masks. A profile that masks a class it cannot omit has no floor
-# to fall to, so `load_profile` refuses it; that check is asserted in
-# tests/proof_contract/test_contract.py, where importing the module is the
-# seam, rather than here, where the CLI subprocess is.
+# to fall to; every shipped profile satisfies that, and
+# tests/proof_contract/test_contract.py holds all three of them to it.
 
 # ========================================
 # Verify contract (spec section J)
@@ -860,6 +906,34 @@ PY
         pass "and it is reported as a profile-violation"
     else
         fail "mislabelled truncation reason" "profile-violation" "$MISLABELLED_REASONS"
+    fi
+
+    # The other direction, and the one that mattered: the reason was right but
+    # the size was not. `omitted` has its reason checked against the profile;
+    # `truncated` did not, so any optional item could be withheld by calling it
+    # truncated, deleting the bytes and re-hashing -- and the answer was
+    # `incomplete`, which reads as a size problem rather than a withheld
+    # artifact. `round-0-prompt.md` is 6032 bytes against a 1 MiB cap, and is
+    # neither required by local-v0 nor referenced by an event, so nothing else
+    # catches it.
+    UNDERCAP_BUNDLE="$TEST_DIR/bundles/truncated-undercap"
+    cp -R "$CLEAN_BUNDLE" "$UNDERCAP_BUNDLE"
+    rm "$UNDERCAP_BUNDLE/evidence/round-0-prompt.md"
+    rehash_bundle "$UNDERCAP_BUNDLE/proof.json" <<'PY'
+for item in bundle["evidence"]:
+    if item["path"] == "round-0-prompt.md":
+        assert item["bytes"] <= 1048576, item["bytes"]
+        item["status"] = "truncated"
+        item["omitted_reason"] = "size-limit"
+bundle["integrity"]["status"] = "incomplete"
+PY
+    assert_equals "a truncated item that fits the cap is invalid at exit 3" \
+        "3|invalid" "$(verify_run "$UNDERCAP_BUNDLE")"
+    UNDERCAP_REASONS=$(verify_reasons "$UNDERCAP_BUNDLE")
+    if [[ "$UNDERCAP_REASONS" == *profile-violation* ]]; then
+        pass "and withholding it as truncated is a profile-violation"
+    else
+        fail "under-cap truncation reason" "profile-violation" "$UNDERCAP_REASONS"
     fi
 else
     fail "silent truncation export" "a bundle" "export failed"
@@ -1246,10 +1320,12 @@ echo "Section 10: An unreadable source artifact names itself and costs a conclus
 # A missing goal-tracker.md is warned about twice, and both are wanted: it is
 # missing, and the tables the verdict reads cannot be parsed from a file that
 # is not there. The pair is asserted exactly so neither can quietly disappear.
-for missing in "plan.md:missing-file" \
-               "goal-tracker.md:missing-file,unparseable-artifact"; do
+for missing in "plan.md:missing-file:stated scope" \
+               "goal-tracker.md:missing-file,unparseable-artifact:no acceptance criterion can be assessed"; do
     MISSING_FILE="${missing%%:*}"
-    MISSING_REASONS="${missing#*:}"
+    MISSING_REST="${missing#*:}"
+    MISSING_REASONS="${MISSING_REST%%:*}"
+    MISSING_CONCLUSION="${MISSING_REST#*:}"
     MISSING_LABEL="missing-${MISSING_FILE%.md}"
     MISSING_RUN=$(make_run "$MISSING_LABEL" clean-complete)
     rm "$MISSING_RUN/$MISSING_FILE"
@@ -1261,6 +1337,14 @@ for missing in "plan.md:missing-file" \
         assert_equals "the warning names $MISSING_FILE and the Bundle is incomplete" \
             "absent|incomplete|$MISSING_REASONS" \
             "$(item_report_of "$MISSING_BUNDLE" "$MISSING_FILE")"
+        # AC-10 wants the conclusion too, not just the file: a reader should
+        # not have to infer what became unassessable from the final status.
+        MISSING_DETAIL=$(warning_detail_of "$MISSING_BUNDLE" "$MISSING_FILE")
+        if [[ "$MISSING_DETAIL" == *"$MISSING_CONCLUSION"* ]]; then
+            pass "and it names the conclusion losing $MISSING_FILE costs"
+        else
+            fail "$MISSING_FILE conclusion" "a detail naming '$MISSING_CONCLUSION'" "$MISSING_DETAIL"
+        fi
         assert_equals "a Run with no $MISSING_FILE verifies incomplete with exit 2" \
             "2|incomplete" "$(verify_run "$MISSING_BUNDLE")"
     else

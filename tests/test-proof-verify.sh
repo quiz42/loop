@@ -35,24 +35,35 @@ assert_exit() {
     fi
 }
 
+# The fifth argument, when given, is the `target` the reason must name. It is
+# read out of the parsed report rather than matched as a raw substring: the
+# contract promises parseable JSON with stable fields, not a particular
+# indentation, so a formatting-only serializer change must not turn these red.
 assert_report() {
     local name="$1"
     local report="$2"
     local expected_status="$3"
     local expected_reason="${4:-}"
-    if python3 - "$report" "$expected_status" "$expected_reason" <<'PY'
+    local expected_target="${5:-}"
+    if python3 - "$report" "$expected_status" "$expected_reason" "$expected_target" <<'PY'
 import json
 import sys
 
 report = json.loads(sys.argv[1])
 assert report["status"] == sys.argv[2]
+matching = [item for item in report["reasons"] if item.get("reason") == sys.argv[3]]
 if sys.argv[3]:
-    assert any(item.get("reason") == sys.argv[3] for item in report["reasons"])
+    assert matching, "no reason %r in %r" % (sys.argv[3], report["reasons"])
+if sys.argv[4]:
+    targets = [item.get("target") for item in matching]
+    assert sys.argv[4] in targets, "target %r not in %r" % (sys.argv[4], targets)
 PY
     then
         pass "$name"
     else
-        fail "$name" "status $expected_status${expected_reason:+ with $expected_reason}" "$report"
+        fail "$name" \
+            "status $expected_status${expected_reason:+ with $expected_reason}${expected_target:+ targeting $expected_target}" \
+            "$report"
     fi
 }
 
@@ -326,15 +337,11 @@ rm "$TEST_DIR/missing-evidence/evidence/plan.md"
 missing_report=$(loop proof verify "$TEST_DIR/missing-evidence" --json)
 missing_status=$?
 assert_exit "missing included Evidence is invalid" 3 "$missing_status"
-assert_report "missing Evidence names missing-file" "$missing_report" invalid missing-file
 # The spec's Testing Decisions require "the report naming the specific target"
 # for all three tampering cases. The hash-mismatch and proof-id-mismatch cases
 # check it; this one did not, so blanking the file name left the suite green.
-if [[ "$missing_report" == *'"target": "plan.md"'* ]]; then
-    pass "missing-file names the absent file"
-else
-    fail "missing-file target" "plan.md" "$missing_report"
-fi
+assert_report "missing Evidence names missing-file, and names the file" \
+    "$missing_report" invalid missing-file plan.md
 
 echo "=== Test: the schema phase rejects, reports, and short-circuits ==="
 
@@ -360,13 +367,8 @@ PY
 schema_report=$(loop proof verify "$TEST_DIR/schema-invalid" --json)
 schema_status=$?
 assert_exit "a schema-invalid manifest is invalid" 3 "$schema_status"
-assert_report "schema rejection is reported as schema-violation" \
-    "$schema_report" invalid schema-violation
-if [[ "$schema_report" == *'"target": "$.run"'* ]]; then
-    pass "the schema violation names the offending JSON pointer"
-else
-    fail "schema violation target" '"$.run"' "$schema_report"
-fi
+assert_report "schema rejection names schema-violation and the JSON pointer" \
+    "$schema_report" invalid schema-violation '$.run'
 
 # Validation order (spec section J): schema first, and the schema phase is the
 # only one of the seven that short-circuits -- every later phase accumulates
@@ -422,13 +424,8 @@ PY
 unknown_profile_report=$(loop proof verify "$TEST_DIR/unknown-profile" --json)
 unknown_profile_status=$?
 assert_exit "an unresolvable profile is invalid" 3 "$unknown_profile_status"
-assert_report "an unresolvable profile is a schema-violation" \
-    "$unknown_profile_report" invalid schema-violation
-if [[ "$unknown_profile_report" == *'"target": "profile.name"'* ]]; then
-    pass "and it names profile.name"
-else
-    fail "unknown profile target" "profile.name" "$unknown_profile_report"
-fi
+assert_report "an unresolvable profile is a schema-violation naming profile.name" \
+    "$unknown_profile_report" invalid schema-violation profile.name
 
 loop proof export --run "$RUN_DIR" --profile public-v0 --out "$TEST_DIR/public" >/dev/null 2>&1
 public_setup_status=$?
