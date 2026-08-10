@@ -825,9 +825,16 @@ review_marker_line() {
 # scanner cannot run. It is deliberately NOT used for the clean-review gate:
 # extraction that misses a finding is the detection gap issue #36 already
 # tracks, but an assertion that misses one is a false green.
+#
+# LC_ALL=C, deliberately: this scan is byte-oriented by design, and under a
+# UTF-8 locale BSD awk aborts with "towc: multibyte conversion failure" on the
+# first invalid byte -- before it reaches an ASCII marker on a later line, so
+# the finding vanished and the loop finalized. The C locale makes awk read
+# bytes, which is the only reading a fallback that exists for undecodable
+# input can afford.
 # Usage: review_marker_line_fallback <file>
 review_marker_line_fallback() {
-    awk '
+    LC_ALL=C awk '
         match($0, /\[P[0-9]\]/) && RSTART <= 10 {
             print NR
             exit
@@ -839,7 +846,9 @@ review_marker_line_fallback() {
 # Returns:
 #   0 - issues found (caller should continue review loop)
 #   1 - no issues found, or the outcome is ambiguous (caller can proceed)
-#   2 - log file missing/empty (hard error - caller must block and require retry)
+#   2 - hard analysis failure (caller must block and require retry): the log
+#       is missing or empty, or a stale all-clear was found and could not be
+#       invalidated. Either way nothing about this round is established.
 # Outputs: extracted review content to stdout if issues found
 # Arguments: $1=round_number
 # Required globals: LOOP_DIR, CACHE_DIR
@@ -850,7 +859,9 @@ review_marker_line_fallback() {
 #    which record is an all-clear uses raw bytes (`grep -F '[P'`), so the
 #    invalidation works even when the scanner cannot run -- which is exactly
 #    when a stale assertion is most dangerous. An extracted findings record IS
-#    evidence and is never dropped here.
+#    evidence and is never dropped here. A stale all-clear that cannot be
+#    removed is a hard failure (2): proceeding would let a later ambiguous
+#    return of 1 finalize against it.
 # 2. Ask the shared scanner for the findings tail: the first actionable [P?]
 #    line within the last 50 lines, and everything after it, cut from the text
 #    the scanner itself read. Real review issues only appear near the end of
@@ -910,7 +921,22 @@ detect_review_issues() {
         local record_probe=0
         LC_ALL=C grep -qF '[P' "$result_file" || record_probe=$?
         if [[ "$record_probe" -eq 1 ]]; then
-            rm -f "$result_file"
+            # "Dropped" is itself an assertion, and it gets the same treatment
+            # as every other one here: verified, or not made. An all-clear
+            # classified stale but left on disk -- ACL, immutable flag,
+            # read-only filesystem -- must surface as a hard failure, because
+            # a later ambiguous path returns 1, the caller reads 1 as safe to
+            # finalize, and export would then consume the exact record this
+            # block exists to remove. -e and -L cover a failed unlink and a
+            # concurrent recreation, symlink or otherwise.
+            if ! rm -f "$result_file" 2>/dev/null; then
+                echo "Error: could not invalidate the previous all-clear for round $round" >&2
+                return 2
+            fi
+            if [[ -e "$result_file" || -L "$result_file" ]]; then
+                echo "Error: previous all-clear remains for round $round; refusing to proceed against stale evidence" >&2
+                return 2
+            fi
             echo "Dropped the previous all-clear for round $round; this attempt must re-establish it" >&2
         fi
     fi

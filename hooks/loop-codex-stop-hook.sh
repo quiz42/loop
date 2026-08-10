@@ -1336,8 +1336,10 @@ run_and_handle_code_review() {
     merged_content=$(detect_review_issues "$round") || detect_exit=$?
 
     if [[ "$detect_exit" -eq 2 ]]; then
-        # Stdout missing/empty is a hard error - block and require retry
-        block_review_failure "$round" "Codex review produced no stdout output" "N/A"
+        # Hard analysis failure: no usable review log, or a stale review
+        # record that could not be invalidated. Either way nothing about this
+        # round is established - block and require retry
+        block_review_failure "$round" "Review analysis failed: no usable review output, or a stale review record could not be invalidated" "N/A"
     fi
 
     # 0, 1 and 2 are the whole of detect_review_issues' documented contract.

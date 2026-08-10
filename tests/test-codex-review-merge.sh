@@ -729,6 +729,25 @@ printf 'ok line\n\xff\xfe undecodable bytes\nnothing else here\n' \
     > "$CACHE_DIR/round-86-codex-review.log"
 assert_no_clean_record 86 "an undecodable log without findings"
 
+# The same shape under an explicitly UTF-8 locale -- the environment CI's
+# macOS runners run in, where BSD awk aborts with "towc: multibyte conversion
+# failure" on the first invalid byte unless the fallback pins LC_ALL=C. A
+# C-locale shell passed this while the UTF-8 runner silently lost the finding
+# and finalized, so the byte scan must not depend on the locale the hook
+# happened to inherit.
+printf 'ok line\n\xff\xfe undecodable bytes\n- [P1] ASCII finding - f.py:7\nafter\n' \
+    > "$CACHE_DIR/round-88-codex-review.log"
+set +e
+OUTPUT=$(LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 detect_review_issues 88 2>/dev/null)
+RESULT=$?
+set -e
+if [[ $RESULT -eq 0 && "$OUTPUT" == *'[P1]'* && ! -f "$LOOP_DIR/round-88-review-result.md" ]]; then
+    pass "the fallback survives a UTF-8 locale on undecodable bytes"
+else
+    fail "fallback locale independence" "return 0, [P1] in output, no record" \
+        "return $RESULT, record: $(test -f "$LOOP_DIR/round-88-review-result.md" && echo yes || echo no)"
+fi
+
 # The gate side of the same separators, through the parity harness: a marker
 # hidden behind CR or FF arithmetic must still withhold the all-clear when it
 # sits outside the extraction window.
@@ -959,6 +978,45 @@ if [[ $RESULT -eq 0 && "$OUTPUT" == *'[P1]'* && ! -f "$LOOP_DIR/round-103-review
 else
     fail "fallback publish" "return 0, [P1] in output, no record" \
         "return $RESULT, record: $(test -f "$LOOP_DIR/round-103-review-result.md" && echo yes || echo no)"
+fi
+
+# (f) An all-clear the attempt cannot remove is a hard failure, not a pass.
+# "Dropped the previous all-clear" is itself an assertion; if the unlink did
+# not happen, saying it did lets a later ambiguous return of 1 finalize
+# against the very record the invalidation exists to remove. A read-only Run
+# directory pins the shape: exit 2, the stale record untouched, no claim it
+# was dropped -- and an earlier round's findings record rides through intact,
+# because a failed invalidation resolves nothing.
+printf 'Code review complete\nNothing to report\n' \
+    > "$CACHE_DIR/round-105-codex-review.log"
+set +e
+detect_review_issues 105 >/dev/null 2>&1
+set -e
+printf -- '- [P1] Earlier genuine finding - f.py:1-2\n' \
+    > "$LOOP_DIR/round-104-review-result.md"
+{
+    for i in $(seq 1 4); do echo "Debug line $i"; done
+    printf -- '- [P1] Reported on the retry, outside the window - f.py:1\n'
+    for i in $(seq 6 70); do echo "More output line $i"; done
+} > "$CACHE_DIR/round-105-codex-review.log"
+if [[ -f "$LOOP_DIR/round-105-review-result.md" ]]; then
+    chmod -w "$LOOP_DIR"
+    set +e
+    RO_ERR=$(detect_review_issues 105 2>&1 >/dev/null)
+    RESULT=$?
+    set -e
+    chmod +w "$LOOP_DIR"
+    if [[ $RESULT -eq 2 ]] && [[ -f "$LOOP_DIR/round-105-review-result.md" ]] && \
+       [[ "$RO_ERR" != *"Dropped the previous all-clear"* ]] && \
+       grep -qF '[P1]' "$LOOP_DIR/round-104-review-result.md"; then
+        pass "an all-clear that cannot be invalidated is a hard failure"
+    else
+        fail "read-only invalidation" \
+            "return 2, stale record present, no drop claim, earlier finding intact" \
+            "return $RESULT, stderr: $RO_ERR"
+    fi
+else
+    fail "read-only invalidation setup" "an all-clear on disk" "no record written"
 fi
 
 # ========================================
