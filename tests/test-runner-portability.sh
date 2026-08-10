@@ -954,17 +954,37 @@ fi
 # The exception is this one call and no other: any further python3 in these
 # files still fails, and tests/test-codex-review-merge.sh pins the fail-closed
 # behaviour when the scanner cannot run.
+#
+# "One call" is counted, not pattern-excused. Excusing every line that mentions
+# the variable name would let a second invocation ride in on a trailing
+# comment; instead, loop-common.sh must contain EXACTLY one non-comment python3
+# line, and that line must be, in whole, the approved scanner invocation -- a
+# second call sharing the approved line would otherwise ride in the same way.
+# Every other covered file must contain none. The whole-line anchor is brittle
+# against refactoring on purpose: changing that line means re-arguing the
+# ADR-0007 exception, and this failing is how the argument is requested.
 RUNTIME_PYTHON_REFS=""
+APPROVED_CALL_LINE='^[0-9]+:[[:space:]]*output=\$\(python3 "\$REVIEW_MARKER_SCANNER" "\$file" "\$@" 2>/dev/null\) \|\| status=\$\?$'
 for lib in "$PROJECT_ROOT"/hooks/lib/*.sh "$PROJECT_ROOT"/scripts/lib/*.sh "$PROJECT_ROOT/scripts/portable-timeout.sh"; do
     [[ -f "$lib" ]] || continue
-    if grep -n 'python3' "$lib" | grep -vE '^[0-9]+:[[:space:]]*#' | grep -v 'REVIEW_MARKER_SCANNER' | grep -q .; then
+    python_lines=$(grep -n 'python3' "$lib" | grep -vE '^[0-9]+:[[:space:]]*#' || true)
+    [[ -z "$python_lines" ]] && continue
+    if [[ "${lib##*/}" == "loop-common.sh" ]]; then
+        total=$(printf '%s\n' "$python_lines" | grep -c .)
+        approved=$(printf '%s\n' "$python_lines" \
+            | grep -cE "$APPROVED_CALL_LINE") || true
+        if [[ "$total" -ne 1 || "$approved" -ne 1 ]]; then
+            RUNTIME_PYTHON_REFS="${RUNTIME_PYTHON_REFS}${lib##*/}(python3-lines=$total,approved=$approved) "
+        fi
+    else
         RUNTIME_PYTHON_REFS="${RUNTIME_PYTHON_REFS}${lib##*/} "
     fi
 done
 if [[ -z "$RUNTIME_PYTHON_REFS" ]]; then
-    pass "runtime shell libraries contain no python3 calls"
+    pass "runtime shell libraries hold exactly the one approved python3 call"
 else
-    fail "runtime shell libraries are Python-free" "no python3 references" "$RUNTIME_PYTHON_REFS"
+    fail "runtime shell libraries are Python-free" \
+        "one approved scanner call in loop-common.sh, none elsewhere" "$RUNTIME_PYTHON_REFS"
 fi
 
 # ========================================
