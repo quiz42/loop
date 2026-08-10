@@ -434,6 +434,163 @@ else
 fi
 
 # ========================================
+# Test 3f: The gate never contradicts parse_review_result
+# ========================================
+# This is the invariant, asserted directly rather than case by case: an
+# all-clear may be written only for review text that `parse_review_result`
+# reads as carrying no marker at all, canonical or malformed.
+#
+# It is asserted this way because the case-by-case version kept passing while
+# the property failed. The hook used to re-implement the grammar in awk and the
+# two drifted three times -- on whether a marker must fit inside ten columns or
+# merely start there, on byte versus character offsets for non-ASCII prefixes,
+# and on a token spanning a line break. Each round of tests covered the shapes
+# already known to differ. The grammar now lives only in proof/core.py and the
+# hook reads it through scripts/review-markers.py, so this checks the two agree
+# on inputs chosen to break the old implementations.
+echo "Test 3f: an all-clear never contradicts parse_review_result"
+
+PARITY_ROUND=50
+
+# Usage: assert_gate_parity <label> <log-file>
+assert_gate_parity() {
+    local label="$1"
+    local log="$2"
+    PARITY_ROUND=$((PARITY_ROUND + 1))
+    cp "$log" "$CACHE_DIR/round-${PARITY_ROUND}-codex-review.log"
+    set +e
+    detect_review_issues "$PARITY_ROUND" >/dev/null 2>&1
+    set -e
+
+    local record="$LOOP_DIR/round-${PARITY_ROUND}-review-result.md"
+    local wrote_all_clear=no
+    if [[ -f "$record" ]] && grep -q "^${CLEAN_REVIEW_MARKER}$" "$record"; then
+        wrote_all_clear=yes
+    fi
+
+    local proof_sees
+    proof_sees=$(cd "$PROJECT_ROOT" && python3 - "$log" <<'PY'
+import sys
+sys.path.insert(0, ".")
+from proof.core import parse_review_result
+
+try:
+    text = open(sys.argv[1], encoding="utf-8").read()
+except (OSError, UnicodeError):
+    print("unreadable")
+    raise SystemExit(0)
+facts = parse_review_result(text)
+print("none" if not facts.markers and not facts.malformed_markers else "marker")
+PY
+)
+    # The implication that matters: an all-clear only where Proof sees nothing.
+    # The hook may withhold one where Proof sees nothing too -- withholding is
+    # always safe -- so the converse is not asserted.
+    if [[ "$wrote_all_clear" == "yes" && "$proof_sees" != "none" ]]; then
+        fail "gate parity: $label" "no all-clear when Proof reads a marker" \
+            "all-clear written, Proof reads: $proof_sees"
+    else
+        pass "gate parity: $label (all-clear=$wrote_all_clear, proof=$proof_sees)"
+    fi
+}
+
+# Seven U+00E9 then a canonical marker. Python counts characters, so the marker
+# starts at character 8 and is a valid P1; awk's RSTART counts bytes and put it
+# at 15, past the anchor, so the old gate called this clean.
+printf '\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9[P1] UTF-8 prefixed finding - f.py:1\n' \
+    > "$TEST_DIR/utf8-canonical.log"
+assert_gate_parity "UTF-8 prefixed canonical marker" "$TEST_DIR/utf8-canonical.log"
+
+# The same, pushed outside the extraction window, so only the gate can catch it.
+{
+    for i in $(seq 1 4); do echo "Debug line $i"; done
+    printf '\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9[P1] UTF-8, out of window - f.py:1\n'
+    for i in $(seq 6 70); do echo "More output line $i"; done
+} > "$TEST_DIR/utf8-out-of-window.log"
+assert_gate_parity "UTF-8 prefixed marker outside the window" "$TEST_DIR/utf8-out-of-window.log"
+
+printf '\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9[P10] UTF-8 prefixed, out of range - f.py:1\n' \
+    > "$TEST_DIR/utf8-p10.log"
+assert_gate_parity "UTF-8 prefixed [P10]" "$TEST_DIR/utf8-p10.log"
+
+printf '\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9[P0-9] UTF-8 prefixed literal class - f.py:1\n' \
+    > "$TEST_DIR/utf8-p09.log"
+assert_gate_parity "UTF-8 prefixed [P0-9]" "$TEST_DIR/utf8-p09.log"
+
+# `_FINDING_MARKER_ATTEMPT` permits a newline inside the token, because its
+# `[^\]]*` class does. A line-oriented scan cannot see this one at all.
+printf 'review output\n       [P\ncontinuation] trailing\n' \
+    > "$TEST_DIR/multiline-token.log"
+assert_gate_parity "a marker token spanning a line break" "$TEST_DIR/multiline-token.log"
+
+# Controls, so the harness is not passing because it never writes an all-clear.
+printf 'Code review complete\nNothing to report\n' > "$TEST_DIR/parity-clean.log"
+assert_gate_parity "a genuinely clean log" "$TEST_DIR/parity-clean.log"
+if [[ -f "$LOOP_DIR/round-${PARITY_ROUND}-review-result.md" ]]; then
+    pass "and the clean control does earn its all-clear"
+else
+    fail "parity clean control" "an all-clear for a clean log" "no record written"
+fi
+
+# For each ambiguous class, a finding already open must stay open: the whole
+# danger is that an all-clear resolves it.
+setup_test_env
+printf -- '- [P1] Earlier genuine finding - f.py:1-2\n' \
+    > "$LOOP_DIR/round-60-review-result.md"
+for probe in utf8-out-of-window utf8-p10 multiline-token; do
+    cp "$TEST_DIR/$probe.log" "$CACHE_DIR/round-61-codex-review.log"
+    rm -f "$LOOP_DIR/round-61-review-result.md"
+    set +e
+    detect_review_issues 61 >/dev/null 2>&1
+    set -e
+    if [[ ! -f "$LOOP_DIR/round-61-review-result.md" ]] && \
+       grep -q '\[P1\]' "$LOOP_DIR/round-60-review-result.md"; then
+        pass "$probe leaves an already-open finding unresolved"
+    else
+        fail "$probe active finding" "no record, earlier finding intact" \
+            "record exists: $(test -f "$LOOP_DIR/round-61-review-result.md" && echo yes || echo no)"
+    fi
+done
+
+# ========================================
+# Test 3g: A scan that cannot run is not a clean scan
+# ========================================
+# Issue #28 is the cautionary tale: a hook that tested only for its own failure
+# codes read `python3: command not found` (127) as a pass and skipped the gate
+# in silence. "Could not look" must never be recorded as "looked and saw
+# nothing", so the scanner reports those separately and the gate demands the
+# second one.
+echo "Test 3g: an unavailable scanner withholds the all-clear"
+
+setup_test_env
+printf 'Code review complete\nNothing to report\n' \
+    > "$CACHE_DIR/round-70-codex-review.log"
+SAVED_SCANNER="$REVIEW_MARKER_SCANNER"
+REVIEW_MARKER_SCANNER="$TEST_DIR/no-such-scanner.py"
+set +e
+detect_review_issues 70 >/dev/null 2>&1
+SCANNER_RC=$?
+set -e
+REVIEW_MARKER_SCANNER="$SAVED_SCANNER"
+if [[ $SCANNER_RC -eq 1 ]] && [[ ! -f "$LOOP_DIR/round-70-review-result.md" ]]; then
+    pass "a clean log earns no all-clear when the scanner cannot run"
+else
+    fail "scanner unavailable" "return 1 and no record" \
+        "return $SCANNER_RC, record: $(test -f "$LOOP_DIR/round-70-review-result.md" && echo yes || echo no)"
+fi
+
+# The same clean log does earn one once the scanner is back, so the assertion
+# above is about the scanner and not about the log.
+set +e
+detect_review_issues 70 >/dev/null 2>&1
+set -e
+if [[ -f "$LOOP_DIR/round-70-review-result.md" ]]; then
+    pass "and earns it once the scanner is available again"
+else
+    fail "scanner restored" "an all-clear" "no record written"
+fi
+
+# ========================================
 # Test 4: Missing log file - should return 2
 # ========================================
 echo "Test 4: detect_review_issues returns error code 2 when log file is missing"

@@ -1621,6 +1621,44 @@ class ReviewFacts:
         }
 
 
+_CANONICAL_MARKER_TOKEN = re.compile(r"\[P[0-9]\]")
+
+
+def first_review_marker(
+    text: str, canonical_only: bool = False
+) -> Optional[Dict[str, Any]]:
+    """Return the first review marker in ``text``, or None if there is none.
+
+    This is the single definition of "where is a review marker", and Loop's
+    Stop hook reads it through `scripts/review-markers.py` rather than keeping
+    its own. The hook used to re-implement the grammar in awk, and the two
+    drifted three times: on whether a marker had to *fit* inside ten columns or
+    merely *start* there, on byte offsets versus character offsets for non-ASCII
+    prefixes, and on a token spanning a line break. Each divergence let the hook
+    record "no finding was reported" about a review this module reads as
+    reporting one, which resolves every finding still open in the Run.
+
+    ``canonical_only`` selects `_FINDING_MARKER`, an actionable `[P0]`-`[P9]`
+    finding line -- what the hook extracts. The default selects
+    `_FINDING_MARKER_ATTEMPT`, canonical *or* malformed, which is exactly the
+    set `parse_review_result` reacts to, and so exactly what must be absent
+    before anyone may call a review clean.
+
+    ``line`` is 1-based and derived from the match offset, so the caller never
+    counts positions a second time.
+    """
+    pattern = _FINDING_MARKER if canonical_only else _FINDING_MARKER_ATTEMPT
+    match = pattern.search(text)
+    if match is None:
+        return None
+    marker = match.group("marker")
+    return {
+        "line": text.count("\n", 0, match.start("marker")) + 1,
+        "marker": marker,
+        "canonical": _CANONICAL_MARKER_TOKEN.fullmatch(marker) is not None,
+    }
+
+
 def parse_review_result(text: Optional[str]) -> ReviewFacts:
     """Read a round review result into the facts both readers need."""
     if text is None or not text.strip():

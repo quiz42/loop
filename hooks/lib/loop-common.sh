@@ -775,18 +775,55 @@ upsert_state_fields() {
 # malformed marker.
 readonly CLEAN_REVIEW_MARKER="Result: clean"
 
-# Print the number of the first line of <file> that carries a marker-shaped
-# token starting within the first ten columns, or nothing.
+REVIEW_MARKER_SCANNER="$LOOP_COMMON_PLUGIN_ROOT/scripts/review-markers.py"
+
+# Ask the shared scanner where the first review marker in <file> is.
 #
-# This is the shell side of `_FINDING_MARKER_ATTEMPT` in `proof/core.py`:
-# `^.{0,9}?(\[P[^\]]*\])` there, `match(...) && RSTART <= 10` here. Anything
-# `[P...]` counts, not only a single digit, so `[P10]` and `[P0-9]` -- which the
-# Proof layer reads as *malformed* markers and treats as unparseable -- are seen
-# here too. One spelling, one place, so the two cannot drift.
-# Usage: review_marker_line <file>
+# The grammar lives in `proof/core.py` and nowhere else. Keeping a second copy
+# of it here in awk failed three times in a row -- on whether a marker must fit
+# inside ten columns or merely start there, on byte versus character offsets
+# once a line carried non-ASCII text, and on a token spanning a line break.
+# Every one of them had the same shape: the shell called a review clean that the
+# Proof layer reads as reporting a finding, and that record then resolves every
+# finding still open in the Run.
+#
+# Prints the 1-based line number on stdout when it finds one. Returns:
+#   0 - found
+#   1 - scanned, and there is no marker
+#   2 - could not scan (no python3, unreadable or undecodable file, any error)
+#
+# 2 is never 1, and callers must not collapse them. Issue #28 is what that costs:
+# a hook that tested only for its own failure codes treated `python3: command
+# not found` (127) as a pass and skipped the gate silently.
+# Usage: review_marker_line <file> [--canonical] [--tail N]
 review_marker_line() {
+    local file="$1"
+    shift
+    local output
+    local status=0
+    output=$(python3 "$REVIEW_MARKER_SCANNER" "$file" "$@" 2>/dev/null) || status=$?
+    case "$status" in
+        0)
+            printf '%s' "$output"
+            return 0
+            ;;
+        1)
+            return 1
+            ;;
+        *)
+            return 2
+            ;;
+    esac
+}
+
+# Best-effort ASCII scan for the extraction path only, used when the shared
+# scanner cannot run. It is deliberately NOT used for the clean-review gate:
+# extraction that misses a finding is the detection gap issue #36 already
+# tracks, but an assertion that misses one is a false green.
+# Usage: review_marker_line_fallback <file>
+review_marker_line_fallback() {
     awk '
-        match($0, /\[P[^]]*\]/) && RSTART <= 10 {
+        match($0, /\[P[0-9]\]/) && RSTART <= 10 {
             print NR
             exit
         }
@@ -844,26 +881,29 @@ detect_review_issues() {
     local scan_lines=50
     local start_line=$((total_lines > scan_lines ? total_lines - scan_lines + 1 : 1))
 
-    # Find the first line whose marker *starts* within the first ten columns.
-    #
-    # `substr($0, 1, 10) ~ /.../` was the older spelling and it means something
-    # different: it required the whole marker to fit inside ten characters. A
-    # marker indented by seven spaces closes in column 11, so truncation threw
-    # the bracket away and the line read as clean -- while `_FINDING_MARKER` in
-    # `proof/core.py`, which anchors `^.{0,9}?` before the marker, read the same
-    # line as a finding. RSTART is the position of the match in the whole line,
-    # so `RSTART <= 10` is that anchor exactly, and the two readers agree.
-    local relative_line
-    relative_line=$(tail -n "$scan_lines" "$log_file" | awk '
-        match($0, /\[P[0-9]\]/) && RSTART <= 10 {
-            print NR
-            exit
-        }
-    ')
+    # The shared scanner reports absolute line numbers, so there is no window
+    # arithmetic to get wrong here.
+    local found_line=""
+    local extract_status=0
+    found_line=$(review_marker_line "$log_file" --canonical --tail "$scan_lines") \
+        || extract_status=$?
+    if [[ "$extract_status" -eq 2 ]]; then
+        # No scanner. Extraction falls back to a best-effort ASCII scan, which
+        # is what this function did before the scanner existed. The clean-review
+        # gate below has no such fallback: extraction that misses a finding is
+        # the detection gap issue #36 tracks, but an assertion that misses one
+        # is a false green in the Proof Bundle.
+        echo "Marker scanner unavailable; falling back to an ASCII-only scan" >&2
+        local relative_line
+        relative_line=$(tail -n "$scan_lines" "$log_file" | review_marker_line_fallback /dev/stdin)
+        if [[ -n "$relative_line" && "$relative_line" -gt 0 ]]; then
+            found_line=$((start_line + relative_line - 1))
+        else
+            found_line=""
+        fi
+    fi
 
-    if [[ -n "$relative_line" && "$relative_line" -gt 0 ]]; then
-        # Convert relative line (within tail) to absolute line in the full file
-        local found_line=$((start_line + relative_line - 1))
+    if [[ -n "$found_line" && "$found_line" -gt 0 ]]; then
         echo "Found [P?] issue at line $found_line" >&2
 
         # Extract from found_line to end
@@ -893,17 +933,16 @@ detect_review_issues() {
     # then resolves every finding still open in the Run against it, which can
     # carry a Run with unfixed work to `accept`.
     #
-    # So the whole log decides whether the record may be written. A false
-    # positive here costs a resolution the Run could have earned; a false
-    # negative costs the truth. Those are not comparable, so this fails closed.
-    # Same anchor as the extraction scan and as `_FINDING_MARKER_ATTEMPT`: the
-    # token starts within the first ten columns of the line. A gate that reads
-    # *less* than the Proof layer is worse than no gate, because the difference
-    # is exactly the set of findings it would certify as absent.
-    local marker_anywhere
-    marker_anywhere=$(review_marker_line "$log_file")
+    # So the whole log decides whether the record may be written, through the
+    # shared scanner and with no fallback. Only "scanned, and there is no
+    # marker" earns an all-clear. A marker anywhere withholds it, and so does a
+    # scan that could not run: not looking is not the same as looking and seeing
+    # nothing, and treating them alike is the fail-open shape of issue #28.
+    local marker_anywhere=""
+    local gate_status=0
+    marker_anywhere=$(review_marker_line "$log_file") || gate_status=$?
 
-    if [[ -n "$marker_anywhere" ]]; then
+    if [[ "$gate_status" -ne 1 ]]; then
         # An earlier attempt at this same round may have left an all-clear on
         # disk. It cannot stand once the outcome is ambiguous, so drop it --
         # but never an extracted findings record.
@@ -914,12 +953,21 @@ detect_review_issues() {
         # marker; the all-clear this function writes never does. Keying the
         # decision on any *content* instead would let review output that merely
         # contained that content delete a real finding -- and review output is
-        # not ours to trust.
-        if [[ -f "$result_file" ]] && [[ -z "$(review_marker_line "$result_file")" ]]; then
-            rm -f "$result_file"
-            echo "Removed a stale clean-review record for round $round" >&2
+        # not ours to trust. A record the scanner cannot read is left alone:
+        # removing evidence needs more certainty than keeping it.
+        if [[ -f "$result_file" ]]; then
+            local record_status=0
+            review_marker_line "$result_file" >/dev/null || record_status=$?
+            if [[ "$record_status" -eq 1 ]]; then
+                rm -f "$result_file"
+                echo "Removed a stale clean-review record for round $round" >&2
+            fi
         fi
-        echo "Marker-shaped token at line $marker_anywhere is outside the extraction window or malformed; not recording a clean review" >&2
+        if [[ "$gate_status" -eq 2 ]]; then
+            echo "Marker scanner could not read the log; not recording a clean review" >&2
+        else
+            echo "Marker at line $marker_anywhere is outside the extraction window or malformed; not recording a clean review" >&2
+        fi
         return 1
     fi
 

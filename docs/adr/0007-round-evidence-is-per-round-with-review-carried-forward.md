@@ -93,6 +93,24 @@ that round as review-only and excuse the deletion. Reading `build_finish_round`
 closes that, because the deleted round is still named as an implementation
 round.
 
+**Keeping the marker grammar in shell** is what `tests/test-runner-portability.sh`
+asks for: `hooks/lib/` and `scripts/lib/` are deliberately Python-free, because
+two earlier Python rungs there — `portable-timeout.sh`'s and
+`project-root.sh`'s — left a stock macOS box, which ships no `python3`, silently
+degraded. That rule is right and stays; this is one narrow, enumerated
+exception to it, for three reasons.
+
+The shell version failed three times, above. The safe shell version is not worth
+having: the only rule crude enough to be correct without parsing — withhold the
+record if the log contains `[P` anywhere — withholds it from **6 of the 10**
+genuinely clean logs among the 18 real reviews of the M4 dogfood, so most of
+what this record was added to achieve is lost. And the failure mode differs from
+the two the rule was written against: those broke behaviour every path relied on,
+in silence, whereas a missing scanner here prints why and withholds one optional
+evidence record, leaving the loop exactly as it ran before that record existed.
+The exception is that single call; any other `python3` in those files still
+fails the check.
+
 **Expressing the rule in the profile documents** would give each profile a new
 per-round field. Rejected as unnecessary: both profiles already list
 `round_summary` and `round_review_result` in `required_evidence_kinds`, and what
@@ -113,13 +131,26 @@ a changed profile document is a new profile name, so this choice also avoids a
   gap into positive evidence: a `[P1]` outside the window took a Run from
   `changes_required` with the finding `open` to `accept` with it `resolved`.
   Extraction may keep its window; assertion may not.
-- The gate reads a marker by the same rule the Proof layer does: the token
-  starts within the first ten columns. The first gate truncated each line to ten
-  characters and required the whole token inside them, which is narrower — a
-  marker indented by seven spaces closes in column 11, so the gate read the line
-  as clean while `parse_review_result` read it as a finding, and the same false
-  green returned by a different input. A gate that reads less than the layer it
-  protects certifies exactly the findings it cannot see.
+- **The marker grammar has one implementation, and Loop's hook reads it rather
+  than repeating it.** `first_review_marker` in `proof/core.py` answers both
+  questions the hook has — where the first actionable finding starts, and
+  whether the log holds any marker at all — and `scripts/review-markers.py` is
+  how the shell reaches it.
+
+  This was not the first design. The hook re-implemented the grammar in awk,
+  and the two diverged three times in three review rounds of the PR that
+  introduced this record: on whether a marker must *fit* inside the first ten
+  columns or merely *start* there; on byte versus character offsets once a line
+  carried non-ASCII text, since `RSTART` counts bytes and Python counts
+  characters; and on a token spanning a line break, which `[^\]]*` admits and a
+  line-oriented scan cannot see. Every divergence had one shape — the hook
+  recorded "no finding was reported" about a review the Proof layer reads as
+  reporting one — and each reached `accept`. Patching the shape found in each
+  round left the class open.
+
+  A gate that reads *less* than the layer it protects certifies exactly the
+  findings it cannot see, so the two cannot be allowed to differ by
+  construction, not by matching test cases.
 - An all-clear that can no longer be supported is dropped, and which record that
   is gets decided structurally, by the absence of any marker. Keying it on a
   line in the file did not hold: a findings record is copied verbatim from

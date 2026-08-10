@@ -928,10 +928,36 @@ fi
 #                              check-todos-from-transcript.py. A real
 #                              hook-layer Python dependency; replacing it means
 #                              reimplementing a transcript parser in shell.
+#
+# One narrow exception inside the covered set: the `$REVIEW_MARKER_SCANNER`
+# call in loop-common.sh, which asks proof/core.py where a review marker is
+# (ADR-0007).
+#
+# It is admitted because it is not the shape this rule exists to stop. The two
+# offenders it names were fallback rungs inside utilities every code path uses,
+# and their absence broke basic behaviour in silence. This one sits on a single
+# branch of one function, called by one hook; when python3 is missing it says so
+# on stderr and withholds the clean-review record, which is exactly the state
+# the loop was in before that record existed. Nothing degrades; one optional
+# piece of evidence is not written.
+#
+# The alternative was tried and failed three times in three review rounds of
+# PR #35: a second copy of the marker grammar in awk diverged from
+# proof/core.py on column semantics, then on byte versus character offsets for
+# non-ASCII prefixes, then on a token spanning a line break -- each divergence
+# writing "no finding was reported" about a review the Proof layer reads as
+# reporting one, and each reaching `accept`. Measured against the 18 real review
+# logs of the M4 dogfood, the only shell rule crude enough to be safe without
+# Python (withhold on any `[P` at all) withholds the record from 6 of the 10
+# genuinely clean logs, so the safe shell version is not worth having.
+#
+# The exception is this one call and no other: any further python3 in these
+# files still fails, and tests/test-codex-review-merge.sh pins the fail-closed
+# behaviour when the scanner cannot run.
 RUNTIME_PYTHON_REFS=""
 for lib in "$PROJECT_ROOT"/hooks/lib/*.sh "$PROJECT_ROOT"/scripts/lib/*.sh "$PROJECT_ROOT/scripts/portable-timeout.sh"; do
     [[ -f "$lib" ]] || continue
-    if grep -n 'python3' "$lib" | grep -vE '^[0-9]+:[[:space:]]*#' | grep -q .; then
+    if grep -n 'python3' "$lib" | grep -vE '^[0-9]+:[[:space:]]*#' | grep -v 'REVIEW_MARKER_SCANNER' | grep -q .; then
         RUNTIME_PYTHON_REFS="${RUNTIME_PYTHON_REFS}${lib##*/} "
     fi
 done
