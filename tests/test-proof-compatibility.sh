@@ -101,6 +101,17 @@ verify_run() {
     printf '%s|%s' "$status" "$(printf '%s' "$output" | sed -n 's/^status: //p' | head -1)"
 }
 
+# Just the exit code from one `loop proof ...` invocation. The usage and
+# unreadable-Run paths print nothing a status line can be read from, and the
+# exit code is the whole contract for them.
+proof_exit() {
+    bash -c '
+        source "$0"
+        loop proof "$@"
+    ' "$PROJECT_ROOT/scripts/loop.sh" "$@" >/dev/null 2>&1
+    printf '%s' "$?"
+}
+
 # Collect the reason codes verify reports. Failing reasons print as
 # "<reason>: <target>" and non-failing ones as "warning <reason>: <target>", so
 # both forms are read; the leading "status:" line is not a reason.
@@ -1286,6 +1297,50 @@ print(json.load(open(sys.argv[1] + '/proof.json', encoding='utf-8'))['verdict'][
 
 unreadable_review_case empty-review "an empty review result"
 unreadable_review_case binary-review "a review result that is not UTF-8"
+
+# ========================================
+# The CLI exit-code contract (spec section J)
+# ========================================
+
+echo ""
+echo "Section 11: The exit codes the CLI reserves for its callers"
+
+# Section J keeps exit 1 distinct from the integrity codes so CI can tell "this
+# Bundle is bad" from "you called me wrong". Nothing asserted it for verify:
+# every call site in the suites passes a well-formed Bundle path. Deleting the
+# `_ArgumentParser` subclass in scripts/proof-verify.py silently moved usage
+# errors from 1 to 2 -- the code section J reserves for `incomplete` -- with
+# all five suites green.
+assert_equals "verify with no arguments is a usage error, not a verdict" "1" \
+    "$(proof_exit verify)"
+assert_equals "verify with an unrecognised flag is a usage error" "1" \
+    "$(proof_exit verify --no-such-flag "$CLEAN_BUNDLE")"
+
+# A path that is not a Bundle reports `invalid` rather than a usage error,
+# because proof.json cannot be parsed from it. That reads oddly against section
+# J's "usage/environment error" -- nothing was forged, there is simply no
+# Bundle there -- but it is the shipped behaviour and changing it is a separate
+# decision. Pinned so that change has to be a deliberate one.
+assert_equals "a path with no Bundle in it reports invalid, not usage" "3" \
+    "$(proof_exit verify "$TEST_DIR/no-such-bundle")"
+
+# Export exit 4 is the one code in section J's export contract with no
+# assertion anywhere: deleting the whole `except RunUnreadableError` clause
+# collapsed it to 1 without a red test. The three shapes below are distinct
+# paths to it -- the directory is absent, the path is not a directory, and the
+# state file cannot be read as a Run.
+UNREADABLE_DIR="$TEST_DIR/unreadable"
+mkdir -p "$UNREADABLE_DIR"
+printf 'not a run\n' > "$UNREADABLE_DIR/plain-file"
+mkdir -p "$UNREADABLE_DIR/no-frontmatter"
+printf 'no frontmatter at all\n' > "$UNREADABLE_DIR/no-frontmatter/complete-state.md"
+
+assert_equals "exporting a Run directory that is not there is exit 4" "4" \
+    "$(proof_exit export --run "$UNREADABLE_DIR/absent" --out "$TEST_DIR/bundles/unreadable-1")"
+assert_equals "exporting a path that is not a directory is exit 4" "4" \
+    "$(proof_exit export --run "$UNREADABLE_DIR/plain-file" --out "$TEST_DIR/bundles/unreadable-2")"
+assert_equals "exporting a state file with no frontmatter is exit 4" "4" \
+    "$(proof_exit export --run "$UNREADABLE_DIR/no-frontmatter" --out "$TEST_DIR/bundles/unreadable-3")"
 
 echo ""
 echo "========================================"
