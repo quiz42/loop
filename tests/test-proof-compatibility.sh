@@ -380,6 +380,68 @@ else
     fail "truncated export" "a bundle" "export failed"
 fi
 
+# A source that fits the cap must never be declared truncated. Masking
+# substitutes a longer token than the path it replaces -- `/Users/q` is nine
+# bytes and `<masked-home>` is thirteen -- so a review result at the cap masks
+# to over it. Deciding truncation on the masked length wrote `status:
+# truncated` with a `bytes` value that does not exceed the limit, the
+# declaration contradicting the only fact that justifies it, while the
+# identical source under local-v0 and the same cap was `included`.
+MASKGROW_RUN=$(make_run maskgrow path-cited-review-complete)
+python3 - "$MASKGROW_RUN/round-1-review-result.md" <<'PY'
+import sys
+
+path = sys.argv[1]
+data = open(path, "rb").read().rstrip(b"\n")
+data += b"\n\nSee /Users/q for the workspace.\n"
+# Exactly max_item_bytes: within the limit, so the source is not oversized.
+data += b"." * (1048576 - len(data) - 1) + b"\n"
+open(path, "wb").write(data)
+PY
+
+MASKGROW_BUNDLE=$(export_run "$MASKGROW_RUN" maskgrow public-v1)
+if [[ -n "$MASKGROW_BUNDLE" ]]; then
+    MASKGROW_ITEM=$(python3 -c "
+import json, sys
+bundle = json.load(open(sys.argv[1] + '/proof.json', encoding='utf-8'))
+item = next(i for i in bundle['evidence'] if i['path'] == 'round-1-review-result.md')
+print('%s|%s|%s' % (item['status'], item['omitted_reason'], item['bytes']))
+" "$MASKGROW_BUNDLE")
+    assert_equals "a source that fits the cap is withheld as omitted, not truncated" \
+        "omitted|absolute-path|1048576" "$MASKGROW_ITEM"
+
+    # The general invariant, asserted over every item so a future size rule
+    # cannot reintroduce the contradiction somewhere else in the Bundle.
+    MASKGROW_CONTRADICTIONS=$(python3 -c "
+import json, sys
+bundle = json.load(open(sys.argv[1] + '/proof.json', encoding='utf-8'))
+print(','.join(sorted(
+    i['path'] for i in bundle['evidence']
+    if i['status'] == 'truncated' and i['bytes'] <= 1048576
+)))
+" "$MASKGROW_BUNDLE")
+    assert_equals "no truncated item declares a byte count within the limit" \
+        "" "$MASKGROW_CONTRADICTIONS"
+
+    # An omitted item is disclosed; the withheld-because-masking-grew case must
+    # not be the one omission a reader cannot see.
+    MASKGROW_DISCLOSED=$(python3 -c "
+import json, sys
+bundle = json.load(open(sys.argv[1] + '/proof.json', encoding='utf-8'))
+print(','.join(sorted(
+    e['reason'] for e in bundle['disclosure']['omitted']
+    if e['path'] == 'round-1-review-result.md'
+)))
+" "$MASKGROW_BUNDLE")
+    assert_equals "the withheld item is recorded in the disclosure" \
+        "absolute-path" "$MASKGROW_DISCLOSED"
+
+    assert_equals "and the Bundle is incomplete with exit 2, not valid" "2|incomplete" \
+        "$(verify_run "$MASKGROW_BUNDLE")"
+else
+    fail "maskgrow export" "a bundle" "export failed"
+fi
+
 # ========================================
 # Verify contract (spec section J)
 # ========================================

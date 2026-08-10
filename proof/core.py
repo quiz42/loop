@@ -1470,6 +1470,26 @@ class EvidenceCompiler:
                 # masking existed.
                 if not oversized and profile_masks_kind(kind, "absolute-path", self.profile):
                     masked_data = mask_absolute_paths(data)
+                    if (
+                        masked_data is not None
+                        and len(masked_data) > max_item_bytes
+                        and "absolute-path" in omit_on
+                    ):
+                        # Masking substitutes a longer token than the path it
+                        # replaces, so a source within the cap can mask to over
+                        # it. Publishing that decided truncation on the masked
+                        # length and wrote `status: truncated` with the source's
+                        # `bytes`, which does not exceed the limit -- a
+                        # declaration contradicting the only fact that justifies
+                        # it, and one a recipient could not re-derive, since the
+                        # same source under local-v0 and the same cap is
+                        # `included`. Bytes that cannot be masked into the
+                        # budget are bytes this profile cannot publish, so the
+                        # item falls through to the omission rule and is
+                        # disclosed. Guarded on `omit_on` because that rule is
+                        # the only thing standing between the source and a raw
+                        # publication of the paths masking exists to remove.
+                        masked_data = None
                 if masked_data is not None:
                     warnings.append(
                         {
