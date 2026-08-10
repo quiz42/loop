@@ -218,6 +218,33 @@ json.dump(
 PY
 }
 
+# "<kind>/<status>|<integrity>|<reasons>" for one source path: how the item was
+# classified, what it cost the Bundle, and which warnings name that exact file.
+# Asserted as one string so a regression that keeps the item but drops the
+# warning -- or keeps the warning but stops naming the file -- cannot pass.
+# `absent` where the compiler collected no item at all.
+item_report_of() {
+    python3 - "$1" "$2" <<'PY'
+import json
+import sys
+
+bundle = json.load(open(sys.argv[1] + "/proof.json", encoding="utf-8"))
+target = sys.argv[2]
+item = next((i for i in bundle["evidence"] if i["path"] == target), None)
+warnings = [
+    w for w in bundle["integrity"]["compile_warnings"] if w.get("target") == target
+]
+print(
+    "%s|%s|%s"
+    % (
+        "absent" if item is None else "%s/%s" % (item["kind"], item["status"]),
+        bundle["integrity"]["status"],
+        ",".join(sorted(w["reason"] for w in warnings)),
+    )
+)
+PY
+}
+
 warnings_of() {
     python3 - "$1" <<'PY'
 import json
@@ -1066,31 +1093,6 @@ assert_equals "an archived pre-masking public-v0 Bundle verifies valid unchanged
 echo ""
 echo "Section 9: An unrecognised file is kept, named, and costs the badge"
 
-# Report one item's classification and one warning's reason and target, so a
-# regression that keeps the item but drops the warning -- or keeps the warning
-# but stops naming the file -- cannot pass.
-unknown_item_of() {
-    python3 - "$1" "$2" <<'PY'
-import json
-import sys
-
-bundle = json.load(open(sys.argv[1] + "/proof.json", encoding="utf-8"))
-target = sys.argv[2]
-item = next((i for i in bundle["evidence"] if i["path"] == target), None)
-warnings = [
-    w for w in bundle["integrity"]["compile_warnings"] if w.get("target") == target
-]
-print(
-    "%s|%s|%s"
-    % (
-        "absent" if item is None else "%s/%s" % (item["kind"], item["status"]),
-        bundle["integrity"]["status"],
-        ",".join(sorted(w["reason"] for w in warnings)),
-    )
-)
-PY
-}
-
 # spec section F: an unrecognized file is recorded as `kind: unknown` and
 # produces a warning. The warning reuses `unparseable-artifact`, which section
 # J maps to `incomplete`, so a stray file costs the Bundle its badge. That is
@@ -1102,7 +1104,7 @@ STRAY_BUNDLE=$(export_run "$STRAY_RUN" stray)
 if [[ -n "$STRAY_BUNDLE" ]]; then
     assert_equals "an unrecognised file is kept as kind unknown and named in a warning" \
         "unknown/included|incomplete|unparseable-artifact" \
-        "$(unknown_item_of "$STRAY_BUNDLE" scratch-notes.txt)"
+        "$(item_report_of "$STRAY_BUNDLE" scratch-notes.txt)"
 
     # "Never discarded" means the bytes are really there and really hash to
     # what the manifest declares -- not merely that a row exists.
@@ -1146,7 +1148,7 @@ MARKER_BUNDLE=$(export_run "$MARKER_RUN" marker)
 if [[ -n "$MARKER_BUNDLE" ]]; then
     assert_equals "a Loop control marker is kept as evidence with no warning" \
         "unknown/included|valid|" \
-        "$(unknown_item_of "$MARKER_BUNDLE" .methodology-exit-reason)"
+        "$(item_report_of "$MARKER_BUNDLE" .methodology-exit-reason)"
     assert_equals "and the marker does not cost the Bundle its badge" "0|valid" \
         "$(verify_run "$MARKER_BUNDLE")"
 else
@@ -1178,6 +1180,86 @@ print(','.join(sorted(
 else
     fail "noise export" "a bundle" "export failed"
 fi
+
+# ========================================
+# Source artifacts the compiler cannot read
+# ========================================
+
+echo ""
+echo "Section 10: An unreadable source artifact names itself and costs a conclusion"
+
+# AC-10: a missing file and an unparseable review result each produce a
+# specific warning rather than a crash or a silent pass. The behaviour was
+# right and none of it was asserted. No fixture could reach the adapter's
+# missing-file branch -- tests/proof_contract/test_run_fixtures.py positively
+# requires plan.md and goal-tracker.md in every Run fixture -- so replacing
+# both warnings with `pass` left all five suites green.
+# A missing goal-tracker.md is warned about twice, and both are wanted: it is
+# missing, and the tables the verdict reads cannot be parsed from a file that
+# is not there. The pair is asserted exactly so neither can quietly disappear.
+for missing in "plan.md:missing-file" \
+               "goal-tracker.md:missing-file,unparseable-artifact"; do
+    MISSING_FILE="${missing%%:*}"
+    MISSING_REASONS="${missing#*:}"
+    MISSING_LABEL="missing-${MISSING_FILE%.md}"
+    MISSING_RUN=$(make_run "$MISSING_LABEL" clean-complete)
+    rm "$MISSING_RUN/$MISSING_FILE"
+    MISSING_BUNDLE=$(export_run "$MISSING_RUN" "$MISSING_LABEL")
+    if [[ -n "$MISSING_BUNDLE" ]]; then
+        pass "a Run with no $MISSING_FILE still exports rather than crashing"
+        # `absent` because the file cannot be collected: the warning is the
+        # only record that it was expected at all.
+        assert_equals "the warning names $MISSING_FILE and the Bundle is incomplete" \
+            "absent|incomplete|$MISSING_REASONS" \
+            "$(item_report_of "$MISSING_BUNDLE" "$MISSING_FILE")"
+        assert_equals "a Run with no $MISSING_FILE verifies incomplete with exit 2" \
+            "2|incomplete" "$(verify_run "$MISSING_BUNDLE")"
+    else
+        fail "$MISSING_LABEL export" "a bundle" "export failed"
+    fi
+done
+
+# An empty review result and one that is not UTF-8 both reach the same
+# published-but-unreadable branch. Deleting that warning flipped an
+# empty-review export from `incomplete` to `valid` with no warnings at all,
+# and all five suites stayed green. The non-UTF-8 half was unexercised
+# entirely.
+unreadable_review_case() {
+    local label="$1"
+    local description="$2"
+    local run_dir
+    run_dir=$(make_run "$label" clean-complete)
+    python3 - "$run_dir/round-0-review-result.md" "$label" <<'PY'
+import sys
+
+path, label = sys.argv[1], sys.argv[2]
+# An empty file and undecodable bytes are different inputs that must not be
+# told apart by the conclusion they support: neither can establish a finding.
+open(path, "wb").write(b"" if label == "empty-review" else b"\xff\xfe\x00binary junk\n")
+PY
+    local bundle
+    bundle=$(export_run "$run_dir" "$label")
+    if [[ -n "$bundle" ]]; then
+        pass "$description still exports rather than crashing"
+        assert_equals "$description warns unparseable-artifact naming the review" \
+            "round_review_result/included|incomplete|unparseable-artifact" \
+            "$(item_report_of "$bundle" round-0-review-result.md)"
+        # The conclusion it costs: with no readable review the delivery cannot
+        # be assessed, and saying so is the point of the warning.
+        assert_equals "$description leaves the decision unverifiable" "unverifiable" \
+            "$(python3 -c "
+import json, sys
+print(json.load(open(sys.argv[1] + '/proof.json', encoding='utf-8'))['verdict']['decision'])
+" "$bundle")"
+        assert_equals "$description verifies incomplete with exit 2" "2|incomplete" \
+            "$(verify_run "$bundle")"
+    else
+        fail "$label export" "a bundle" "export failed"
+    fi
+}
+
+unreadable_review_case empty-review "an empty review result"
+unreadable_review_case binary-review "a review result that is not UTF-8"
 
 echo ""
 echo "========================================"
