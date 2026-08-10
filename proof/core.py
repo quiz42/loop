@@ -1645,7 +1645,11 @@ def first_review_marker(
     before anyone may call a review clean.
 
     ``line`` is 1-based and derived from the match offset, so the caller never
-    counts positions a second time.
+    counts positions a second time. ``offset`` is the character offset of the
+    start of the marker's line -- both patterns anchor on ``^``, which in
+    MULTILINE mode matches only after ``\n``, so slicing the scanned text at
+    ``offset`` yields the marker's line and everything after it without any
+    reader having to translate a line number into some other view of the text.
     """
     pattern = _FINDING_MARKER if canonical_only else _FINDING_MARKER_ATTEMPT
     match = pattern.search(text)
@@ -1654,6 +1658,7 @@ def first_review_marker(
     marker = match.group("marker")
     return {
         "line": text.count("\n", 0, match.start("marker")) + 1,
+        "offset": match.start(),
         "marker": marker,
         "canonical": _CANONICAL_MARKER_TOKEN.fullmatch(marker) is not None,
     }

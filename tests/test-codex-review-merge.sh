@@ -591,6 +591,455 @@ else
 fi
 
 # ========================================
+# Test 3h: The published record survives every line-counting disagreement
+# ========================================
+# The scanner used to report a line number over decoded text -- where a bare CR
+# is a line break -- and the shell handed it to sed, where it is not. The
+# extraction started past the marker and published a marker-free record, which
+# parses as a clean re-review and resolves every open finding. The fix removes
+# the translation entirely: the scanner cuts the suffix out of the text it
+# scanned, and no line number crosses back into shell arithmetic.
+#
+# Each case pins one separator class that splits differently somewhere -- in
+# universal-newline decoding, in str.splitlines, in sed -- and asserts the only
+# fact that matters downstream: the published record still carries the marker
+# the log carried.
+echo "Test 3h: extraction survives CR, CRLF and exotic line separators"
+
+setup_test_env
+
+# Usage: assert_marker_survives <round> <label>
+assert_marker_survives() {
+    local round="$1"
+    local label="$2"
+    set +e
+    detect_review_issues "$round" >/dev/null 2>&1
+    local rc=$?
+    set -e
+    local record="$LOOP_DIR/round-${round}-review-result.md"
+    if [[ $rc -eq 0 ]] && grep -qF '[P1]' "$record" 2>/dev/null; then
+        pass "$label: the record keeps the marker"
+    else
+        fail "$label" "return 0 and a record carrying [P1]" \
+            "return $rc, record: $(cat "$record" 2>/dev/null || echo none)"
+    fi
+}
+
+# Ten bare-CR progress updates, then the marker on raw LF line 2 with 49 lines
+# after it. The decoded text has 61 lines, the raw bytes 52: the old line
+# number pointed past the marker.
+{
+    printf 'u1\ru2\ru3\ru4\ru5\ru6\ru7\ru8\ru9\ru10\rreview begins\n'
+    printf -- '- [P1] CR-shifted finding - f.py:1\n'
+    for i in $(seq 1 49); do echo "trailing line $i"; done
+} > "$CACHE_DIR/round-80-codex-review.log"
+assert_marker_survives 80 "bare-CR progress output"
+
+# A form feed inside an early line: str.splitlines counts it as a line break,
+# "\n" does not, so the old tail arithmetic shifted the window by one.
+{
+    printf 'debug\x0cpage break inside line one\n'
+    for i in $(seq 2 41); do echo "line $i"; done
+    printf -- '- [P1] FF-shifted finding - f.py:2\n'
+    for i in $(seq 43 51); do echo "line $i"; done
+} > "$CACHE_DIR/round-81-codex-review.log"
+assert_marker_survives 81 "an embedded form feed"
+
+# NEL (U+0085) and the Unicode line separator (U+2028): same class as the form
+# feed, different bytes -- str.splitlines cuts on both, "\n" readers on neither.
+{
+    printf 'status\xc2\x85overwritten status line\n'
+    for i in $(seq 2 41); do echo "line $i"; done
+    printf -- '- [P1] NEL-shifted finding - f.py:3\n'
+    for i in $(seq 43 51); do echo "line $i"; done
+} > "$CACHE_DIR/round-82-codex-review.log"
+assert_marker_survives 82 "an embedded NEL"
+
+{
+    printf 'unicode\xe2\x80\xa8separator inside line one\n'
+    for i in $(seq 2 41); do echo "line $i"; done
+    printf -- '- [P1] LS-shifted finding - f.py:4\n'
+    for i in $(seq 43 51); do echo "line $i"; done
+} > "$CACHE_DIR/round-83-codex-review.log"
+assert_marker_survives 83 "an embedded U+2028"
+
+# CRLF endings throughout: universal-newline decoding folds them, and the
+# published record must still read as exactly one finding.
+{
+    printf 'review begins\r\n'
+    printf -- '- [P1] CRLF finding - f.py:5\r\n'
+    printf 'done\r\n'
+} > "$CACHE_DIR/round-84-codex-review.log"
+assert_marker_survives 84 "CRLF line endings"
+
+# The window itself must be measured in "\n" lines, the unit every other
+# reader of this log uses. str.splitlines also cuts on the twenty form feeds
+# below, which would shrink the window to fewer real lines and push this
+# marker -- on the 50th-to-last "\n" line -- out of it: extraction would go
+# blind exactly when the grammar still reads the marker, and the round would
+# lose its findings record to the ambiguous path.
+{
+    echo "review begins"
+    printf -- '- [P1] Window-edge finding - f.py:6\n'
+    for i in $(seq 1 20); do printf 'noisy\x0cline %s\n' "$i"; done
+    for i in $(seq 21 49); do echo "trailing line $i"; done
+} > "$CACHE_DIR/round-87-codex-review.log"
+assert_marker_survives 87 "a marker at the edge of a form-feed-inflated window"
+
+# What export will read from the CR-shaped record: exactly the finding, not a
+# marker-free clean review and not a malformed round. A missing record is a
+# fail, not a skip -- that is how this assertion would quietly stop testing.
+if [[ ! -f "$LOOP_DIR/round-80-review-result.md" ]]; then
+    fail "CR record parse" "a record to parse" "no file written"
+else
+    RECORD_PARSE=$(cd "$PROJECT_ROOT" && python3 - "$LOOP_DIR/round-80-review-result.md" <<'PY'
+import sys
+sys.path.insert(0, ".")
+from proof.core import parse_review_result
+
+facts = parse_review_result(open(sys.argv[1], encoding="utf-8").read())
+print("markers=%d malformed=%d" % (len(facts.markers), len(facts.malformed_markers)))
+PY
+)
+    if [[ "$RECORD_PARSE" == "markers=1 malformed=0" ]]; then
+        pass "the CR-shaped record parses as exactly the finding it carries"
+    else
+        fail "CR record parse" "markers=1 malformed=0" "$RECORD_PARSE"
+    fi
+fi
+
+# An undecodable log: strict UTF-8 reading fails, so the shared scanner says
+# "could not scan". Extraction falls back to the ASCII scan and surfaces the
+# finding, but publishes no record -- and with no finding in reach, no
+# all-clear is written either.
+printf 'ok line\n\xff\xfe undecodable bytes\n- [P1] ASCII finding - f.py:6\nafter\n' \
+    > "$CACHE_DIR/round-85-codex-review.log"
+set +e
+OUTPUT=$(detect_review_issues 85 2>/dev/null)
+RESULT=$?
+set -e
+if [[ $RESULT -eq 0 && "$OUTPUT" == *'[P1]'* && ! -f "$LOOP_DIR/round-85-review-result.md" ]]; then
+    pass "an undecodable log surfaces findings without publishing a record"
+else
+    fail "undecodable log with findings" "return 0, [P1] in output, no record" \
+        "return $RESULT, record: $(test -f "$LOOP_DIR/round-85-review-result.md" && echo yes || echo no)"
+fi
+
+printf 'ok line\n\xff\xfe undecodable bytes\nnothing else here\n' \
+    > "$CACHE_DIR/round-86-codex-review.log"
+assert_no_clean_record 86 "an undecodable log without findings"
+
+# The gate side of the same separators, through the parity harness: a marker
+# hidden behind CR or FF arithmetic must still withhold the all-clear when it
+# sits outside the extraction window.
+{
+    printf 'u1\ru2\ru3\rreview begins\n'
+    printf -- '- [P1] CR-prefixed, out of window - f.py:1\n'
+    for i in $(seq 1 60); do echo "trailing line $i"; done
+} > "$TEST_DIR/cr-out-of-window.log"
+assert_gate_parity "bare-CR log with the marker outside the window" "$TEST_DIR/cr-out-of-window.log"
+
+{
+    printf 'debug\x0cpage break\n'
+    printf -- '- [P1] FF-prefixed, out of window - f.py:1\n'
+    for i in $(seq 1 60); do echo "trailing line $i"; done
+} > "$TEST_DIR/ff-out-of-window.log"
+assert_gate_parity "form-feed log with the marker outside the window" "$TEST_DIR/ff-out-of-window.log"
+
+# ========================================
+# Test 3i: A record is published only after it re-reads as what it claims
+# ========================================
+# Four false-green paths in a row were each some reader disagreeing with some
+# writer about the same bytes -- window, column, byte offset, line break. The
+# publish gate closes the shape rather than the instances: before the rename,
+# the written bytes go back through the authoritative grammar, and a record
+# that no longer reads as what it claims -- whatever future bug produces that
+# -- is withheld. These doubles simulate exactly such a divergence.
+echo "Test 3i: publish-time re-scan fails closed on writer/reader divergence"
+
+setup_test_env
+
+# A scanner whose extraction emits marker-free text: the re-scan must refuse
+# to publish it. The caller still sees the content and the loop continues; the
+# round simply gets no record, and a missing record resolves nothing.
+cat > "$TEST_DIR/lying-extractor.py" <<'PY'
+import sys
+
+if "--extract" in sys.argv:
+    sys.stdout.write("a suffix the grammar cannot read as a finding\n")
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+printf -- '- [P1] Real finding - f.py:1\n' > "$CACHE_DIR/round-90-codex-review.log"
+SAVED_SCANNER="$REVIEW_MARKER_SCANNER"
+REVIEW_MARKER_SCANNER="$TEST_DIR/lying-extractor.py"
+set +e
+detect_review_issues 90 >/dev/null 2>&1
+RESULT=$?
+set -e
+REVIEW_MARKER_SCANNER="$SAVED_SCANNER"
+if [[ $RESULT -eq 0 && ! -f "$LOOP_DIR/round-90-review-result.md" ]]; then
+    pass "a marker-free extraction is not published as a findings record"
+else
+    fail "extraction re-scan" "return 0 and no record" \
+        "return $RESULT, record: $(test -f "$LOOP_DIR/round-90-review-result.md" && echo yes || echo no)"
+fi
+
+# A scanner that reads the log as clean but the written all-clear as carrying
+# a marker -- the shape a wording drift in the record would take.
+cat > "$TEST_DIR/drifting-reader.py" <<'PY'
+import sys
+
+raise SystemExit(1 if sys.argv[1].endswith(".log") else 0)
+PY
+printf 'Code review complete\nNothing to report\n' > "$CACHE_DIR/round-91-codex-review.log"
+REVIEW_MARKER_SCANNER="$TEST_DIR/drifting-reader.py"
+set +e
+detect_review_issues 91 >/dev/null 2>&1
+RESULT=$?
+set -e
+REVIEW_MARKER_SCANNER="$SAVED_SCANNER"
+if [[ $RESULT -eq 1 && ! -f "$LOOP_DIR/round-91-review-result.md" ]]; then
+    pass "an all-clear that re-reads as marker-bearing is withheld"
+else
+    fail "all-clear re-scan" "return 1 and no record" \
+        "return $RESULT, record: $(test -f "$LOOP_DIR/round-91-review-result.md" && echo yes || echo no)"
+fi
+
+# The all-clear must satisfy the raw-byte probe that will classify it on the
+# next attempt, not only the grammar. An interpolated identity value carrying
+# "[P" -- unreachable through git-validated inputs, pinned here by overriding
+# the optional global directly -- would read clean to the grammar (the token
+# sits past column 10) yet be retained as a findings record by the probe,
+# outliving the attempt it belongs to. Publish requires both classifiers to
+# agree.
+printf 'Code review complete\nNothing to report\n' > "$CACHE_DIR/round-92-codex-review.log"
+CODEX_REVIEWED_BASE='release [P1 hotfix'
+set +e
+detect_review_issues 92 >/dev/null 2>&1
+RESULT=$?
+set -e
+unset CODEX_REVIEWED_BASE
+if [[ $RESULT -eq 1 && ! -f "$LOOP_DIR/round-92-review-result.md" ]]; then
+    pass "an all-clear carrying raw [P bytes is withheld"
+else
+    fail "all-clear byte probe" "return 1 and no record" \
+        "return $RESULT, record: $(cat "$LOOP_DIR/round-92-review-result.md" 2>/dev/null || echo none)"
+fi
+set +e
+detect_review_issues 92 >/dev/null 2>&1
+set -e
+if [[ -f "$LOOP_DIR/round-92-review-result.md" ]]; then
+    pass "and is published once the identity values are clean"
+else
+    fail "byte probe control" "a record" "no record written"
+fi
+
+# ========================================
+# Test 3j: A stale all-clear never outlives the attempt, scanner or no scanner
+# ========================================
+# The retry that most needs the invalidation is exactly the one whose scanner
+# cannot run: the old code re-scanned the existing record to decide whether to
+# delete it, so no scanner meant no deletion, and the caller finalized against
+# an all-clear nobody had re-established -- which export then parses as a clean
+# re-review that resolves pre-existing findings. Deciding with raw bytes makes
+# the invalidation unconditional: an all-clear carries no "[P" and is dropped
+# up front; a findings record always carries one and never is.
+echo "Test 3j: stale records across scanner availability"
+
+setup_test_env
+
+# (a) A clean pass earns the all-clear; the retry finds a marker outside the
+# fallback's reach while the scanner is down. The stale all-clear must go.
+printf 'Code review complete\nNothing to report\n' \
+    > "$CACHE_DIR/round-100-codex-review.log"
+set +e
+detect_review_issues 100 >/dev/null 2>&1
+set -e
+if [[ -f "$LOOP_DIR/round-100-review-result.md" ]]; then
+    pass "setup: the clean pass earned its all-clear"
+else
+    fail "setup" "an all-clear on disk" "no record written"
+fi
+{
+    for i in $(seq 1 4); do echo "Debug line $i"; done
+    printf -- '- [P1] Reported on the retry, outside the window - f.py:1\n'
+    for i in $(seq 6 70); do echo "More output line $i"; done
+} > "$CACHE_DIR/round-100-codex-review.log"
+SAVED_SCANNER="$REVIEW_MARKER_SCANNER"
+REVIEW_MARKER_SCANNER="$TEST_DIR/no-such-scanner.py"
+set +e
+detect_review_issues 100 >/dev/null 2>&1
+RESULT=$?
+set -e
+REVIEW_MARKER_SCANNER="$SAVED_SCANNER"
+if [[ $RESULT -eq 1 && ! -f "$LOOP_DIR/round-100-review-result.md" ]]; then
+    pass "the stale all-clear is dropped even with the scanner down"
+else
+    fail "stale all-clear x scanner down" "return 1 and no record" \
+        "return $RESULT, record: $(test -f "$LOOP_DIR/round-100-review-result.md" && echo yes || echo no)"
+fi
+
+# (b) ...and the same round re-earns a fresh all-clear once the scanner is
+# back and the log is genuinely clean again, so (a) is about staleness, not
+# about all-clears in general.
+printf 'Code review complete\nNothing to report\n' \
+    > "$CACHE_DIR/round-100-codex-review.log"
+set +e
+detect_review_issues 100 >/dev/null 2>&1
+set -e
+if [[ -f "$LOOP_DIR/round-100-review-result.md" ]]; then
+    pass "a later established clean pass re-earns the record"
+else
+    fail "re-established all-clear" "a record" "no record written"
+fi
+
+# (c) A findings record survives the scanner-down ambiguous retry: it carries
+# "[P" and the byte probe keeps it.
+printf 'review output\n- [P1] Genuine finding - f.py:1\n' \
+    > "$CACHE_DIR/round-101-codex-review.log"
+set +e
+detect_review_issues 101 >/dev/null 2>&1
+set -e
+{
+    for i in $(seq 1 4); do echo "Debug line $i"; done
+    printf -- '- [P2] Different marker, out of window - f.py:1\n'
+    for i in $(seq 6 70); do echo "More output line $i"; done
+} > "$CACHE_DIR/round-101-codex-review.log"
+REVIEW_MARKER_SCANNER="$TEST_DIR/no-such-scanner.py"
+set +e
+detect_review_issues 101 >/dev/null 2>&1
+set -e
+REVIEW_MARKER_SCANNER="$SAVED_SCANNER"
+if grep -qF '[P1]' "$LOOP_DIR/round-101-review-result.md" 2>/dev/null; then
+    pass "a findings record survives the scanner-down retry"
+else
+    fail "findings record x scanner down" "the [P1] record preserved" \
+        "$(cat "$LOOP_DIR/round-101-review-result.md" 2>/dev/null || echo deleted)"
+fi
+
+# (d) The Test 3e collision under an unavailable scanner: an extracted record
+# containing the literal all-clear line still carries its marker, so the byte
+# probe keeps it too. "Result: clean" decides nothing on this path either.
+printf 'scanning\n- [P1] Genuine finding - f.py:1-2\n%s\n' \
+    "$CLEAN_REVIEW_MARKER" > "$CACHE_DIR/round-102-codex-review.log"
+set +e
+detect_review_issues 102 >/dev/null 2>&1
+set -e
+{
+    for i in $(seq 1 4); do echo "Debug line $i"; done
+    printf -- '- [P10] ambiguous token, out of window - f.py:1\n'
+    for i in $(seq 6 70); do echo "More output line $i"; done
+} > "$CACHE_DIR/round-102-codex-review.log"
+REVIEW_MARKER_SCANNER="$TEST_DIR/no-such-scanner.py"
+set +e
+detect_review_issues 102 >/dev/null 2>&1
+set -e
+REVIEW_MARKER_SCANNER="$SAVED_SCANNER"
+if grep -qF '[P1]' "$LOOP_DIR/round-102-review-result.md" 2>/dev/null; then
+    pass "the Result-clean collision record survives the scanner-down retry"
+else
+    fail "collision x scanner down" "the [P1] record preserved" \
+        "$(cat "$LOOP_DIR/round-102-review-result.md" 2>/dev/null || echo deleted)"
+fi
+
+# (e) The scanner-down fallback surfaces ASCII findings to the caller but
+# publishes no record: publishing is an assertion, and the grammar that must
+# re-verify every assertion is exactly what is unavailable.
+printf 'review output\n- [P1] Fallback-visible finding - f.py:1\n' \
+    > "$CACHE_DIR/round-103-codex-review.log"
+REVIEW_MARKER_SCANNER="$TEST_DIR/no-such-scanner.py"
+set +e
+OUTPUT=$(detect_review_issues 103 2>/dev/null)
+RESULT=$?
+set -e
+REVIEW_MARKER_SCANNER="$SAVED_SCANNER"
+if [[ $RESULT -eq 0 && "$OUTPUT" == *'[P1]'* && ! -f "$LOOP_DIR/round-103-review-result.md" ]]; then
+    pass "the fallback surfaces findings without publishing a record"
+else
+    fail "fallback publish" "return 0, [P1] in output, no record" \
+        "return $RESULT, record: $(test -f "$LOOP_DIR/round-103-review-result.md" && echo yes || echo no)"
+fi
+
+# ========================================
+# Test 3k: End to end -- a poisoned log cannot resolve a real finding
+# ========================================
+# The chain in one pass, on a real Run: a review log that still reports a
+# finding, mangled by the exact CR shape that used to shift extraction, must
+# leave export unable to resolve that finding or to derive accept. Uses the
+# clean-rereview-derived fixture, whose round-1 review reports the finding and
+# whose round-2 record is what normally resolves it.
+echo "Test 3k: export cannot resolve a finding the poisoned log still reports"
+
+if ! command -v python3 >/dev/null 2>&1; then
+    pass "end-to-end export skipped (python3 unavailable)"
+else
+    E2E_RUN="$TEST_DIR/e2e-run"
+    rm -rf "$E2E_RUN"
+    cp -R "$PROJECT_ROOT/tests/fixtures/proof/runs/clean-rereview-derived" "$E2E_RUN"
+    P1_LINE=$(grep '^- \[P1\]' "$E2E_RUN/round-1-review-result.md" | head -1)
+    rm -f "$E2E_RUN/round-2-review-result.md"
+
+    E2E_CACHE="$TEST_DIR/e2e-cache"
+    mkdir -p "$E2E_CACHE"
+    {
+        printf 'u1\ru2\ru3\ru4\ru5\ru6\ru7\ru8\ru9\ru10\rre-review begins\n'
+        printf '%s\n' "$P1_LINE"
+        for i in $(seq 1 49); do echo "trailing line $i"; done
+    } > "$E2E_CACHE/round-2-codex-review.log"
+
+    SAVED_LOOP_DIR="$LOOP_DIR"
+    SAVED_CACHE_DIR="$CACHE_DIR"
+    LOOP_DIR="$E2E_RUN"
+    CACHE_DIR="$E2E_CACHE"
+    set +e
+    detect_review_issues 2 >/dev/null 2>&1
+    E2E_RC=$?
+    set -e
+    LOOP_DIR="$SAVED_LOOP_DIR"
+    CACHE_DIR="$SAVED_CACHE_DIR"
+
+    if [[ $E2E_RC -eq 0 ]] && grep -qF '[P1]' "$E2E_RUN/round-2-review-result.md" 2>/dev/null; then
+        pass "the poisoned log's record still carries the re-reported [P1]"
+    else
+        fail "e2e record" "return 0 and a [P1]-carrying round-2 record" \
+            "return $E2E_RC, record: $(head -3 "$E2E_RUN/round-2-review-result.md" 2>/dev/null || echo none)"
+    fi
+
+    E2E_BUNDLE="$TEST_DIR/e2e-bundle"
+    mkdir -p "$E2E_BUNDLE"
+    if bash -c "
+        source '$PROJECT_ROOT/scripts/loop.sh'
+        loop proof export --run '$E2E_RUN' --profile local-v0 --out '$E2E_BUNDLE'
+    " >/dev/null 2>&1; then
+        E2E_VERDICT=$(python3 - "$E2E_BUNDLE/proof.json" <<'PY'
+import json
+import sys
+
+bundle = json.load(open(sys.argv[1], encoding="utf-8"))
+decision = bundle.get("verdict", {}).get("decision", "")
+p1_statuses = sorted(
+    finding.get("status", "")
+    for finding in bundle.get("findings", [])
+    if finding.get("severity") == "P1"
+)
+print("%s:%s" % (decision, ",".join(p1_statuses)))
+PY
+)
+        case "$E2E_VERDICT" in
+            accept:*|*resolved*)
+                fail "e2e verdict" "no accept, no resolved P1" "$E2E_VERDICT" ;;
+            *open*)
+                pass "export keeps the P1 open and does not derive accept ($E2E_VERDICT)" ;;
+            *)
+                fail "e2e verdict" "a P1 finding left open" "$E2E_VERDICT" ;;
+        esac
+    else
+        fail "e2e export" "an exported bundle" "export did not produce a bundle"
+    fi
+fi
+
+# ========================================
 # Test 4: Missing log file - should return 2
 # ========================================
 echo "Test 4: detect_review_issues returns error code 2 when log file is missing"

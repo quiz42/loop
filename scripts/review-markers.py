@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
 """Locate the first review marker in a review log, for Loop's Stop hook.
 
-The hook must decide two things about a `codex review` log: where the first
-actionable finding starts, so it can extract from there, and whether the log
-contains any marker at all, so it knows whether it may record the review as
-clean. Both questions have one correct answer -- the one `proof/core.py` gives,
-because that module is what later reads the recorded result.
+The hook must decide two things about a `codex review` log: what the findings
+tail is, so it can extract it, and whether the log contains any marker at all,
+so it knows whether it may record the review as clean. Both questions have one
+correct answer -- the one `proof/core.py` gives, because that module is what
+later reads the recorded result.
+
+With `--extract`, the findings tail itself is printed, cut from the very text
+that was scanned. A line number is printed otherwise, but it must never be
+used to re-locate the marker in the file through a second reader: `sed` and
+`wc` count raw `\n` bytes while this scanner counts lines of the decoded text,
+and the difference once moved an extraction past the marker it was extracting
+-- publishing a marker-free record that read as a clean review.
 
 The hook used to answer them itself, in awk. The two implementations drifted
 three times: on whether a marker had to fit inside the first ten columns or
@@ -64,7 +71,16 @@ def main(argv: list) -> int:
         metavar="N",
         help="search only the last N lines; line numbers stay absolute",
     )
+    parser.add_argument(
+        "--extract",
+        action="store_true",
+        help="print the text from the marker's line to the end, not a line number",
+    )
     args = parser.parse_args(argv)
+    if args.extract and not args.canonical:
+        # Only an actionable finding starts an extraction; a malformed token
+        # withholds the clean record but extracts nothing.
+        parser.error("--extract requires --canonical")
 
     try:
         text = Path(args.path).read_text(encoding="utf-8")
@@ -75,16 +91,30 @@ def main(argv: list) -> int:
         print(f"review-markers: cannot read {args.path}: {error}", file=sys.stderr)
         return EXIT_UNSCANNABLE
 
+    # The tail window is sliced on "\n" alone, matching how the grammar numbers
+    # lines (`first_review_marker` counts "\n" before the match). str.splitlines
+    # is the wrong knife: it also cuts on form feed, NEL, U+2028 and friends,
+    # which no "\n"-counting reader recognizes, so one such byte early in a log
+    # shifted the window arithmetic relative to the marker's own line number.
     offset = 0
     if args.tail > 0:
-        lines = text.splitlines(keepends=True)
-        if len(lines) > args.tail:
-            offset = len(lines) - args.tail
-            text = "".join(lines[offset:])
+        parts = text.split("\n")
+        line_count = len(parts) - 1 if parts and parts[-1] == "" else len(parts)
+        if line_count > args.tail:
+            offset = line_count - args.tail
+            text = "\n".join(parts[offset:])
 
     found = first_review_marker(text, canonical_only=args.canonical)
     if found is None:
         return EXIT_NONE
+    if args.extract:
+        # The suffix comes out of the exact text that was scanned, so what is
+        # published is what the grammar read -- there is no second reader to
+        # disagree with. Encoding is pinned because the record has one, whatever
+        # locale the calling hook inherited.
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stdout.write(text[found["offset"]:])
+        return EXIT_FOUND
     print(found["line"] + offset)
     return EXIT_FOUND
 
