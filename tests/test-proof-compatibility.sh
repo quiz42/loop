@@ -314,8 +314,55 @@ print(json.load(open(sys.argv[1] + '/proof.json', encoding='utf-8'))['integrity'
         "$LEGACY_INTEGRITY"
     assert_equals "verify reports incomplete with exit 2" "2|incomplete" \
         "$(verify_run "$LEGACY_BUNDLE")"
+
+    # Determinism does not say what the two exports agreed on. Any fabricated
+    # substitute for the unrecorded head_commit is equally deterministic, and
+    # `run.head_commit or "unrecorded"` kept all five suites green while
+    # silently changing legacy Run identity. The golden pins the payload as the
+    # null-based one: sha256 over {"algo":"run-id-v0","base_commit":"2ab7053...",
+    # "head_commit":null,"round_indices":[0],"session_timestamp":
+    # "2026-07-29T20:22:19Z","terminal_state":"complete"}.
+    assert_equals "and it is the null-based run_id, not a fabricated substitute" \
+        "sha256:384d7e81ab298a2521b275327fa6dc00acc22fb959a364015e67ad20e7493dd2" \
+        "$LEGACY_RUN_ID"
+
+    # `legacy-version-gap` is the one reason here the Validator cannot
+    # re-derive: it is a fact about the source Run's state file, echoed only
+    # from the producer's compile_warnings. The exit code above does not depend
+    # on it, because head-commit-unknown and reviewed-commit-unknown are
+    # re-derived from `source` and force incomplete on their own, so the reason
+    # has to be asserted against verify's own report.
+    LEGACY_REASONS=$(verify_reasons "$LEGACY_BUNDLE")
+    if [[ "$LEGACY_REASONS" == *legacy-version-gap* ]]; then
+        pass "verify re-surfaces legacy-version-gap in its own report"
+    else
+        fail "verify legacy-version-gap" "legacy-version-gap" "$LEGACY_REASONS"
+    fi
 else
     fail "legacy export" "a bundle" "export failed"
+fi
+
+# And the mapping itself, on a Bundle whose only incomplete-forcing reason is
+# the legacy gap. Dropping `legacy-version-gap` from the validator's incomplete
+# set left every suite green, because the legacy fixture is always incomplete
+# for two other reasons as well and no assertion could tell the difference.
+ONLYGAP_RUN=$(make_run onlygap clean-complete)
+ONLYGAP_BUNDLE=$(export_run "$ONLYGAP_RUN" onlygap)
+if [[ -n "$ONLYGAP_BUNDLE" ]]; then
+    rehash_bundle "$ONLYGAP_BUNDLE/proof.json" <<'PY'
+bundle["integrity"]["compile_warnings"].append(
+    {
+        "reason": "legacy-version-gap",
+        "target": "complete-state.md",
+        "detail": "Injected: the only incomplete-forcing reason in this Bundle.",
+    }
+)
+bundle["integrity"]["status"] = "incomplete"
+PY
+    assert_equals "legacy-version-gap on its own maps to incomplete with exit 2" \
+        "2|incomplete" "$(verify_run "$ONLYGAP_BUNDLE")"
+else
+    fail "onlygap export" "a bundle" "export failed"
 fi
 
 # ========================================
