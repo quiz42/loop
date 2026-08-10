@@ -30,9 +30,11 @@ TESTS_FAILED=0
 pass() { echo -e "${GREEN}PASS${NC}: $1"; TESTS_PASSED=$((TESTS_PASSED + 1)); }
 fail() { echo -e "${RED}FAIL${NC}: $1"; echo "  Expected: $2"; echo "  Got: $3"; TESTS_FAILED=$((TESTS_FAILED + 1)); }
 
-# Setup test environment
+# Setup test environment. Cleanup restores write permission first: two tests
+# below deliberately leave a read-only directory or a mode-000 record behind
+# when they fail mid-way, and rm -rf alone cannot clear those.
 TEST_DIR=$(mktemp -d)
-trap "rm -rf $TEST_DIR" EXIT
+trap 'chmod -R u+w "$TEST_DIR" 2>/dev/null; rm -rf "$TEST_DIR"' EXIT
 
 # Set up isolated cache directory
 export XDG_CACHE_HOME="$TEST_DIR/.cache"
@@ -1017,6 +1019,74 @@ if [[ -f "$LOOP_DIR/round-105-review-result.md" ]]; then
     fi
 else
     fail "read-only invalidation setup" "an all-clear on disk" "no record written"
+fi
+
+# (g) A record the byte probe cannot read at all is the remaining cell of the
+# classification table, and it used to fail open: probe status above 1 fell
+# through, the stale all-clear stayed, a scanner-down retry returned 1, and
+# the caller finalized -- with the record parseable again the moment its
+# permissions came back. Unclassifiable now means preserved AND blocking:
+# deleting might destroy a findings record, proceeding lets an assertion
+# nobody could read authorize the round. The record must ride through
+# byte-for-byte, and stderr must claim classification failed, not that the
+# record was dropped.
+printf 'Code review complete\nNothing to report\n' \
+    > "$CACHE_DIR/round-106-codex-review.log"
+set +e
+detect_review_issues 106 >/dev/null 2>&1
+set -e
+if [[ -f "$LOOP_DIR/round-106-review-result.md" ]]; then
+    cp "$LOOP_DIR/round-106-review-result.md" "$TEST_DIR/round-106-record-copy.md"
+    printf 'retry attempt with nothing the fallback can see\n' \
+        > "$CACHE_DIR/round-106-codex-review.log"
+    chmod 000 "$LOOP_DIR/round-106-review-result.md"
+    REVIEW_MARKER_SCANNER="$TEST_DIR/no-such-scanner.py"
+    set +e
+    PROBE_ERR=$(detect_review_issues 106 2>&1 >/dev/null)
+    RESULT=$?
+    set -e
+    REVIEW_MARKER_SCANNER="$SAVED_SCANNER"
+    chmod 644 "$LOOP_DIR/round-106-review-result.md"
+    if [[ $RESULT -eq 2 ]] && \
+       cmp -s "$LOOP_DIR/round-106-review-result.md" "$TEST_DIR/round-106-record-copy.md" && \
+       [[ "$PROBE_ERR" == *"could not classify the previous review record"* ]] && \
+       [[ "$PROBE_ERR" != *"Dropped the previous all-clear"* ]]; then
+        pass "an unclassifiable record is preserved and blocks the attempt"
+    else
+        fail "unclassifiable record" \
+            "return 2, record byte-identical, classification error, no drop claim" \
+            "return $RESULT, identical: $(cmp -s "$LOOP_DIR/round-106-review-result.md" "$TEST_DIR/round-106-record-copy.md" && echo yes || echo no), stderr: $PROBE_ERR"
+    fi
+else
+    fail "unclassifiable record setup" "an all-clear on disk" "no record written"
+fi
+
+# The end-to-end half of (g): status 2 maps to block_review_failure in the
+# caller, never enter_finalize_phase, so the blocked attempt leaves the Run
+# active -- no finalize or terminal state is written -- and an active Run is
+# exactly what export refuses to touch. The unclassifiable record therefore
+# cannot reach a verdict at all, let alone authorize accept.
+if command -v python3 >/dev/null 2>&1; then
+    ACTIVE_RUN="$TEST_DIR/active-run"
+    rm -rf "$ACTIVE_RUN"
+    cp -R "$PROJECT_ROOT/tests/fixtures/proof/runs/clean-rereview-derived" "$ACTIVE_RUN"
+    mv "$ACTIVE_RUN/complete-state.md" "$ACTIVE_RUN/state.md"
+    mkdir -p "$TEST_DIR/active-bundle"
+    set +e
+    ACTIVE_OUT=$(bash -c "
+        source '$PROJECT_ROOT/scripts/loop.sh'
+        loop proof export --run '$ACTIVE_RUN' --out '$TEST_DIR/active-bundle'
+    " 2>&1)
+    ACTIVE_RC=$?
+    set -e
+    if [[ $ACTIVE_RC -ne 0 ]] && [[ ! -f "$TEST_DIR/active-bundle/proof.json" ]]; then
+        pass "an active Run is refused by export, so a blocked attempt cannot reach a verdict"
+    else
+        fail "active-run export refusal" "a refusal and no bundle" \
+            "exit $ACTIVE_RC, bundle: $(test -f "$TEST_DIR/active-bundle/proof.json" && echo yes || echo no), output: $(echo "$ACTIVE_OUT" | head -2)"
+    fi
+else
+    pass "active-run export refusal skipped (python3 unavailable)"
 fi
 
 # ========================================

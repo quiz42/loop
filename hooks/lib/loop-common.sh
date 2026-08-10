@@ -847,8 +847,9 @@ review_marker_line_fallback() {
 #   0 - issues found (caller should continue review loop)
 #   1 - no issues found, or the outcome is ambiguous (caller can proceed)
 #   2 - hard analysis failure (caller must block and require retry): the log
-#       is missing or empty, or a stale all-clear was found and could not be
-#       invalidated. Either way nothing about this round is established.
+#       is missing or empty, a stale all-clear was found and could not be
+#       invalidated, or an existing record could not be classified safely.
+#       Either way nothing about this round is established.
 # Outputs: extracted review content to stdout if issues found
 # Arguments: $1=round_number
 # Required globals: LOOP_DIR, CACHE_DIR
@@ -860,8 +861,9 @@ review_marker_line_fallback() {
 #    invalidation works even when the scanner cannot run -- which is exactly
 #    when a stale assertion is most dangerous. An extracted findings record IS
 #    evidence and is never dropped here. A stale all-clear that cannot be
-#    removed is a hard failure (2): proceeding would let a later ambiguous
-#    return of 1 finalize against it.
+#    removed, or a record the probe cannot classify at all, is a hard failure
+#    (2): the unclassifiable record is preserved as evidence, and proceeding
+#    would let a later ambiguous return of 1 finalize against it.
 # 2. Ask the shared scanner for the findings tail: the first actionable [P?]
 #    line within the last 50 lines, and everything after it, cut from the text
 #    the scanner itself read. Real review issues only appear near the end of
@@ -914,9 +916,17 @@ detect_review_issues() {
     # output and begins at the marker line that triggered extraction, so it
     # always carries "[P"; the all-clear this function writes never does --
     # and it deliberately needs no scanner: grep over raw bytes cannot diverge
-    # on decoding, columns or line breaks. Only status 1 ("looked, no [P")
-    # deletes; a probe that could not read the file removes nothing, because
-    # destroying evidence needs more certainty than dropping an assertion.
+    # on decoding, columns or line breaks.
+    #
+    # The probe's three outcomes each get their own answer, and the third is
+    # the one that used to fail open. 0 is a findings record: evidence, kept,
+    # scanning continues. 1 is the stale all-clear: deleted, or a hard failure
+    # when deletion cannot be verified. Anything else means the record could
+    # not be classified at all -- unreadable, ACL, transient I/O -- and that
+    # is preserved AND blocking: deleting it might destroy a findings record,
+    # while proceeding lets a later ambiguous return of 1 finalize against an
+    # assertion nobody could even read. Keeping the bytes and refusing the
+    # round is the only pairing that does neither.
     if [[ -f "$result_file" ]]; then
         local record_probe=0
         LC_ALL=C grep -qF '[P' "$result_file" || record_probe=$?
@@ -938,6 +948,9 @@ detect_review_issues() {
                 return 2
             fi
             echo "Dropped the previous all-clear for round $round; this attempt must re-establish it" >&2
+        elif [[ "$record_probe" -ne 0 ]]; then
+            echo "Error: could not classify the previous review record for safe invalidation (status $record_probe)" >&2
+            return 2
         fi
     fi
 

@@ -1336,10 +1336,11 @@ run_and_handle_code_review() {
     merged_content=$(detect_review_issues "$round") || detect_exit=$?
 
     if [[ "$detect_exit" -eq 2 ]]; then
-        # Hard analysis failure: no usable review log, or a stale review
-        # record that could not be invalidated. Either way nothing about this
-        # round is established - block and require retry
-        block_review_failure "$round" "Review analysis failed: no usable review output, or a stale review record could not be invalidated" "N/A"
+        # Hard analysis failure: no usable review log, a stale review record
+        # that could not be invalidated, or an existing record that could not
+        # be safely classified. Either way nothing about this round is
+        # established - block and require retry
+        block_review_failure "$round" "Review analysis failed: review output or an existing review record could not be safely established" "N/A"
     fi
 
     # 0, 1 and 2 are the whole of detect_review_issues' documented contract.
