@@ -1012,6 +1012,126 @@ BASELINE_BUNDLE="$PROJECT_ROOT/tests/fixtures/proof/bundles/pre-masking-public-v
 assert_equals "an archived pre-masking public-v0 Bundle verifies valid unchanged" \
     "0|valid" "$(verify_run "$BASELINE_BUNDLE")"
 
+# ========================================
+# Files the compiler does not recognise
+# ========================================
+
+echo ""
+echo "Section 9: An unrecognised file is kept, named, and costs the badge"
+
+# Report one item's classification and one warning's reason and target, so a
+# regression that keeps the item but drops the warning -- or keeps the warning
+# but stops naming the file -- cannot pass.
+unknown_item_of() {
+    python3 - "$1" "$2" <<'PY'
+import json
+import sys
+
+bundle = json.load(open(sys.argv[1] + "/proof.json", encoding="utf-8"))
+target = sys.argv[2]
+item = next((i for i in bundle["evidence"] if i["path"] == target), None)
+warnings = [
+    w for w in bundle["integrity"]["compile_warnings"] if w.get("target") == target
+]
+print(
+    "%s|%s|%s"
+    % (
+        "absent" if item is None else "%s/%s" % (item["kind"], item["status"]),
+        bundle["integrity"]["status"],
+        ",".join(sorted(w["reason"] for w in warnings)),
+    )
+)
+PY
+}
+
+# spec section F: an unrecognized file is recorded as `kind: unknown` and
+# produces a warning. The warning reuses `unparseable-artifact`, which section
+# J maps to `incomplete`, so a stray file costs the Bundle its badge. That is
+# the contract; it is asserted as a pair because deleting the warning alone
+# left every suite green while flipping verify from exit 2 to exit 0.
+STRAY_RUN=$(make_run stray clean-complete)
+printf 'scratch notes\n' > "$STRAY_RUN/scratch-notes.txt"
+STRAY_BUNDLE=$(export_run "$STRAY_RUN" stray)
+if [[ -n "$STRAY_BUNDLE" ]]; then
+    assert_equals "an unrecognised file is kept as kind unknown and named in a warning" \
+        "unknown/included|incomplete|unparseable-artifact" \
+        "$(unknown_item_of "$STRAY_BUNDLE" scratch-notes.txt)"
+
+    # "Never discarded" means the bytes are really there and really hash to
+    # what the manifest declares -- not merely that a row exists.
+    STRAY_BYTES=$(python3 -c "
+import hashlib, json, sys
+bundle = json.load(open(sys.argv[1] + '/proof.json', encoding='utf-8'))
+item = next(i for i in bundle['evidence'] if i['path'] == 'scratch-notes.txt')
+data = open(sys.argv[1] + '/evidence/scratch-notes.txt', 'rb').read()
+print('%s|%s' % (
+    hashlib.sha256(data).hexdigest() == item['sha256'],
+    len(data) == item['bytes'],
+))
+" "$STRAY_BUNDLE")
+    assert_equals "its bytes are in the Bundle and match the declaration" \
+        "True|True" "$STRAY_BYTES"
+
+    assert_equals "the stray file makes the Bundle incomplete at exit 2" "2|incomplete" \
+        "$(verify_run "$STRAY_BUNDLE")"
+
+    # The compile-warning replay is the only path by which
+    # `unparseable-artifact` reaches verify at all, and nothing exercised it:
+    # the whole replay loop could be deleted with all five suites green.
+    STRAY_REASONS=$(verify_reasons "$STRAY_BUNDLE")
+    if [[ "$STRAY_REASONS" == *unparseable-artifact* ]]; then
+        pass "verify re-surfaces unparseable-artifact in its own report"
+    else
+        fail "verify unparseable-artifact" "unparseable-artifact" "$STRAY_REASONS"
+    fi
+else
+    fail "stray export" "a bundle" "export failed"
+fi
+
+# A Loop-authored control marker is recognised metadata, not an unrecognised
+# artifact: it is kept as evidence and costs nothing. `.cancel-requested` and
+# `.review-phase-started` were already recognised. `.methodology-exit-reason`
+# is written by hooks/lib/methodology-analysis.sh and is the third of the same
+# family; it was classified as a stray file.
+MARKER_RUN=$(make_run marker clean-complete)
+printf 'complete\n' > "$MARKER_RUN/.methodology-exit-reason"
+MARKER_BUNDLE=$(export_run "$MARKER_RUN" marker)
+if [[ -n "$MARKER_BUNDLE" ]]; then
+    assert_equals "a Loop control marker is kept as evidence with no warning" \
+        "unknown/included|valid|" \
+        "$(unknown_item_of "$MARKER_BUNDLE" .methodology-exit-reason)"
+    assert_equals "and the marker does not cost the Bundle its badge" "0|valid" \
+        "$(verify_run "$MARKER_BUNDLE")"
+else
+    fail "marker export" "a bundle" "export failed"
+fi
+
+# `.DS_Store` is macOS noise rather than a Run artifact, and is skipped. The
+# skip matched the exact relative path, so only the Run root was skipped while
+# `sub/.DS_Store` was retained as kind unknown and cost the Bundle its badge --
+# the same bytes treated in opposite ways. The skip now matches the file name
+# at any depth, and spec section F names the exception instead of claiming it
+# never happens.
+NOISE_RUN=$(make_run noise clean-complete)
+printf 'macos noise\n' > "$NOISE_RUN/.DS_Store"
+mkdir -p "$NOISE_RUN/sub"
+printf 'macos noise\n' > "$NOISE_RUN/sub/.DS_Store"
+NOISE_BUNDLE=$(export_run "$NOISE_RUN" noise)
+if [[ -n "$NOISE_BUNDLE" ]]; then
+    NOISE_PATHS=$(python3 -c "
+import json, sys
+bundle = json.load(open(sys.argv[1] + '/proof.json', encoding='utf-8'))
+print(','.join(sorted(
+    i['path'] for i in bundle['evidence'] if i['path'].endswith('.DS_Store')
+)))
+" "$NOISE_BUNDLE")
+    assert_equals "no .DS_Store is collected, at the root or below it" "" "$NOISE_PATHS"
+    assert_equals "and OS noise does not cost the Bundle its badge" "0|valid" \
+        "$(verify_run "$NOISE_BUNDLE")"
+else
+    fail "noise export" "a bundle" "export failed"
+fi
+
 echo ""
 echo "========================================"
 echo "Proof Compatibility Test Summary"

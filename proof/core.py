@@ -785,7 +785,23 @@ def _kind_for_path(relative_path: str) -> str:
 # the rounds that only reviewed it, so it is named once and read everywhere.
 REVIEW_PHASE_MARKER = ".review-phase-started"
 
-_RECOGNIZED_METADATA_PATHS = frozenset({".cancel-requested", REVIEW_PHASE_MARKER})
+# Control markers Loop writes into the Run directory. They carry no evidence
+# kind of their own, so they land on `unknown`, but they are recognized Loop
+# output rather than something the compiler failed to understand -- warning
+# about them would cost the Bundle its badge for doing exactly what Loop does.
+# `.methodology-exit-reason` (hooks/lib/methodology-analysis.sh) is the third of
+# the family and was classified as a stray file.
+_RECOGNIZED_METADATA_PATHS = frozenset(
+    {".cancel-requested", ".methodology-exit-reason", REVIEW_PHASE_MARKER}
+)
+
+# Filesystem noise that is not Run output at all. Skipping it is the one
+# exception to spec section F's "unrecognized files are not silently
+# discarded", and the spec names it. The test matched the exact relative path,
+# so a `.DS_Store` at the Run root was skipped while `sub/.DS_Store` was
+# retained as `kind: unknown` and downgraded the Bundle -- the same bytes
+# treated in opposite ways depending on depth.
+_IGNORED_FILE_NAMES = frozenset({".DS_Store"})
 
 
 def _iter_files(run_dir: Path) -> Iterable[Tuple[str, Path]]:
@@ -793,9 +809,9 @@ def _iter_files(run_dir: Path) -> Iterable[Tuple[str, Path]]:
         # Do not follow a symlink out of the Run's read-only boundary.
         if not path.is_file() or path.is_symlink():
             continue
-        relative = path.relative_to(run_dir).as_posix()
-        if relative == ".DS_Store":
+        if path.name in _IGNORED_FILE_NAMES:
             continue
+        relative = path.relative_to(run_dir).as_posix()
         yield relative, path
 
 

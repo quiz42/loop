@@ -261,7 +261,9 @@ Factual basis: `hooks/lib/loop-common.sh` (the `EXIT_*` constants, `end_loop()` 
 | `.loop/bitlesson.md` | An evidence entry; the body is always omitted under the public profiles (AC-6) |
 | `git log base_commit..head_commit` | Commit evidence records |
 
-Unrecognized files are not silently discarded: they are recorded as `kind: unknown` and produce a warning (AC-10).
+Unrecognized files are not silently discarded: their bytes are retained, they are recorded as `kind: unknown`, and they produce an `unparseable-artifact` warning naming the file (AC-10). Section J maps that reason to `incomplete`, so a file the compiler cannot classify withholds the badge until it is removed or given a kind — the same conservative reading a garbled review result gets, and deliberate rather than incidental.
+
+Two classes are not "unrecognized". Loop's own control markers in the Run directory — `.cancel-requested`, `.review-phase-started`, `.methodology-exit-reason` — are recognized Loop output: they are retained as `kind: unknown`, because they carry no evidence kind of their own, but they produce no warning and cost nothing. Filesystem noise is not Run output at all: `.DS_Store` is skipped wherever it appears, which is the one exception to the sentence above, and it is stated here rather than left to be discovered from the fact that a Run exported from a Mac was `incomplete`.
 
 ### G. Delivery Verdict and Finding derivation (conservative mapping)
 
