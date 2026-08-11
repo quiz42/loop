@@ -53,6 +53,11 @@ TEST_DIR=$(mktemp -d)
 cleanup() { rm -rf "$TEST_DIR"; }
 trap cleanup EXIT
 
+# `max_item_bytes` in both shipped profiles. Named once because the boundary
+# cases below have to agree with each other: one builds a source at exactly the
+# cap and another asserts no item is declared truncated at or under it.
+MAX_ITEM_BYTES=1048576
+
 echo "========================================"
 echo "Proof Compatibility Tests"
 echo "========================================"
@@ -99,6 +104,17 @@ verify_run() {
     " 2>&1)
     status=$?
     printf '%s|%s' "$status" "$(printf '%s' "$output" | sed -n 's/^status: //p' | head -1)"
+}
+
+# Just the exit code from one `loop proof ...` invocation. The usage and
+# unreadable-Run paths print nothing a status line can be read from, and the
+# exit code is the whole contract for them.
+proof_exit() {
+    bash -c '
+        source "$0"
+        loop proof "$@"
+    ' "$PROJECT_ROOT/scripts/loop.sh" "$@" >/dev/null 2>&1
+    printf '%s' "$?"
 }
 
 # Collect the reason codes verify reports. Failing reasons print as
@@ -218,6 +234,52 @@ json.dump(
 PY
 }
 
+# "<kind>/<status>|<integrity>|<reasons>" for one source path: how the item was
+# classified, what it cost the Bundle, and which warnings name that exact file.
+# Asserted as one string so a regression that keeps the item but drops the
+# warning -- or keeps the warning but stops naming the file -- cannot pass.
+# `absent` where the compiler collected no item at all.
+item_report_of() {
+    python3 - "$1" "$2" <<'PY'
+import json
+import sys
+
+bundle = json.load(open(sys.argv[1] + "/proof.json", encoding="utf-8"))
+target = sys.argv[2]
+item = next((i for i in bundle["evidence"] if i["path"] == target), None)
+warnings = [
+    w for w in bundle["integrity"]["compile_warnings"] if w.get("target") == target
+]
+print(
+    "%s|%s|%s"
+    % (
+        "absent" if item is None else "%s/%s" % (item["kind"], item["status"]),
+        bundle["integrity"]["status"],
+        ",".join(sorted(w["reason"] for w in warnings)),
+    )
+)
+PY
+}
+
+# Every compile-warning detail naming one exact source path, joined. AC-10
+# wants the conclusion a warning costs, and that lives in the detail rather
+# than in the reason code.
+warning_detail_of() {
+    python3 - "$1" "$2" <<'PY'
+import json
+import sys
+
+bundle = json.load(open(sys.argv[1] + "/proof.json", encoding="utf-8"))
+print(
+    " ".join(
+        warning.get("detail", "")
+        for warning in bundle["integrity"]["compile_warnings"]
+        if warning.get("target") == sys.argv[2]
+    )
+)
+PY
+}
+
 warnings_of() {
     python3 - "$1" <<'PY'
 import json
@@ -314,8 +376,83 @@ print(json.load(open(sys.argv[1] + '/proof.json', encoding='utf-8'))['integrity'
         "$LEGACY_INTEGRITY"
     assert_equals "verify reports incomplete with exit 2" "2|incomplete" \
         "$(verify_run "$LEGACY_BUNDLE")"
+
+    # Determinism does not say what the two exports agreed on. Any fabricated
+    # substitute for the unrecorded head_commit is equally deterministic, and
+    # `run.head_commit or "unrecorded"` kept all five suites green while
+    # silently changing legacy Run identity. The golden pins the payload as the
+    # null-based one: sha256 over {"algo":"run-id-v0","base_commit":"2ab7053...",
+    # "head_commit":null,"round_indices":[0],"session_timestamp":
+    # "2026-07-29T20:22:19Z","terminal_state":"complete"}.
+    assert_equals "and it is the null-based run_id, not a fabricated substitute" \
+        "sha256:384d7e81ab298a2521b275327fa6dc00acc22fb959a364015e67ad20e7493dd2" \
+        "$LEGACY_RUN_ID"
+
+    # `legacy-version-gap` is the one reason here the Validator cannot
+    # re-derive: it is a fact about the source Run's state file, echoed only
+    # from the producer's compile_warnings. The exit code above does not depend
+    # on it, because head-commit-unknown and reviewed-commit-unknown are
+    # re-derived from `source` and force incomplete on their own, so the reason
+    # has to be asserted against verify's own report.
+    LEGACY_REASONS=$(verify_reasons "$LEGACY_BUNDLE")
+    if [[ "$LEGACY_REASONS" == *legacy-version-gap* ]]; then
+        pass "verify re-surfaces legacy-version-gap in its own report"
+    else
+        fail "verify legacy-version-gap" "legacy-version-gap" "$LEGACY_REASONS"
+    fi
 else
     fail "legacy export" "a bundle" "export failed"
+fi
+
+# And the mapping itself, on a Bundle whose only incomplete-forcing reason is
+# the legacy gap. Dropping `legacy-version-gap` from the validator's incomplete
+# set left every suite green, because the legacy fixture is always incomplete
+# for two other reasons as well and no assertion could tell the difference.
+ONLYGAP_RUN=$(make_run onlygap clean-complete)
+ONLYGAP_BUNDLE=$(export_run "$ONLYGAP_RUN" onlygap)
+if [[ -n "$ONLYGAP_BUNDLE" ]]; then
+    rehash_bundle "$ONLYGAP_BUNDLE/proof.json" <<'PY'
+bundle["integrity"]["compile_warnings"].append(
+    {
+        "reason": "legacy-version-gap",
+        "target": "complete-state.md",
+        "detail": "Injected: the only incomplete-forcing reason in this Bundle.",
+    }
+)
+bundle["integrity"]["status"] = "incomplete"
+PY
+    assert_equals "legacy-version-gap on its own maps to incomplete with exit 2" \
+        "2|incomplete" "$(verify_run "$ONLYGAP_BUNDLE")"
+else
+    fail "onlygap export" "a bundle" "export failed"
+fi
+
+# `legacy-version-gap` means "this Run predates the Recorder", which is why it
+# requires all three Recorder facts to be absent. A modern Run where no review
+# ran is missing only `reviewed_commit`, and calling that legacy would report a
+# current Run as an old one. The distinction is asserted because the obvious
+# widening -- warn when any Recorder fact is absent -- is wrong in exactly this
+# case, and nothing else here would catch it. `ended_at` cannot be the odd one
+# out: Loop writes it only alongside `head_commit`.
+NOREVIEW_RUN=$(make_run noreview clean-complete)
+python3 - "$NOREVIEW_RUN/complete-state.md" <<'PY'
+import re
+import sys
+
+path = sys.argv[1]
+text = open(path, encoding="utf-8").read()
+open(path, "w", encoding="utf-8").write(
+    re.sub(r"^reviewed_commit:.*\n", "", text, count=1, flags=re.MULTILINE)
+)
+PY
+NOREVIEW_BUNDLE=$(export_run "$NOREVIEW_RUN" noreview)
+if [[ -n "$NOREVIEW_BUNDLE" ]]; then
+    assert_equals "a Run that recorded no review is not reported as legacy" \
+        "reviewed-commit-unknown" "$(warnings_of "$NOREVIEW_BUNDLE")"
+    assert_equals "it is incomplete for the reason that is true of it" "2|incomplete" \
+        "$(verify_run "$NOREVIEW_BUNDLE")"
+else
+    fail "noreview export" "a bundle" "export failed"
 fi
 
 # ========================================
@@ -379,6 +516,74 @@ print('%s|%s|%s|%s' % (item['status'], item['sha256'], item['bytes'], item['omit
 else
     fail "truncated export" "a bundle" "export failed"
 fi
+
+# A source that fits the cap must never be declared truncated. Masking
+# substitutes a longer token than the path it replaces -- `/Users/q` is nine
+# bytes and `<masked-home>` is thirteen -- so a review result at the cap masks
+# to over it. Deciding truncation on the masked length wrote `status:
+# truncated` with a `bytes` value that does not exceed the limit, the
+# declaration contradicting the only fact that justifies it, while the
+# identical source under local-v0 and the same cap was `included`.
+MASKGROW_RUN=$(make_run maskgrow path-cited-review-complete)
+python3 - "$MASKGROW_RUN/round-1-review-result.md" "$MAX_ITEM_BYTES" <<'PY'
+import sys
+
+path, cap = sys.argv[1], int(sys.argv[2])
+data = open(path, "rb").read().rstrip(b"\n")
+data += b"\n\nSee /Users/q for the workspace.\n"
+# Exactly max_item_bytes: within the limit, so the source is not oversized.
+data += b"." * (cap - len(data) - 1) + b"\n"
+open(path, "wb").write(data)
+PY
+
+MASKGROW_BUNDLE=$(export_run "$MASKGROW_RUN" maskgrow public-v1)
+if [[ -n "$MASKGROW_BUNDLE" ]]; then
+    MASKGROW_ITEM=$(python3 -c "
+import json, sys
+bundle = json.load(open(sys.argv[1] + '/proof.json', encoding='utf-8'))
+item = next(i for i in bundle['evidence'] if i['path'] == 'round-1-review-result.md')
+print('%s|%s|%s' % (item['status'], item['omitted_reason'], item['bytes']))
+" "$MASKGROW_BUNDLE")
+    assert_equals "a source that fits the cap is withheld as omitted, not truncated" \
+        "omitted|absolute-path|$MAX_ITEM_BYTES" "$MASKGROW_ITEM"
+
+    # The general invariant, asserted over every item so a future size rule
+    # cannot reintroduce the contradiction somewhere else in the Bundle.
+    MASKGROW_CONTRADICTIONS=$(python3 -c "
+import json, sys
+bundle = json.load(open(sys.argv[1] + '/proof.json', encoding='utf-8'))
+cap = int(sys.argv[2])
+print(','.join(sorted(
+    i['path'] for i in bundle['evidence']
+    if i['status'] == 'truncated' and i['bytes'] <= cap
+)))
+" "$MASKGROW_BUNDLE" "$MAX_ITEM_BYTES")
+    assert_equals "no truncated item declares a byte count within the limit" \
+        "" "$MASKGROW_CONTRADICTIONS"
+
+    # An omitted item is disclosed; the withheld-because-masking-grew case must
+    # not be the one omission a reader cannot see.
+    MASKGROW_DISCLOSED=$(python3 -c "
+import json, sys
+bundle = json.load(open(sys.argv[1] + '/proof.json', encoding='utf-8'))
+print(','.join(sorted(
+    e['reason'] for e in bundle['disclosure']['omitted']
+    if e['path'] == 'round-1-review-result.md'
+)))
+" "$MASKGROW_BUNDLE")
+    assert_equals "the withheld item is recorded in the disclosure" \
+        "absolute-path" "$MASKGROW_DISCLOSED"
+
+    assert_equals "and the Bundle is incomplete with exit 2, not valid" "2|incomplete" \
+        "$(verify_run "$MASKGROW_BUNDLE")"
+else
+    fail "maskgrow export" "a bundle" "export failed"
+fi
+
+# The rule above withholds the item only because public-v1 can omit on the same
+# scan class it masks. A profile that masks a class it cannot omit has no floor
+# to fall to; every shipped profile satisfies that, and
+# tests/proof_contract/test_contract.py holds all three of them to it.
 
 # ========================================
 # Verify contract (spec section J)
@@ -634,7 +839,7 @@ echo "Section 6: Truncation is derived from the Bundle, not from its own warning
 SILENT_RUN=$(make_run silent clean-complete)
 python3 -c "
 import sys
-open(sys.argv[1], 'w', encoding='utf-8').write('# Padded prompt\n' + 'x' * 1200000 + '\n')
+open(sys.argv[1], 'wb').write(b'# Padded prompt\n' + b'x\n' * 600000)
 " "$SILENT_RUN/round-0-prompt.md"
 SILENT_SOURCE=$(export_run "$SILENT_RUN" silent-source)
 if [[ -n "$SILENT_SOURCE" ]]; then
@@ -676,6 +881,256 @@ bundle["integrity"]["status"] = "valid"
 PY
     assert_equals "declaring it valid is invalid, not accepted" "3|invalid" \
         "$(verify_run "$LYING_BUNDLE")"
+
+    # The other half of "the Validator checks the declaration's self-
+    # consistency" (spec section C): a truncated item must carry the size
+    # reason. That guard is the only check the Validator applies to a truncated
+    # declaration and nothing exercised it -- turning it off left all five
+    # suites green -- so a refactor could drop it and let `truncated` be used
+    # as an undisclosed omission that escapes the omission rules entirely.
+    MISLABELLED_BUNDLE="$TEST_DIR/bundles/truncated-mislabelled"
+    cp -R "$SILENT_SOURCE" "$MISLABELLED_BUNDLE"
+    # `integrity.status` is deliberately left at the exported `incomplete`.
+    # Declaring `invalid` here would make the exit code right for the wrong
+    # reason -- integrity-status-mismatch -- and the assertion would hold with
+    # the guard switched off.
+    rehash_bundle "$MISLABELLED_BUNDLE/proof.json" <<'PY'
+for item in bundle["evidence"]:
+    if item["path"] == "round-0-prompt.md":
+        item["omitted_reason"] = "profile-redaction"
+PY
+    assert_equals "a truncated item with the wrong omission reason is invalid at exit 3" \
+        "3|invalid" "$(verify_run "$MISLABELLED_BUNDLE")"
+    MISLABELLED_REASONS=$(verify_reasons "$MISLABELLED_BUNDLE")
+    if [[ "$MISLABELLED_REASONS" == *profile-violation* ]]; then
+        pass "and it is reported as a profile-violation"
+    else
+        fail "mislabelled truncation reason" "profile-violation" "$MISLABELLED_REASONS"
+    fi
+
+    # The other direction, and the one that mattered: the reason was right but
+    # the size was not. `omitted` has its reason checked against the profile;
+    # `truncated` did not, so any optional item could be withheld by calling it
+    # truncated, deleting the bytes and re-hashing -- and the answer was
+    # `incomplete`, which reads as a size problem rather than a withheld
+    # artifact. `round-0-prompt.md` is 6032 bytes against a 1 MiB cap, and is
+    # neither required by local-v0 nor referenced by an event, so nothing else
+    # catches it.
+    UNDERCAP_BUNDLE="$TEST_DIR/bundles/truncated-undercap"
+    cp -R "$CLEAN_BUNDLE" "$UNDERCAP_BUNDLE"
+    # The summary is derived from the real file before that file is removed, so
+    # it is arithmetically sound and the size claim is the only thing wrong
+    # here. Without it the item would also fail the summary rule, and this
+    # assertion would hold with the size check switched off.
+    export UNDERCAP_SUMMARY_JSON
+    UNDERCAP_SUMMARY_JSON=$(python3 -c "
+import json, sys
+data = open(sys.argv[1], 'rb').read()
+print(json.dumps({
+    'algo': 'evidence-summary-v0',
+    'lines': data.count(b'\n') + (1 if data and not data.endswith(b'\n') else 0),
+    'longest_line_bytes': max((len(part) for part in data.split(b'\n')), default=0),
+}))
+" "$UNDERCAP_BUNDLE/evidence/round-0-prompt.md")
+    rm "$UNDERCAP_BUNDLE/evidence/round-0-prompt.md"
+    rehash_bundle "$UNDERCAP_BUNDLE/proof.json" <<'PY'
+import json
+import os
+
+for item in bundle["evidence"]:
+    if item["path"] == "round-0-prompt.md":
+        assert item["bytes"] <= 1048576, item["bytes"]
+        item["status"] = "truncated"
+        item["omitted_reason"] = "size-limit"
+        item["summary"] = json.loads(os.environ["UNDERCAP_SUMMARY_JSON"])
+bundle["integrity"]["status"] = "incomplete"
+PY
+    assert_equals "a truncated item that fits the cap is invalid at exit 3" \
+        "3|invalid" "$(verify_run "$UNDERCAP_BUNDLE")"
+    UNDERCAP_REASONS=$(verify_reasons "$UNDERCAP_BUNDLE")
+    if [[ "$UNDERCAP_REASONS" == *profile-violation* ]]; then
+        pass "and withholding it as truncated is a profile-violation"
+    else
+        fail "under-cap truncation reason" "profile-violation" "$UNDERCAP_REASONS"
+    fi
+
+    # A truncated declaration says the item was too large to carry, so an entry
+    # at its declared evidence path contradicts the declaration and sits inside
+    # a bundle budget computed without it. `omitted` has had this rule from the
+    # start; `truncated` had no presence check at all, so putting the source back
+    # at that path verified as merely incomplete.
+    RETAINED_BUNDLE="$TEST_DIR/bundles/truncated-retained"
+    cp -R "$SILENT_SOURCE" "$RETAINED_BUNDLE"
+    cp "$SILENT_RUN/round-0-prompt.md" "$RETAINED_BUNDLE/evidence/round-0-prompt.md"
+    assert_equals "a truncated item whose bytes are in the Bundle is invalid at exit 3" \
+        "3|invalid" "$(verify_run "$RETAINED_BUNDLE")"
+    RETAINED_REASONS=$(verify_reasons "$RETAINED_BUNDLE")
+    if [[ "$RETAINED_REASONS" == *profile-violation* ]]; then
+        pass "and distributing the withheld bytes is a profile-violation"
+    else
+        fail "retained truncation reason" "profile-violation" "$RETAINED_REASONS"
+    fi
+
+    for link_kind in live dangling; do
+        LINKED_BUNDLE="$TEST_DIR/bundles/truncated-$link_kind-symlink"
+        cp -R "$SILENT_SOURCE" "$LINKED_BUNDLE"
+        if [[ "$link_kind" == "live" ]]; then
+            link_target="$SILENT_RUN/round-0-prompt.md"
+        else
+            link_target="$TEST_DIR/no-such-truncated-source"
+        fi
+        ln -s "$link_target" "$LINKED_BUNDLE/evidence/round-0-prompt.md"
+        assert_equals "a truncated item with a $link_kind symlink is invalid at exit 3" \
+            "3|invalid" "$(verify_run "$LINKED_BUNDLE")"
+        LINKED_REASONS=$(verify_reasons "$LINKED_BUNDLE")
+        if [[ "$LINKED_REASONS" == *profile-violation* ]]; then
+            pass "and the $link_kind symlink is a profile-violation"
+        else
+            fail "$link_kind truncated symlink" "profile-violation" "$LINKED_REASONS"
+        fi
+    done
+
+    DIRECTORY_BUNDLE="$TEST_DIR/bundles/truncated-directory"
+    cp -R "$SILENT_SOURCE" "$DIRECTORY_BUNDLE"
+    mkdir "$DIRECTORY_BUNDLE/evidence/round-0-prompt.md"
+    assert_equals "a truncated item with a directory at its declared path is invalid" \
+        "3|invalid" "$(verify_run "$DIRECTORY_BUNDLE")"
+    DIRECTORY_REASONS=$(verify_reasons "$DIRECTORY_BUNDLE")
+    if [[ "$DIRECTORY_REASONS" == *profile-violation* ]]; then
+        pass "and the directory is a profile-violation"
+    else
+        fail "directory at truncated evidence path" "profile-violation" \
+            "$DIRECTORY_REASONS"
+    fi
+
+    # `proof.json` defines the Evidence Item set. A co-located file under a path
+    # it does not declare is unmanaged transport content: verify does not hash,
+    # size, scan or otherwise make a Proof claim about it. Pin that boundary so
+    # the exact-path rule above is not misread as authenticating the container.
+    UNMANAGED_BUNDLE="$TEST_DIR/bundles/truncated-unmanaged-copy"
+    cp -R "$SILENT_SOURCE" "$UNMANAGED_BUNDLE"
+    cp "$SILENT_RUN/round-0-prompt.md" \
+        "$UNMANAGED_BUNDLE/evidence/withheld-copy.bin"
+    assert_equals "an undeclared co-located file remains outside the Proof verdict" \
+        "2|incomplete" "$(verify_run "$UNMANAGED_BUNDLE")"
+    UNMANAGED_REASONS=$(verify_reasons "$UNMANAGED_BUNDLE")
+    if [[ "$UNMANAGED_REASONS" == "truncated-evidence" ]]; then
+        pass "and only the declared truncation affects integrity"
+    else
+        fail "unmanaged co-located file" "truncated-evidence" "$UNMANAGED_REASONS"
+    fi
+
+    # Spec section C's third clause: "a summary plus the original sha256 and
+    # original byte count". The summary carries no content -- truncation is a
+    # disclosure boundary in this codebase, and the Compiler already strips the
+    # goal, the criteria, the state frontmatter and review prose across it, so
+    # a summary quoting the withheld bytes would hand back exactly what those
+    # sites remove (ADR-0008). What it carries instead is shape, and every
+    # member is checkable against the item's own byte count.
+    SUMMARY_ITEM=$(python3 -c "
+import json, sys
+bundle = json.load(open(sys.argv[1] + '/proof.json', encoding='utf-8'))
+item = next(i for i in bundle['evidence'] if i['path'] == 'round-0-prompt.md')
+summary = item.get('summary')
+print(json.dumps(summary, sort_keys=True) if summary is not None else 'absent')
+" "$SILENT_SOURCE")
+    assert_equals "a truncated item carries a content-free shape summary" \
+        '{"algo": "evidence-summary-v0", "lines": 600001, "longest_line_bytes": 15}' \
+        "$SUMMARY_ITEM"
+
+    # Only a withheld-for-size item has anything to summarize, and the summary
+    # is a bounded disclosure surface: it must not appear on items the Bundle
+    # already publishes in full.
+    SUMMARY_ELSEWHERE=$(python3 -c "
+import json, sys
+bundle = json.load(open(sys.argv[1] + '/proof.json', encoding='utf-8'))
+print(','.join(sorted(
+    i['path'] for i in bundle['evidence']
+    if i['status'] != 'truncated' and 'summary' in i
+)))
+" "$SILENT_SOURCE")
+    assert_equals "no published item carries a summary" "" "$SUMMARY_ELSEWHERE"
+
+    # The compiler omitting summaries elsewhere is only half the contract. A
+    # hand-edited Bundle must not gain a second disclosure surface by putting a
+    # structurally valid summary on evidence it already publishes in full.
+    SUMMARY_ON_INCLUDED="$TEST_DIR/bundles/summary-on-included"
+    cp -R "$SILENT_SOURCE" "$SUMMARY_ON_INCLUDED"
+    rehash_bundle "$SUMMARY_ON_INCLUDED/proof.json" <<'PY'
+for item in bundle["evidence"]:
+    if item["path"] == "plan.md":
+        assert item["status"] == "included", item["status"]
+        item["summary"] = {
+            "algo": "evidence-summary-v0",
+            "lines": 1,
+            "longest_line_bytes": item["bytes"],
+        }
+PY
+    assert_equals "a non-truncated item carrying a summary is invalid at exit 3" \
+        "3|invalid" "$(verify_run "$SUMMARY_ON_INCLUDED")"
+    SUMMARY_ON_INCLUDED_REASONS=$(verify_reasons "$SUMMARY_ON_INCLUDED")
+    if [[ "$SUMMARY_ON_INCLUDED_REASONS" == *profile-violation* ]]; then
+        pass "and the extra summary is a profile-violation"
+    else
+        fail "summary on non-truncated evidence" "profile-violation" \
+            "$SUMMARY_ON_INCLUDED_REASONS"
+    fi
+
+    # The feasibility bounds are exact rather than a producer-truth check. Both
+    # shapes below could describe an artifact of the declared size, so a
+    # re-hashed declaration remains incomplete for truncation rather than
+    # becoming invalid merely because it differs from the unavailable source.
+    for accepted in \
+        "capacity-edge:item['summary'].update({'lines': 1, 'longest_line_bytes': item['bytes'] - 1})" \
+        "all-newline:item['summary'].update({'lines': item['bytes'], 'longest_line_bytes': 0})" \
+        ; do
+        ACCEPTED_LABEL="${accepted%%:*}"
+        ACCEPTED_CODE="${accepted#*:}"
+        ACCEPTED_BUNDLE="$TEST_DIR/bundles/summary-$ACCEPTED_LABEL"
+        cp -R "$SILENT_SOURCE" "$ACCEPTED_BUNDLE"
+        export ACCEPTED_SUMMARY_CODE="$ACCEPTED_CODE"
+        rehash_bundle "$ACCEPTED_BUNDLE/proof.json" <<'PY'
+import os
+
+for item in bundle["evidence"]:
+    if item["path"] == "round-0-prompt.md":
+        exec(os.environ["ACCEPTED_SUMMARY_CODE"], {"item": item})
+PY
+        assert_equals "a feasible $ACCEPTED_LABEL summary remains incomplete" \
+            "2|incomplete" "$(verify_run "$ACCEPTED_BUNDLE")"
+    done
+
+    # Each rule below is checked on a Bundle whose only defect is that rule, so
+    # a green result cannot come from a neighbouring check.
+    for broken in \
+        "missing:del item['summary']" \
+        "extra-member:item['summary']['excerpt'] = 'BEGIN RSA PRIVATE KEY'" \
+        "wrong-algo:item['summary']['algo'] = 'evidence-summary-v9'" \
+        "impossible-lines:item['summary']['lines'] = item['bytes'] + 1" \
+        "impossible-length:item['summary']['longest_line_bytes'] = item['bytes'] + 1" \
+        "shape-does-not-fit:item['summary'].update({'lines': 3, 'longest_line_bytes': item['bytes'] - 1})" \
+        "shape-cannot-hold-bytes:item['summary'].update({'lines': 1, 'longest_line_bytes': 0})" \
+        "no-lines:item['summary']['lines'] = 0" \
+        ; do
+        BROKEN_LABEL="${broken%%:*}"
+        BROKEN_CODE="${broken#*:}"
+        BROKEN_BUNDLE="$TEST_DIR/bundles/summary-$BROKEN_LABEL"
+        cp -R "$SILENT_SOURCE" "$BROKEN_BUNDLE"
+        export BROKEN_SUMMARY_CODE="$BROKEN_CODE"
+        # `integrity.status` stays at the exported `incomplete`. Declaring
+        # `invalid` would make the exit code right for the wrong reason --
+        # integrity-status-mismatch -- and every case below would hold with the
+        # summary rule switched off.
+        rehash_bundle "$BROKEN_BUNDLE/proof.json" <<'PY'
+import os
+
+for item in bundle["evidence"]:
+    if item["path"] == "round-0-prompt.md":
+        exec(os.environ["BROKEN_SUMMARY_CODE"], {"item": item})
+PY
+        assert_equals "a $BROKEN_LABEL summary is invalid at exit 3" \
+            "3|invalid" "$(verify_run "$BROKEN_BUNDLE")"
+    done
 else
     fail "silent truncation export" "a bundle" "export failed"
 fi
@@ -949,6 +1404,239 @@ fi
 BASELINE_BUNDLE="$PROJECT_ROOT/tests/fixtures/proof/bundles/pre-masking-public-v0"
 assert_equals "an archived pre-masking public-v0 Bundle verifies valid unchanged" \
     "0|valid" "$(verify_run "$BASELINE_BUNDLE")"
+
+# ========================================
+# Files the compiler does not recognise
+# ========================================
+
+echo ""
+echo "Section 9: An unrecognized file is kept, named, and costs the badge"
+
+# spec section F: an unrecognized file is recorded as `kind: unknown` and
+# produces a warning. The warning reuses `unparseable-artifact`, which section
+# J maps to `incomplete`, so a stray file costs the Bundle its badge. That is
+# the contract; it is asserted as a pair because deleting the warning alone
+# left every suite green while flipping verify from exit 2 to exit 0.
+STRAY_RUN=$(make_run stray clean-complete)
+printf 'scratch notes\n' > "$STRAY_RUN/scratch-notes.txt"
+STRAY_BUNDLE=$(export_run "$STRAY_RUN" stray)
+if [[ -n "$STRAY_BUNDLE" ]]; then
+    assert_equals "an unrecognized file is kept as kind unknown and named in a warning" \
+        "unknown/included|incomplete|unparseable-artifact" \
+        "$(item_report_of "$STRAY_BUNDLE" scratch-notes.txt)"
+
+    # "Never discarded" means the bytes are really there and really hash to
+    # what the manifest declares -- not merely that a row exists.
+    STRAY_BYTES=$(python3 -c "
+import hashlib, json, sys
+bundle = json.load(open(sys.argv[1] + '/proof.json', encoding='utf-8'))
+item = next(i for i in bundle['evidence'] if i['path'] == 'scratch-notes.txt')
+data = open(sys.argv[1] + '/evidence/scratch-notes.txt', 'rb').read()
+print('%s|%s' % (
+    hashlib.sha256(data).hexdigest() == item['sha256'],
+    len(data) == item['bytes'],
+))
+" "$STRAY_BUNDLE")
+    assert_equals "its bytes are in the Bundle and match the declaration" \
+        "True|True" "$STRAY_BYTES"
+
+    assert_equals "the stray file makes the Bundle incomplete at exit 2" "2|incomplete" \
+        "$(verify_run "$STRAY_BUNDLE")"
+
+    # The compile-warning replay is the only path by which
+    # `unparseable-artifact` reaches verify at all, and nothing exercised it:
+    # the whole replay loop could be deleted with all five suites green.
+    STRAY_REASONS=$(verify_reasons "$STRAY_BUNDLE")
+    if [[ "$STRAY_REASONS" == *unparseable-artifact* ]]; then
+        pass "verify re-surfaces unparseable-artifact in its own report"
+    else
+        fail "verify unparseable-artifact" "unparseable-artifact" "$STRAY_REASONS"
+    fi
+else
+    fail "stray export" "a bundle" "export failed"
+fi
+
+# A Loop-authored control marker is recognized metadata, not an unrecognized
+# artifact: it is kept as evidence and costs nothing. `.cancel-requested` and
+# `.review-phase-started` were already recognized. `.methodology-exit-reason`
+# is written by hooks/lib/methodology-analysis.sh and is the third of the same
+# family; it was classified as a stray file.
+MARKER_RUN=$(make_run marker clean-complete)
+printf 'complete\n' > "$MARKER_RUN/.methodology-exit-reason"
+MARKER_BUNDLE=$(export_run "$MARKER_RUN" marker)
+if [[ -n "$MARKER_BUNDLE" ]]; then
+    assert_equals "a Loop control marker is kept as evidence with no warning" \
+        "unknown/included|valid|" \
+        "$(item_report_of "$MARKER_BUNDLE" .methodology-exit-reason)"
+    assert_equals "and the marker does not cost the Bundle its badge" "0|valid" \
+        "$(verify_run "$MARKER_BUNDLE")"
+else
+    fail "marker export" "a bundle" "export failed"
+fi
+
+# `.DS_Store` is macOS noise rather than a Run artifact, and is skipped. The
+# skip matched the exact relative path, so only the Run root was skipped while
+# `sub/.DS_Store` was retained as kind unknown and cost the Bundle its badge --
+# the same bytes treated in opposite ways. The skip now matches the file name
+# at any depth, and spec section F names the exception instead of claiming it
+# never happens.
+NOISE_RUN=$(make_run noise clean-complete)
+printf 'macos noise\n' > "$NOISE_RUN/.DS_Store"
+mkdir -p "$NOISE_RUN/sub"
+printf 'macos noise\n' > "$NOISE_RUN/sub/.DS_Store"
+NOISE_BUNDLE=$(export_run "$NOISE_RUN" noise)
+if [[ -n "$NOISE_BUNDLE" ]]; then
+    NOISE_PATHS=$(python3 -c "
+import json, sys
+bundle = json.load(open(sys.argv[1] + '/proof.json', encoding='utf-8'))
+print(','.join(sorted(
+    i['path'] for i in bundle['evidence'] if i['path'].endswith('.DS_Store')
+)))
+" "$NOISE_BUNDLE")
+    assert_equals "no .DS_Store is collected, at the root or below it" "" "$NOISE_PATHS"
+    assert_equals "and OS noise does not cost the Bundle its badge" "0|valid" \
+        "$(verify_run "$NOISE_BUNDLE")"
+else
+    fail "noise export" "a bundle" "export failed"
+fi
+
+# ========================================
+# Source artifacts the compiler cannot read
+# ========================================
+
+echo ""
+echo "Section 10: An unreadable source artifact names itself and costs a conclusion"
+
+# AC-10: a missing file and an unparseable review result each produce a
+# specific warning rather than a crash or a silent pass. The behaviour was
+# right and none of it was asserted. No fixture could reach the adapter's
+# missing-file branch -- tests/proof_contract/test_run_fixtures.py positively
+# requires plan.md and goal-tracker.md in every Run fixture -- so replacing
+# both warnings with `pass` left all five suites green.
+# A missing goal-tracker.md is warned about twice, and both are wanted: it is
+# missing, and the tables the verdict reads cannot be parsed from a file that
+# is not there. The pair is asserted exactly so neither can quietly disappear.
+for missing in "plan.md:missing-file:stated scope" \
+               "goal-tracker.md:missing-file,unparseable-artifact:no acceptance criterion can be assessed"; do
+    MISSING_FILE="${missing%%:*}"
+    MISSING_REST="${missing#*:}"
+    MISSING_REASONS="${MISSING_REST%%:*}"
+    MISSING_CONCLUSION="${MISSING_REST#*:}"
+    MISSING_LABEL="missing-${MISSING_FILE%.md}"
+    MISSING_RUN=$(make_run "$MISSING_LABEL" clean-complete)
+    rm "$MISSING_RUN/$MISSING_FILE"
+    MISSING_BUNDLE=$(export_run "$MISSING_RUN" "$MISSING_LABEL")
+    if [[ -n "$MISSING_BUNDLE" ]]; then
+        pass "a Run with no $MISSING_FILE still exports rather than crashing"
+        # `absent` because the file cannot be collected: the warning is the
+        # only record that it was expected at all.
+        assert_equals "the warning names $MISSING_FILE and the Bundle is incomplete" \
+            "absent|incomplete|$MISSING_REASONS" \
+            "$(item_report_of "$MISSING_BUNDLE" "$MISSING_FILE")"
+        # AC-10 wants the conclusion too, not just the file: a reader should
+        # not have to infer what became unassessable from the final status.
+        MISSING_DETAIL=$(warning_detail_of "$MISSING_BUNDLE" "$MISSING_FILE")
+        if [[ "$MISSING_DETAIL" == *"$MISSING_CONCLUSION"* ]]; then
+            pass "and it names the conclusion losing $MISSING_FILE costs"
+        else
+            fail "$MISSING_FILE conclusion" "a detail naming '$MISSING_CONCLUSION'" "$MISSING_DETAIL"
+        fi
+        assert_equals "a Run with no $MISSING_FILE verifies incomplete with exit 2" \
+            "2|incomplete" "$(verify_run "$MISSING_BUNDLE")"
+    else
+        fail "$MISSING_LABEL export" "a bundle" "export failed"
+    fi
+done
+
+# An empty review result and one that is not UTF-8 both reach the same
+# published-but-unreadable branch. Deleting that warning flipped an
+# empty-review export from `incomplete` to `valid` with no warnings at all,
+# and all five suites stayed green. The non-UTF-8 half was unexercised
+# entirely.
+#
+# Defined here rather than in the shared helper block at the top of the file:
+# this runs a whole scenario for one input shape and is local to this section,
+# where the helpers above are utilities every section uses.
+unreadable_review_case() {
+    local label="$1"
+    local description="$2"
+    local run_dir
+    run_dir=$(make_run "$label" clean-complete)
+    python3 - "$run_dir/round-0-review-result.md" "$label" <<'PY'
+import sys
+
+path, label = sys.argv[1], sys.argv[2]
+# An empty file and undecodable bytes are different inputs that must not be
+# told apart by the conclusion they support: neither can establish a finding.
+open(path, "wb").write(b"" if label == "empty-review" else b"\xff\xfe\x00binary junk\n")
+PY
+    local bundle
+    bundle=$(export_run "$run_dir" "$label")
+    if [[ -n "$bundle" ]]; then
+        pass "$description still exports rather than crashing"
+        assert_equals "$description warns unparseable-artifact naming the review" \
+            "round_review_result/included|incomplete|unparseable-artifact" \
+            "$(item_report_of "$bundle" round-0-review-result.md)"
+        # The conclusion it costs: with no readable review the delivery cannot
+        # be assessed, and saying so is the point of the warning.
+        assert_equals "$description leaves the decision unverifiable" "unverifiable" \
+            "$(python3 -c "
+import json, sys
+print(json.load(open(sys.argv[1] + '/proof.json', encoding='utf-8'))['verdict']['decision'])
+" "$bundle")"
+        assert_equals "$description verifies incomplete with exit 2" "2|incomplete" \
+            "$(verify_run "$bundle")"
+    else
+        fail "$label export" "a bundle" "export failed"
+    fi
+}
+
+unreadable_review_case empty-review "an empty review result"
+unreadable_review_case binary-review "a review result that is not UTF-8"
+
+# ========================================
+# The CLI exit-code contract (spec section J)
+# ========================================
+
+echo ""
+echo "Section 11: The exit codes the CLI reserves for its callers"
+
+# Section J keeps exit 1 distinct from the integrity codes so CI can tell "this
+# Bundle is bad" from "you called me wrong". Nothing asserted it for verify:
+# every call site in the suites passes a well-formed Bundle path. Deleting the
+# `_ArgumentParser` subclass in scripts/proof-verify.py silently moved usage
+# errors from 1 to 2 -- the code section J reserves for `incomplete` -- with
+# all five suites green.
+assert_equals "verify with no arguments is a usage error, not a verdict" "1" \
+    "$(proof_exit verify)"
+assert_equals "verify with an unrecognized flag is a usage error" "1" \
+    "$(proof_exit verify --no-such-flag "$CLEAN_BUNDLE")"
+
+# A path that is not a Bundle reports `invalid` rather than a usage error,
+# because proof.json cannot be parsed from it. That reads oddly against section
+# J's "usage/environment error" -- nothing was forged, there is simply no
+# Bundle there -- but it is the shipped behaviour and changing it is a separate
+# decision. Pinned so that change has to be a deliberate one.
+assert_equals "a path with no Bundle in it reports invalid, not usage" "3" \
+    "$(proof_exit verify "$TEST_DIR/no-such-bundle")"
+
+# Export exit 4 is the one code in section J's export contract with no
+# assertion anywhere: deleting the whole `except RunUnreadableError` clause
+# collapsed it to 1 without a red test. The three shapes below are distinct
+# paths to it -- the directory is absent, the path is not a directory, and the
+# state file cannot be read as a Run.
+UNREADABLE_DIR="$TEST_DIR/unreadable"
+mkdir -p "$UNREADABLE_DIR"
+printf 'not a run\n' > "$UNREADABLE_DIR/plain-file"
+mkdir -p "$UNREADABLE_DIR/no-frontmatter"
+printf 'no frontmatter at all\n' > "$UNREADABLE_DIR/no-frontmatter/complete-state.md"
+
+assert_equals "exporting a Run directory that is not there is exit 4" "4" \
+    "$(proof_exit export --run "$UNREADABLE_DIR/absent" --out "$TEST_DIR/bundles/unreadable-1")"
+assert_equals "exporting a path that is not a directory is exit 4" "4" \
+    "$(proof_exit export --run "$UNREADABLE_DIR/plain-file" --out "$TEST_DIR/bundles/unreadable-2")"
+assert_equals "exporting a state file with no frontmatter is exit 4" "4" \
+    "$(proof_exit export --run "$UNREADABLE_DIR/no-frontmatter" --out "$TEST_DIR/bundles/unreadable-3")"
 
 echo ""
 echo "========================================"

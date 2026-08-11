@@ -35,24 +35,35 @@ assert_exit() {
     fi
 }
 
+# The fifth argument, when given, is the `target` the reason must name. It is
+# read out of the parsed report rather than matched as a raw substring: the
+# contract promises parseable JSON with stable fields, not a particular
+# indentation, so a formatting-only serializer change must not turn these red.
 assert_report() {
     local name="$1"
     local report="$2"
     local expected_status="$3"
     local expected_reason="${4:-}"
-    if python3 - "$report" "$expected_status" "$expected_reason" <<'PY'
+    local expected_target="${5:-}"
+    if python3 - "$report" "$expected_status" "$expected_reason" "$expected_target" <<'PY'
 import json
 import sys
 
 report = json.loads(sys.argv[1])
 assert report["status"] == sys.argv[2]
+matching = [item for item in report["reasons"] if item.get("reason") == sys.argv[3]]
 if sys.argv[3]:
-    assert any(item.get("reason") == sys.argv[3] for item in report["reasons"])
+    assert matching, "no reason %r in %r" % (sys.argv[3], report["reasons"])
+if sys.argv[4]:
+    targets = [item.get("target") for item in matching]
+    assert sys.argv[4] in targets, "target %r not in %r" % (sys.argv[4], targets)
 PY
     then
         pass "$name"
     else
-        fail "$name" "status $expected_status${expected_reason:+ with $expected_reason}" "$report"
+        fail "$name" \
+            "status $expected_status${expected_reason:+ with $expected_reason}${expected_target:+ targeting $expected_target}" \
+            "$report"
     fi
 }
 
@@ -326,7 +337,95 @@ rm "$TEST_DIR/missing-evidence/evidence/plan.md"
 missing_report=$(loop proof verify "$TEST_DIR/missing-evidence" --json)
 missing_status=$?
 assert_exit "missing included Evidence is invalid" 3 "$missing_status"
-assert_report "missing Evidence names missing-file" "$missing_report" invalid missing-file
+# The spec's Testing Decisions require "the report naming the specific target"
+# for all three tampering cases. The hash-mismatch and proof-id-mismatch cases
+# check it; this one did not, so blanking the file name left the suite green.
+assert_report "missing Evidence names missing-file, and names the file" \
+    "$missing_report" invalid missing-file plan.md
+
+echo "=== Test: the schema phase rejects, reports, and short-circuits ==="
+
+# `schema-violation` was asserted only where a hand-rolled structural check
+# raises it. The schema engine's own rejection -- the spec table's actual
+# definition of the code -- never reached verify in any test: instrumenting
+# validate() showed zero schema rejections across all 71 calls the suites make,
+# and `if not schema_result.is_valid:` could be switched to `if False:` with
+# every suite green.
+cp -R "$TEST_DIR/clean" "$TEST_DIR/schema-invalid"
+python3 - "$TEST_DIR/schema-invalid/proof.json" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+bundle = json.load(open(path, encoding="utf-8"))
+# A required property, so the failure comes from the schema itself rather than
+# from any of the validator's own consistency checks.
+del bundle["run"]["terminal_state"]
+with open(path, "w", encoding="utf-8") as output:
+    json.dump(bundle, output, ensure_ascii=False, sort_keys=True)
+PY
+schema_report=$(loop proof verify "$TEST_DIR/schema-invalid" --json)
+schema_status=$?
+assert_exit "a schema-invalid manifest is invalid" 3 "$schema_status"
+assert_report "schema rejection names schema-violation and the JSON pointer" \
+    "$schema_report" invalid schema-violation '$.run'
+
+# Validation order (spec section J): schema first, and the schema phase is the
+# only one of the seven that short-circuits -- every later phase accumulates
+# reasons. So this is the one assertion that can observe the documented order
+# at all: a Bundle that is both schema-invalid and missing an evidence file
+# must report only the schema failure.
+cp -R "$TEST_DIR/schema-invalid" "$TEST_DIR/schema-first"
+rm "$TEST_DIR/schema-first/evidence/plan.md"
+schema_first_report=$(loop proof verify "$TEST_DIR/schema-first" --json)
+schema_first_status=$?
+assert_exit "a doubly-damaged Bundle is invalid" 3 "$schema_first_status"
+if [[ "$schema_first_report" == *schema-violation* && "$schema_first_report" != *missing-file* ]]; then
+    pass "the schema phase short-circuits before file existence is checked"
+else
+    fail "schema-first ordering" "schema-violation and no missing-file" "$schema_first_report"
+fi
+
+# Bytes that are not JSON at all reach the same reason from a different branch,
+# and no test anywhere corrupted proof.json.
+cp -R "$TEST_DIR/clean" "$TEST_DIR/unparseable-manifest"
+printf 'this is not json\n' > "$TEST_DIR/unparseable-manifest/proof.json"
+unparseable_report=$(loop proof verify "$TEST_DIR/unparseable-manifest" --json)
+unparseable_status=$?
+assert_exit "an unreadable proof.json is invalid" 3 "$unparseable_status"
+assert_report "an unreadable proof.json is a schema-violation" \
+    "$unparseable_report" invalid schema-violation
+if [[ "$unparseable_report" == *'Cannot parse proof.json'* ]]; then
+    pass "and the detail says the manifest could not be parsed"
+else
+    fail "unparseable manifest detail" "Cannot parse proof.json" "$unparseable_report"
+fi
+
+# The third producer: a profile name the Bundle pins but the verifier cannot
+# resolve. Also unexercised.
+cp -R "$TEST_DIR/clean" "$TEST_DIR/unknown-profile"
+python3 - "$TEST_DIR/unknown-profile/proof.json" <<'PY'
+import hashlib
+import json
+import sys
+
+path = sys.argv[1]
+bundle = json.load(open(path, encoding="utf-8"))
+bundle["profile"]["name"] = "no-such-profile-v9"
+payload = dict(bundle)
+payload.pop("proof_id", None)
+payload.pop("transport", None)
+bundle["proof_id"] = "sha256:" + hashlib.sha256(
+    json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+).hexdigest()
+with open(path, "w", encoding="utf-8") as output:
+    json.dump(bundle, output, ensure_ascii=False, sort_keys=True)
+PY
+unknown_profile_report=$(loop proof verify "$TEST_DIR/unknown-profile" --json)
+unknown_profile_status=$?
+assert_exit "an unresolvable profile is invalid" 3 "$unknown_profile_status"
+assert_report "an unresolvable profile is a schema-violation naming profile.name" \
+    "$unknown_profile_report" invalid schema-violation profile.name
 
 loop proof export --run "$RUN_DIR" --profile public-v0 --out "$TEST_DIR/public" >/dev/null 2>&1
 public_setup_status=$?

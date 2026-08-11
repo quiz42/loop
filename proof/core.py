@@ -785,7 +785,23 @@ def _kind_for_path(relative_path: str) -> str:
 # the rounds that only reviewed it, so it is named once and read everywhere.
 REVIEW_PHASE_MARKER = ".review-phase-started"
 
-_RECOGNIZED_METADATA_PATHS = frozenset({".cancel-requested", REVIEW_PHASE_MARKER})
+# Control markers Loop writes into the Run directory. They carry no evidence
+# kind of their own, so they land on `unknown`, but they are recognized Loop
+# output rather than something the compiler failed to understand -- warning
+# about them would cost the Bundle its badge for doing exactly what Loop does.
+# `.methodology-exit-reason` (hooks/lib/methodology-analysis.sh) is the third of
+# the family and was classified as a stray file.
+_RECOGNIZED_METADATA_PATHS = frozenset(
+    {".cancel-requested", ".methodology-exit-reason", REVIEW_PHASE_MARKER}
+)
+
+# Filesystem noise that is not Run output at all. Skipping it is the one
+# exception to spec section F's "unrecognized files are not silently
+# discarded", and the spec names it. The test matched the exact relative path,
+# so a `.DS_Store` at the Run root was skipped while `sub/.DS_Store` was
+# retained as `kind: unknown` and downgraded the Bundle -- the same bytes
+# treated in opposite ways depending on depth.
+_IGNORED_FILE_NAMES = frozenset({".DS_Store"})
 
 
 def _iter_files(run_dir: Path) -> Iterable[Tuple[str, Path]]:
@@ -793,9 +809,9 @@ def _iter_files(run_dir: Path) -> Iterable[Tuple[str, Path]]:
         # Do not follow a symlink out of the Run's read-only boundary.
         if not path.is_file() or path.is_symlink():
             continue
-        relative = path.relative_to(run_dir).as_posix()
-        if relative == ".DS_Store":
+        if path.name in _IGNORED_FILE_NAMES:
             continue
+        relative = path.relative_to(run_dir).as_posix()
         yield relative, path
 
 
@@ -889,13 +905,29 @@ class RunAdapter:
         plan_text = _read_text(plan_path)
         tracker_text = _read_text(tracker_path)
         warnings: List[Dict[str, str]] = []
+        # AC-10 asks each warning to name the file *and* the conclusion it
+        # costs, so a reader does not have to infer the damage from the final
+        # integrity status. These two are not interchangeable: the plan is the
+        # delivery's stated scope, while the Goal Tracker is where every
+        # acceptance criterion and every waiver is recorded.
         if plan_text is None:
             warnings.append(
-                {"reason": "missing-file", "target": "plan.md", "detail": "plan.md is missing or unreadable."}
+                {
+                    "reason": "missing-file",
+                    "target": "plan.md",
+                    "detail": "plan.md is missing or unreadable; the delivery's "
+                    "stated scope is absent from the Bundle.",
+                }
             )
         if tracker_text is None:
             warnings.append(
-                {"reason": "missing-file", "target": "goal-tracker.md", "detail": "goal-tracker.md is missing or unreadable."}
+                {
+                    "reason": "missing-file",
+                    "target": "goal-tracker.md",
+                    "detail": "goal-tracker.md is missing or unreadable; no "
+                    "acceptance criterion can be assessed and no waiver can be "
+                    "corroborated.",
+                }
             )
         criteria, criteria_problems = _parse_criteria(tracker_text)
         if criteria_problems:
@@ -1259,6 +1291,90 @@ def mask_absolute_paths(data: bytes) -> Optional[bytes]:
     return None if _has_absolute_path(masked) else masked
 
 
+EVIDENCE_SUMMARY_ALGO = "evidence-summary-v0"
+
+
+def evidence_summary(data: bytes) -> Dict[str, Any]:
+    """Return the shape facts spec section C asks a truncated item to carry.
+
+    Deliberately content-free. Truncation is a disclosure boundary in this
+    codebase, not merely a size accident: ``_evidence_is_published`` answers
+    False for ``truncated`` exactly as it does for ``omitted``, and the
+    Compiler strips derived facts across that line -- the goal when ``plan.md``
+    is unpublished, the criteria when the Goal Tracker is, the frontmatter
+    facts when the state file is, and review prose behind a hash in
+    ``_withheld_review_findings``. A summary carrying any of the withheld bytes
+    would hand back what those three sites exist to remove, so this one carries
+    none: only how the artifact was shaped.
+
+    Counting is byte-exact on purpose. No decode, so undecodable evidence is
+    summarized like anything else; no ``splitlines``, which also breaks on
+    U+2028 and U+0085 and would make the count depend on how the bytes decode;
+    no line-ending normalization, so a CRLF file counts its own bytes. The
+    single pass also avoids allocating one object per line for newline-dense
+    logs, which are exactly the kind of oversized artifact this path handles.
+
+    Every member is checkable by the Validator against the item's own declared
+    ``bytes``, which is the property that keeps this from being one more
+    producer claim taken on trust. See ADR-0008.
+    """
+    lines = 0
+    current_line_bytes = 0
+    longest_line_bytes = 0
+    for byte in data:
+        if byte == 0x0A:
+            lines += 1
+            longest_line_bytes = max(longest_line_bytes, current_line_bytes)
+            current_line_bytes = 0
+        else:
+            current_line_bytes += 1
+    if data and data[-1] != 0x0A:
+        lines += 1
+    longest_line_bytes = max(longest_line_bytes, current_line_bytes)
+    return {
+        "algo": EVIDENCE_SUMMARY_ALGO,
+        "lines": lines,
+        "longest_line_bytes": longest_line_bytes,
+    }
+
+
+def evidence_summary_problem(summary: Any, declared_bytes: int) -> Optional[str]:
+    """Return why this summary cannot describe an artifact of that size, or None.
+
+    The arithmetic is exact rather than approximate. Splitting on ``\\n`` gives
+    ``n + 1`` parts for ``n`` newlines, and the newlines themselves cost ``n``
+    bytes, so ``longest_line_bytes + n <= bytes`` always. ``lines`` is ``n``
+    when the artifact ends in a newline and ``n + 1`` when it does not, which
+    makes ``max(lines - 1, 0)`` a sound lower bound for ``n`` in both cases.
+    Conversely, ``lines`` runs of at most ``longest_line_bytes`` plus at most
+    one newline each must be able to account for every declared byte.
+    """
+    if not isinstance(summary, Mapping):
+        return "Truncated evidence must declare a 'summary' object."
+    if summary.get("algo") != EVIDENCE_SUMMARY_ALGO:
+        return f"Evidence summary must declare algo {EVIDENCE_SUMMARY_ALGO!r}."
+    if set(summary) != {"algo", "lines", "longest_line_bytes"}:
+        # Closed on purpose: the summary is a disclosure bound, so an unknown
+        # member would be an unbounded channel for the bytes it exists to keep out.
+        return "Evidence summary must carry exactly 'algo', 'lines' and 'longest_line_bytes'."
+    values = []
+    for name in ("lines", "longest_line_bytes"):
+        value = summary.get(name)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            return f"Evidence summary '{name}' must be a non-negative integer."
+        values.append(value)
+    lines, longest = values
+    if lines > declared_bytes or longest > declared_bytes:
+        return "Evidence summary describes more content than the declared byte count."
+    if longest + max(lines - 1, 0) > declared_bytes:
+        return "Evidence summary line shape does not fit the declared byte count."
+    if declared_bytes > 0 and lines < 1:
+        return "Evidence summary claims no lines for a non-empty artifact."
+    if declared_bytes > lines * (longest + 1):
+        return "Evidence summary lines cannot account for the declared byte count."
+    return None
+
+
 def _evidence_is_published(item: Optional[Mapping[str, Any]]) -> bool:
     """Return whether the Bundle carries readable bytes for this item.
 
@@ -1470,6 +1586,36 @@ class EvidenceCompiler:
                 # masking existed.
                 if not oversized and profile_masks_kind(kind, "absolute-path", self.profile):
                     masked_data = mask_absolute_paths(data)
+                    if (
+                        masked_data is not None
+                        and len(masked_data) > max_item_bytes
+                        and "absolute-path" in omit_on
+                    ):
+                        # Masking substitutes a longer token than the path it
+                        # replaces, so a source within the cap can mask to over
+                        # it. Publishing that decided truncation on the masked
+                        # length and wrote `status: truncated` with the source's
+                        # `bytes`, which does not exceed the limit -- a
+                        # declaration contradicting the only fact that justifies
+                        # it, and one a recipient could not re-derive, since the
+                        # same source under local-v0 and the same cap is
+                        # `included`. Bytes that cannot be masked into the
+                        # budget are bytes this profile cannot publish, so the
+                        # item falls through to the omission rule and is
+                        # disclosed.
+                        #
+                        # The fallback is a precondition of masking, not a
+                        # choice: this cause and the two older ones (bytes that
+                        # are not UTF-8, a substitution leaving a match behind)
+                        # all land on the omission rule, so a profile masking a
+                        # class it cannot omit would publish the source with the
+                        # paths masking exists to remove. Every shipped profile
+                        # satisfies that, and
+                        # tests/proof_contract/test_contract.py holds them to
+                        # it. The condition stays here because keeping the
+                        # contradictory truncation is the safer of the two
+                        # failures if a profile ever stops satisfying it.
+                        masked_data = None
                 if masked_data is not None:
                     warnings.append(
                         {
@@ -1505,6 +1651,10 @@ class EvidenceCompiler:
             elif len(published) > max_item_bytes:
                 item["status"] = "truncated"
                 item["omitted_reason"] = "size-limit"
+                # Derived from the source bytes, which are what `sha256` and
+                # `bytes` already describe, so the item stays one consistent
+                # account of one artifact.
+                item["summary"] = evidence_summary(data)
                 warnings.append(
                     {
                         "reason": "truncated-evidence",
@@ -1512,7 +1662,8 @@ class EvidenceCompiler:
                         "detail": f"Evidence exceeds max_item_bytes ({max_item_bytes}).",
                     }
                 )
-                # A truncated item has no verifiable raw file in the bundle.
+                # A truncated item has no filesystem entry at its declared
+                # evidence path.
             else:
                 contents[relative] = published
                 if masked_data is not None:
@@ -3089,6 +3240,11 @@ class BundleValidator:
         secret_scan = profile.get("secret_scan", {}) or {}
         fail_on = list(secret_scan.get("fail_on", []))
         omit_on = set(secret_scan.get("omit_on", []))
+        # The Bundle pins the profile it was written under, so its size cap is
+        # part of what the Bundle declares about itself rather than an external
+        # parameter -- which is what makes a truncated item's byte count
+        # checkable here at all.
+        max_item_bytes = profile.get("max_item_bytes")
         ids: Dict[str, Dict[str, Any]] = {}
         # Compute the expected D4 short IDs before walking references.  A full
         # hash is valid only when two distinct path/hash pairs actually share
@@ -3135,6 +3291,15 @@ class BundleValidator:
                 profile_violation(
                     relative,
                     "Published evidence must not carry an omission reason.",
+                )
+            if status != "truncated" and "summary" in item:
+                # Only a withheld-for-size item has anything to summarize, and
+                # the summary is a bounded disclosure surface. Letting any item
+                # carry one would put that surface on artifacts the Bundle
+                # already publishes in full.
+                profile_violation(
+                    relative,
+                    "Only truncated evidence may declare a summary.",
                 )
             if status == "masked":
                 # Re-derived from the profile rather than believed: a Bundle
@@ -3190,11 +3355,39 @@ class BundleValidator:
                         relative,
                         "Omitted evidence must use a profile-supported omission reason.",
                     )
-            elif status == "truncated" and omitted_reason != "size-limit":
-                profile_violation(
-                    relative,
-                    "Truncated evidence must carry the size-limit omission reason.",
+            elif status == "truncated":
+                if omitted_reason != "size-limit":
+                    profile_violation(
+                        relative,
+                        "Truncated evidence must carry the size-limit omission reason.",
+                    )
+                summary_problem = evidence_summary_problem(
+                    item.get("summary"), item["bytes"]
                 )
+                if summary_problem is not None:
+                    # Spec section C: a truncated item is "a summary plus the
+                    # original sha256 and original byte count". The summary is
+                    # checked against the byte count rather than believed --
+                    # every other truncated-item rule on this branch was added
+                    # because a declaration nothing verified is a declaration
+                    # the producer writes for itself.
+                    profile_violation(relative, summary_problem)
+                if isinstance(max_item_bytes, int) and item["bytes"] <= max_item_bytes:
+                    # `truncated` is the one withholding status whose reason was
+                    # taken on trust. `omitted` has its reason checked against
+                    # the profile, so a producer could withhold any optional
+                    # item by calling it truncated, deleting the bytes and
+                    # re-hashing -- and be told `incomplete`, which reads as a
+                    # size problem rather than a withheld artifact. The claim is
+                    # checkable from the Bundle's own two numbers: `bytes`
+                    # describes the source, and the profile it pins declares the
+                    # cap. The Compiler already refuses to produce this, so
+                    # accepting it here let the two disagree about the same rule.
+                    profile_violation(
+                        relative,
+                        f"Truncated evidence declares {item['bytes']} bytes, which does "
+                        f"not exceed the profile's max_item_bytes ({max_item_bytes}).",
+                    )
             if (
                 status != "omitted"
                 and _profile_omits_evidence(relative, kind, profile)
@@ -3261,6 +3454,23 @@ class BundleValidator:
                 # listing truncated-evidence, which is the same trust in the
                 # producer wearing a different hat. `invalid` outranks
                 # `incomplete`, so an independently invalid Bundle keeps that.
+                #
+                # The presence check belongs here rather than in a branch of
+                # its own: this chain already dispatches on `status`, and a
+                # second `elif status == "truncated"` earlier in it would
+                # shadow this block and silently delete the derivation above.
+                if source.exists() or source.is_symlink():
+                    # The rule `omitted` has always had, for the same reason. A
+                    # truncated declaration says the item was too large to
+                    # carry, so an entry at its declared path contradicts the
+                    # declaration and puts a file past `max_item_bytes` inside
+                    # a `max_bundle_bytes` budget computed without it. The
+                    # Compiler never writes this path, so nothing it produces
+                    # can trip the check.
+                    profile_violation(
+                        relative,
+                        "Evidence declared truncated must not be present in the Bundle.",
+                    )
                 if report.status != "invalid":
                     report.status = "incomplete"
                 report.reasons.append(

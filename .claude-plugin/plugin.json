@@ -1,7 +1,7 @@
 {
   "name": "rloop",
   "description": "Loop - An iterative development plugin that uses Codex to review Claude's work. Creates a feedback loop where Claude implements plans and Codex independently reviews progress, ensuring quality through continuous refinement.",
-  "version": "0.2.0",
+  "version": "0.2.3",
   "author": {
     "name": "FrankDan77"
   },

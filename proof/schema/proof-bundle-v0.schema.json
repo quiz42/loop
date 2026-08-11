@@ -421,6 +421,26 @@
                 "type": "string"
               }
             ]
+          },
+          "summary": {
+            "description": "Content-free shape facts about the withheld source bytes of a truncated item, as spec section C requires. Present only on truncated evidence. Closed on purpose: the summary is a disclosure bound, so an unknown member would be an unbounded channel for the bytes it exists to keep out. Every member is checkable against the item's own 'bytes' (ADR-0008).",
+            "type": "object",
+            "required": ["algo", "lines", "longest_line_bytes"],
+            "additionalProperties": false,
+            "properties": {
+              "algo": {
+                "description": "Names the derivation so a holder of the source can recompute it.",
+                "const": "evidence-summary-v0"
+              },
+              "lines": {
+                "description": "Newline count, plus one when the artifact does not end in a newline. Counted on raw bytes, with no decoding and no line-ending normalization.",
+                "type": "integer"
+              },
+              "longest_line_bytes": {
+                "description": "Length in bytes of the longest run between newlines.",
+                "type": "integer"
+              }
+            }
           }
         },
         "additionalProperties": true

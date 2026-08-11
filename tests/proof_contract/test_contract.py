@@ -167,6 +167,29 @@ class PublicProfileTests(unittest.TestCase):
         self.assertEqual(profile["secret_scan"]["mask_on"], ["absolute-path"])
         self.assertEqual(profile["secret_scan"]["mask_kinds"], ["round_review_result"])
 
+    def test_every_masked_scan_class_has_an_omit_fallback(self):
+        """Masking is never the whole answer for a scan class, so it needs a floor.
+
+        Bytes that are not UTF-8 cannot be rewritten, a substitution leaving a
+        match behind must not be published, and one that no longer fits
+        `max_item_bytes` cannot be carried. All three fall through to the
+        omission rule, so a profile masking a class it cannot omit would
+        publish the source with the paths masking exists to remove. The schema
+        cannot express a dependency between two lists, and profiles load by
+        name from the package directory only, so an incoherent profile could
+        only be one this repository ships. Asserting it over the shipped set is
+        therefore the whole of the rule; a run-time check in `load_profile`
+        would guard a case that cannot arise, and testing it would need a seam
+        past the CLI boundary the spec's Testing Decisions permit.
+        """
+        for name in ("local-v0", "public-v0", "public-v1"):
+            secret_scan = load_profile(name)["secret_scan"]
+            self.assertLessEqual(
+                set(secret_scan.get("mask_on", [])),
+                set(secret_scan.get("omit_on", [])),
+                f"{name} masks a scan class it cannot omit",
+            )
+
 
 class SchemaValidationTests(unittest.TestCase):
     """Both schemas accept their documented documents and expose actionable violations."""
