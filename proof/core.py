@@ -1310,16 +1310,31 @@ def evidence_summary(data: bytes) -> Dict[str, Any]:
     Counting is byte-exact on purpose. No decode, so undecodable evidence is
     summarized like anything else; no ``splitlines``, which also breaks on
     U+2028 and U+0085 and would make the count depend on how the bytes decode;
-    no line-ending normalization, so a CRLF file counts its own bytes.
+    no line-ending normalization, so a CRLF file counts its own bytes. The
+    single pass also avoids allocating one object per line for newline-dense
+    logs, which are exactly the kind of oversized artifact this path handles.
 
     Every member is checkable by the Validator against the item's own declared
     ``bytes``, which is the property that keeps this from being one more
     producer claim taken on trust. See ADR-0008.
     """
+    lines = 0
+    current_line_bytes = 0
+    longest_line_bytes = 0
+    for byte in data:
+        if byte == 0x0A:
+            lines += 1
+            longest_line_bytes = max(longest_line_bytes, current_line_bytes)
+            current_line_bytes = 0
+        else:
+            current_line_bytes += 1
+    if data and data[-1] != 0x0A:
+        lines += 1
+    longest_line_bytes = max(longest_line_bytes, current_line_bytes)
     return {
         "algo": EVIDENCE_SUMMARY_ALGO,
-        "lines": data.count(b"\n") + (1 if data and not data.endswith(b"\n") else 0),
-        "longest_line_bytes": max((len(part) for part in data.split(b"\n")), default=0),
+        "lines": lines,
+        "longest_line_bytes": longest_line_bytes,
     }
 
 
@@ -1331,6 +1346,8 @@ def evidence_summary_problem(summary: Any, declared_bytes: int) -> Optional[str]
     bytes, so ``longest_line_bytes + n <= bytes`` always. ``lines`` is ``n``
     when the artifact ends in a newline and ``n + 1`` when it does not, which
     makes ``max(lines - 1, 0)`` a sound lower bound for ``n`` in both cases.
+    Conversely, ``lines`` runs of at most ``longest_line_bytes`` plus at most
+    one newline each must be able to account for every declared byte.
     """
     if not isinstance(summary, Mapping):
         return "Truncated evidence must declare a 'summary' object."
@@ -1353,6 +1370,8 @@ def evidence_summary_problem(summary: Any, declared_bytes: int) -> Optional[str]
         return "Evidence summary line shape does not fit the declared byte count."
     if declared_bytes > 0 and lines < 1:
         return "Evidence summary claims no lines for a non-empty artifact."
+    if declared_bytes > lines * (longest + 1):
+        return "Evidence summary lines cannot account for the declared byte count."
     return None
 
 
@@ -1643,7 +1662,8 @@ class EvidenceCompiler:
                         "detail": f"Evidence exceeds max_item_bytes ({max_item_bytes}).",
                     }
                 )
-                # A truncated item has no verifiable raw file in the bundle.
+                # A truncated item has no filesystem entry at its declared
+                # evidence path.
             else:
                 contents[relative] = published
                 if masked_data is not None:
@@ -3442,11 +3462,11 @@ class BundleValidator:
                 if source.exists() or source.is_symlink():
                     # The rule `omitted` has always had, for the same reason. A
                     # truncated declaration says the item was too large to
-                    # carry, so carrying it contradicts the declaration, hands
-                    # over the bytes the Bundle says it withheld, and puts a
-                    # file past `max_item_bytes` inside a `max_bundle_bytes`
-                    # budget computed without it. The Compiler never writes
-                    # this file, so nothing it produces can trip the check.
+                    # carry, so an entry at its declared path contradicts the
+                    # declaration and puts a file past `max_item_bytes` inside
+                    # a `max_bundle_bytes` budget computed without it. The
+                    # Compiler never writes this path, so nothing it produces
+                    # can trip the check.
                     profile_violation(
                         relative,
                         "Evidence declared truncated must not be present in the Bundle.",

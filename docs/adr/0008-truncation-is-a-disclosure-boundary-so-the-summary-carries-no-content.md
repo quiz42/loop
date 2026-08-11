@@ -71,21 +71,30 @@ The summary carries **shape, not content**:
   counted on raw bytes: no decode, so undecodable evidence summarizes like
   anything else; no `splitlines`, which also breaks on U+2028 and U+0085 and
   would make the count depend on how the bytes decode; no line-ending
-  normalization, so a CRLF artifact counts its own bytes.
+  normalization, so a CRLF artifact counts its own bytes. The implementation
+  scans once without splitting, so newline-dense oversized artifacts do not
+  allocate one object per line.
 - `algo` names the derivation, as `run-id-v0` does in section D, so a holder of
   the source can recompute it.
 - The object is **closed**. It is a disclosure bound, so an unknown member would
   be an unbounded channel for the bytes the decision exists to keep out.
 - It is required when `status` is `truncated` and forbidden otherwise.
 
+The absence rule is exact to the manifest-defined Evidence Item: no filesystem
+entry may exist at its declared `evidence/<path>`. `proof.json` defines the
+verified Evidence Item set; undeclared co-located files are unmanaged transport
+content, excluded from `max_bundle_bytes`, and receive no Proof integrity,
+disclosure or secret-safety claim. The Writer creates a clean managed projection;
+the Validator does not authenticate the surrounding transport container.
+
 Every member is checkable by the Validator against the item's own declared
 `bytes`, with no external input: `lines <= bytes`, `longest_line_bytes <=
-bytes`, and `longest_line_bytes + max(lines - 1, 0) <= bytes` -- exact, because
-splitting on `n` newlines yields `n + 1` parts and the newlines themselves cost
-`n` bytes, and `max(lines - 1, 0)` is a sound lower bound for `n` whether or not
-the artifact ends in a newline. That checkability is the point: every other rule
-on a truncated declaration was added because a claim nothing verifies is a claim
-the producer writes for itself.
+bytes`, `longest_line_bytes + max(lines - 1, 0) <= bytes`, and `bytes <= lines *
+(longest_line_bytes + 1)`. The first three keep the declared shape within the
+artifact; the last requires its lines to have enough capacity for every byte.
+Together they are exact whether or not the artifact ends in a newline. That
+checkability is the point: every other rule on a truncated declaration was added
+because a claim nothing verifies is a claim the producer writes for itself.
 
 The requirement is unconditional -- no version gate. No Proof Bundle carrying a
 truncated item has been distributed: the repository has no tags, `origin/main`

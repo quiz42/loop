@@ -1,6 +1,6 @@
 # Loop
 
-**Current Version: 0.2.2**
+**Current Version: 0.2.3**
 
 Loop is a Claude Code plugin that turns a single build agent into a self-correcting pair: Claude writes the code, Codex reviews it independently, and the two keep exchanging feedback until your acceptance criteria are actually met.
 

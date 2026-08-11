@@ -839,7 +839,7 @@ echo "Section 6: Truncation is derived from the Bundle, not from its own warning
 SILENT_RUN=$(make_run silent clean-complete)
 python3 -c "
 import sys
-open(sys.argv[1], 'w', encoding='utf-8').write('# Padded prompt\n' + 'x' * 1200000 + '\n')
+open(sys.argv[1], 'wb').write(b'# Padded prompt\n' + b'x\n' * 600000)
 " "$SILENT_RUN/round-0-prompt.md"
 SILENT_SOURCE=$(export_run "$SILENT_RUN" silent-source)
 if [[ -n "$SILENT_SOURCE" ]]; then
@@ -954,12 +954,11 @@ PY
         fail "under-cap truncation reason" "profile-violation" "$UNDERCAP_REASONS"
     fi
 
-    # A truncated declaration says the item was too large to carry, so carrying
-    # it anyway contradicts the declaration -- and hands the recipient the very
-    # bytes the Bundle says it withheld, inside a bundle budget computed without
-    # them. `omitted` has had this rule from the start; `truncated` had no
-    # presence check at all, so putting the source back under evidence/ verified
-    # as merely incomplete.
+    # A truncated declaration says the item was too large to carry, so an entry
+    # at its declared evidence path contradicts the declaration and sits inside
+    # a bundle budget computed without it. `omitted` has had this rule from the
+    # start; `truncated` had no presence check at all, so putting the source back
+    # at that path verified as merely incomplete.
     RETAINED_BUNDLE="$TEST_DIR/bundles/truncated-retained"
     cp -R "$SILENT_SOURCE" "$RETAINED_BUNDLE"
     cp "$SILENT_RUN/round-0-prompt.md" "$RETAINED_BUNDLE/evidence/round-0-prompt.md"
@@ -970,6 +969,55 @@ PY
         pass "and distributing the withheld bytes is a profile-violation"
     else
         fail "retained truncation reason" "profile-violation" "$RETAINED_REASONS"
+    fi
+
+    for link_kind in live dangling; do
+        LINKED_BUNDLE="$TEST_DIR/bundles/truncated-$link_kind-symlink"
+        cp -R "$SILENT_SOURCE" "$LINKED_BUNDLE"
+        if [[ "$link_kind" == "live" ]]; then
+            link_target="$SILENT_RUN/round-0-prompt.md"
+        else
+            link_target="$TEST_DIR/no-such-truncated-source"
+        fi
+        ln -s "$link_target" "$LINKED_BUNDLE/evidence/round-0-prompt.md"
+        assert_equals "a truncated item with a $link_kind symlink is invalid at exit 3" \
+            "3|invalid" "$(verify_run "$LINKED_BUNDLE")"
+        LINKED_REASONS=$(verify_reasons "$LINKED_BUNDLE")
+        if [[ "$LINKED_REASONS" == *profile-violation* ]]; then
+            pass "and the $link_kind symlink is a profile-violation"
+        else
+            fail "$link_kind truncated symlink" "profile-violation" "$LINKED_REASONS"
+        fi
+    done
+
+    DIRECTORY_BUNDLE="$TEST_DIR/bundles/truncated-directory"
+    cp -R "$SILENT_SOURCE" "$DIRECTORY_BUNDLE"
+    mkdir "$DIRECTORY_BUNDLE/evidence/round-0-prompt.md"
+    assert_equals "a truncated item with a directory at its declared path is invalid" \
+        "3|invalid" "$(verify_run "$DIRECTORY_BUNDLE")"
+    DIRECTORY_REASONS=$(verify_reasons "$DIRECTORY_BUNDLE")
+    if [[ "$DIRECTORY_REASONS" == *profile-violation* ]]; then
+        pass "and the directory is a profile-violation"
+    else
+        fail "directory at truncated evidence path" "profile-violation" \
+            "$DIRECTORY_REASONS"
+    fi
+
+    # `proof.json` defines the Evidence Item set. A co-located file under a path
+    # it does not declare is unmanaged transport content: verify does not hash,
+    # size, scan or otherwise make a Proof claim about it. Pin that boundary so
+    # the exact-path rule above is not misread as authenticating the container.
+    UNMANAGED_BUNDLE="$TEST_DIR/bundles/truncated-unmanaged-copy"
+    cp -R "$SILENT_SOURCE" "$UNMANAGED_BUNDLE"
+    cp "$SILENT_RUN/round-0-prompt.md" \
+        "$UNMANAGED_BUNDLE/evidence/withheld-copy.bin"
+    assert_equals "an undeclared co-located file remains outside the Proof verdict" \
+        "2|incomplete" "$(verify_run "$UNMANAGED_BUNDLE")"
+    UNMANAGED_REASONS=$(verify_reasons "$UNMANAGED_BUNDLE")
+    if [[ "$UNMANAGED_REASONS" == "truncated-evidence" ]]; then
+        pass "and only the declared truncation affects integrity"
+    else
+        fail "unmanaged co-located file" "truncated-evidence" "$UNMANAGED_REASONS"
     fi
 
     # Spec section C's third clause: "a summary plus the original sha256 and
@@ -987,7 +1035,7 @@ summary = item.get('summary')
 print(json.dumps(summary, sort_keys=True) if summary is not None else 'absent')
 " "$SILENT_SOURCE")
     assert_equals "a truncated item carries a content-free shape summary" \
-        '{"algo": "evidence-summary-v0", "lines": 2, "longest_line_bytes": 1200000}' \
+        '{"algo": "evidence-summary-v0", "lines": 600001, "longest_line_bytes": 15}' \
         "$SUMMARY_ITEM"
 
     # Only a withheld-for-size item has anything to summarize, and the summary
@@ -1003,6 +1051,55 @@ print(','.join(sorted(
 " "$SILENT_SOURCE")
     assert_equals "no published item carries a summary" "" "$SUMMARY_ELSEWHERE"
 
+    # The compiler omitting summaries elsewhere is only half the contract. A
+    # hand-edited Bundle must not gain a second disclosure surface by putting a
+    # structurally valid summary on evidence it already publishes in full.
+    SUMMARY_ON_INCLUDED="$TEST_DIR/bundles/summary-on-included"
+    cp -R "$SILENT_SOURCE" "$SUMMARY_ON_INCLUDED"
+    rehash_bundle "$SUMMARY_ON_INCLUDED/proof.json" <<'PY'
+for item in bundle["evidence"]:
+    if item["path"] == "plan.md":
+        assert item["status"] == "included", item["status"]
+        item["summary"] = {
+            "algo": "evidence-summary-v0",
+            "lines": 1,
+            "longest_line_bytes": item["bytes"],
+        }
+PY
+    assert_equals "a non-truncated item carrying a summary is invalid at exit 3" \
+        "3|invalid" "$(verify_run "$SUMMARY_ON_INCLUDED")"
+    SUMMARY_ON_INCLUDED_REASONS=$(verify_reasons "$SUMMARY_ON_INCLUDED")
+    if [[ "$SUMMARY_ON_INCLUDED_REASONS" == *profile-violation* ]]; then
+        pass "and the extra summary is a profile-violation"
+    else
+        fail "summary on non-truncated evidence" "profile-violation" \
+            "$SUMMARY_ON_INCLUDED_REASONS"
+    fi
+
+    # The feasibility bounds are exact rather than a producer-truth check. Both
+    # shapes below could describe an artifact of the declared size, so a
+    # re-hashed declaration remains incomplete for truncation rather than
+    # becoming invalid merely because it differs from the unavailable source.
+    for accepted in \
+        "capacity-edge:item['summary'].update({'lines': 1, 'longest_line_bytes': item['bytes'] - 1})" \
+        "all-newline:item['summary'].update({'lines': item['bytes'], 'longest_line_bytes': 0})" \
+        ; do
+        ACCEPTED_LABEL="${accepted%%:*}"
+        ACCEPTED_CODE="${accepted#*:}"
+        ACCEPTED_BUNDLE="$TEST_DIR/bundles/summary-$ACCEPTED_LABEL"
+        cp -R "$SILENT_SOURCE" "$ACCEPTED_BUNDLE"
+        export ACCEPTED_SUMMARY_CODE="$ACCEPTED_CODE"
+        rehash_bundle "$ACCEPTED_BUNDLE/proof.json" <<'PY'
+import os
+
+for item in bundle["evidence"]:
+    if item["path"] == "round-0-prompt.md":
+        exec(os.environ["ACCEPTED_SUMMARY_CODE"], {"item": item})
+PY
+        assert_equals "a feasible $ACCEPTED_LABEL summary remains incomplete" \
+            "2|incomplete" "$(verify_run "$ACCEPTED_BUNDLE")"
+    done
+
     # Each rule below is checked on a Bundle whose only defect is that rule, so
     # a green result cannot come from a neighbouring check.
     for broken in \
@@ -1012,6 +1109,7 @@ print(','.join(sorted(
         "impossible-lines:item['summary']['lines'] = item['bytes'] + 1" \
         "impossible-length:item['summary']['longest_line_bytes'] = item['bytes'] + 1" \
         "shape-does-not-fit:item['summary'].update({'lines': 3, 'longest_line_bytes': item['bytes'] - 1})" \
+        "shape-cannot-hold-bytes:item['summary'].update({'lines': 1, 'longest_line_bytes': 0})" \
         "no-lines:item['summary']['lines'] = 0" \
         ; do
         BROKEN_LABEL="${broken%%:*}"

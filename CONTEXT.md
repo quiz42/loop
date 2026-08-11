@@ -56,6 +56,8 @@ _Avoid_: Proof, log
 
 **Proof Bundle**:
 A portable manifest plus referenced evidence items compiled from one Loop Run.
+The manifest defines the verified Evidence Item set; undeclared files co-located
+in its transport container receive no Proof claim.
 _Avoid_: Trace, report, archive
 
 **Run ID**:
