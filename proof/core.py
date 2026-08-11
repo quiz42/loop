@@ -3345,6 +3345,23 @@ class BundleValidator:
                 # listing truncated-evidence, which is the same trust in the
                 # producer wearing a different hat. `invalid` outranks
                 # `incomplete`, so an independently invalid Bundle keeps that.
+                #
+                # The presence check belongs here rather than in a branch of
+                # its own: this chain already dispatches on `status`, and a
+                # second `elif status == "truncated"` earlier in it would
+                # shadow this block and silently delete the derivation above.
+                if source.exists() or source.is_symlink():
+                    # The rule `omitted` has always had, for the same reason. A
+                    # truncated declaration says the item was too large to
+                    # carry, so carrying it contradicts the declaration, hands
+                    # over the bytes the Bundle says it withheld, and puts a
+                    # file past `max_item_bytes` inside a `max_bundle_bytes`
+                    # budget computed without it. The Compiler never writes
+                    # this file, so nothing it produces can trip the check.
+                    profile_violation(
+                        relative,
+                        "Evidence declared truncated must not be present in the Bundle.",
+                    )
                 if report.status != "invalid":
                     report.status = "incomplete"
                 report.reasons.append(

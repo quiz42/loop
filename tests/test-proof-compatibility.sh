@@ -935,6 +935,24 @@ PY
     else
         fail "under-cap truncation reason" "profile-violation" "$UNDERCAP_REASONS"
     fi
+
+    # A truncated declaration says the item was too large to carry, so carrying
+    # it anyway contradicts the declaration -- and hands the recipient the very
+    # bytes the Bundle says it withheld, inside a bundle budget computed without
+    # them. `omitted` has had this rule from the start; `truncated` had no
+    # presence check at all, so putting the source back under evidence/ verified
+    # as merely incomplete.
+    RETAINED_BUNDLE="$TEST_DIR/bundles/truncated-retained"
+    cp -R "$SILENT_SOURCE" "$RETAINED_BUNDLE"
+    cp "$SILENT_RUN/round-0-prompt.md" "$RETAINED_BUNDLE/evidence/round-0-prompt.md"
+    assert_equals "a truncated item whose bytes are in the Bundle is invalid at exit 3" \
+        "3|invalid" "$(verify_run "$RETAINED_BUNDLE")"
+    RETAINED_REASONS=$(verify_reasons "$RETAINED_BUNDLE")
+    if [[ "$RETAINED_REASONS" == *profile-violation* ]]; then
+        pass "and distributing the withheld bytes is a profile-violation"
+    else
+        fail "retained truncation reason" "profile-violation" "$RETAINED_REASONS"
+    fi
 else
     fail "silent truncation export" "a bundle" "export failed"
 fi
