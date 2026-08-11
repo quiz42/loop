@@ -918,13 +918,31 @@ PY
     # catches it.
     UNDERCAP_BUNDLE="$TEST_DIR/bundles/truncated-undercap"
     cp -R "$CLEAN_BUNDLE" "$UNDERCAP_BUNDLE"
+    # The summary is derived from the real file before that file is removed, so
+    # it is arithmetically sound and the size claim is the only thing wrong
+    # here. Without it the item would also fail the summary rule, and this
+    # assertion would hold with the size check switched off.
+    export UNDERCAP_SUMMARY_JSON
+    UNDERCAP_SUMMARY_JSON=$(python3 -c "
+import json, sys
+data = open(sys.argv[1], 'rb').read()
+print(json.dumps({
+    'algo': 'evidence-summary-v0',
+    'lines': data.count(b'\n') + (1 if data and not data.endswith(b'\n') else 0),
+    'longest_line_bytes': max((len(part) for part in data.split(b'\n')), default=0),
+}))
+" "$UNDERCAP_BUNDLE/evidence/round-0-prompt.md")
     rm "$UNDERCAP_BUNDLE/evidence/round-0-prompt.md"
     rehash_bundle "$UNDERCAP_BUNDLE/proof.json" <<'PY'
+import json
+import os
+
 for item in bundle["evidence"]:
     if item["path"] == "round-0-prompt.md":
         assert item["bytes"] <= 1048576, item["bytes"]
         item["status"] = "truncated"
         item["omitted_reason"] = "size-limit"
+        item["summary"] = json.loads(os.environ["UNDERCAP_SUMMARY_JSON"])
 bundle["integrity"]["status"] = "incomplete"
 PY
     assert_equals "a truncated item that fits the cap is invalid at exit 3" \
@@ -953,6 +971,68 @@ PY
     else
         fail "retained truncation reason" "profile-violation" "$RETAINED_REASONS"
     fi
+
+    # Spec section C's third clause: "a summary plus the original sha256 and
+    # original byte count". The summary carries no content -- truncation is a
+    # disclosure boundary in this codebase, and the Compiler already strips the
+    # goal, the criteria, the state frontmatter and review prose across it, so
+    # a summary quoting the withheld bytes would hand back exactly what those
+    # sites remove (ADR-0008). What it carries instead is shape, and every
+    # member is checkable against the item's own byte count.
+    SUMMARY_ITEM=$(python3 -c "
+import json, sys
+bundle = json.load(open(sys.argv[1] + '/proof.json', encoding='utf-8'))
+item = next(i for i in bundle['evidence'] if i['path'] == 'round-0-prompt.md')
+summary = item.get('summary')
+print(json.dumps(summary, sort_keys=True) if summary is not None else 'absent')
+" "$SILENT_SOURCE")
+    assert_equals "a truncated item carries a content-free shape summary" \
+        '{"algo": "evidence-summary-v0", "lines": 2, "longest_line_bytes": 1200000}' \
+        "$SUMMARY_ITEM"
+
+    # Only a withheld-for-size item has anything to summarize, and the summary
+    # is a bounded disclosure surface: it must not appear on items the Bundle
+    # already publishes in full.
+    SUMMARY_ELSEWHERE=$(python3 -c "
+import json, sys
+bundle = json.load(open(sys.argv[1] + '/proof.json', encoding='utf-8'))
+print(','.join(sorted(
+    i['path'] for i in bundle['evidence']
+    if i['status'] != 'truncated' and 'summary' in i
+)))
+" "$SILENT_SOURCE")
+    assert_equals "no published item carries a summary" "" "$SUMMARY_ELSEWHERE"
+
+    # Each rule below is checked on a Bundle whose only defect is that rule, so
+    # a green result cannot come from a neighbouring check.
+    for broken in \
+        "missing:del item['summary']" \
+        "extra-member:item['summary']['excerpt'] = 'BEGIN RSA PRIVATE KEY'" \
+        "wrong-algo:item['summary']['algo'] = 'evidence-summary-v9'" \
+        "impossible-lines:item['summary']['lines'] = item['bytes'] + 1" \
+        "impossible-length:item['summary']['longest_line_bytes'] = item['bytes'] + 1" \
+        "shape-does-not-fit:item['summary'].update({'lines': 3, 'longest_line_bytes': item['bytes'] - 1})" \
+        "no-lines:item['summary']['lines'] = 0" \
+        ; do
+        BROKEN_LABEL="${broken%%:*}"
+        BROKEN_CODE="${broken#*:}"
+        BROKEN_BUNDLE="$TEST_DIR/bundles/summary-$BROKEN_LABEL"
+        cp -R "$SILENT_SOURCE" "$BROKEN_BUNDLE"
+        export BROKEN_SUMMARY_CODE="$BROKEN_CODE"
+        # `integrity.status` stays at the exported `incomplete`. Declaring
+        # `invalid` would make the exit code right for the wrong reason --
+        # integrity-status-mismatch -- and every case below would hold with the
+        # summary rule switched off.
+        rehash_bundle "$BROKEN_BUNDLE/proof.json" <<'PY'
+import os
+
+for item in bundle["evidence"]:
+    if item["path"] == "round-0-prompt.md":
+        exec(os.environ["BROKEN_SUMMARY_CODE"], {"item": item})
+PY
+        assert_equals "a $BROKEN_LABEL summary is invalid at exit 3" \
+            "3|invalid" "$(verify_run "$BROKEN_BUNDLE")"
+    done
 else
     fail "silent truncation export" "a bundle" "export failed"
 fi

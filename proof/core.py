@@ -1291,6 +1291,71 @@ def mask_absolute_paths(data: bytes) -> Optional[bytes]:
     return None if _has_absolute_path(masked) else masked
 
 
+EVIDENCE_SUMMARY_ALGO = "evidence-summary-v0"
+
+
+def evidence_summary(data: bytes) -> Dict[str, Any]:
+    """Return the shape facts spec section C asks a truncated item to carry.
+
+    Deliberately content-free. Truncation is a disclosure boundary in this
+    codebase, not merely a size accident: ``_evidence_is_published`` answers
+    False for ``truncated`` exactly as it does for ``omitted``, and the
+    Compiler strips derived facts across that line -- the goal when ``plan.md``
+    is unpublished, the criteria when the Goal Tracker is, the frontmatter
+    facts when the state file is, and review prose behind a hash in
+    ``_withheld_review_findings``. A summary carrying any of the withheld bytes
+    would hand back what those three sites exist to remove, so this one carries
+    none: only how the artifact was shaped.
+
+    Counting is byte-exact on purpose. No decode, so undecodable evidence is
+    summarized like anything else; no ``splitlines``, which also breaks on
+    U+2028 and U+0085 and would make the count depend on how the bytes decode;
+    no line-ending normalization, so a CRLF file counts its own bytes.
+
+    Every member is checkable by the Validator against the item's own declared
+    ``bytes``, which is the property that keeps this from being one more
+    producer claim taken on trust. See ADR-0008.
+    """
+    return {
+        "algo": EVIDENCE_SUMMARY_ALGO,
+        "lines": data.count(b"\n") + (1 if data and not data.endswith(b"\n") else 0),
+        "longest_line_bytes": max((len(part) for part in data.split(b"\n")), default=0),
+    }
+
+
+def evidence_summary_problem(summary: Any, declared_bytes: int) -> Optional[str]:
+    """Return why this summary cannot describe an artifact of that size, or None.
+
+    The arithmetic is exact rather than approximate. Splitting on ``\\n`` gives
+    ``n + 1`` parts for ``n`` newlines, and the newlines themselves cost ``n``
+    bytes, so ``longest_line_bytes + n <= bytes`` always. ``lines`` is ``n``
+    when the artifact ends in a newline and ``n + 1`` when it does not, which
+    makes ``max(lines - 1, 0)`` a sound lower bound for ``n`` in both cases.
+    """
+    if not isinstance(summary, Mapping):
+        return "Truncated evidence must declare a 'summary' object."
+    if summary.get("algo") != EVIDENCE_SUMMARY_ALGO:
+        return f"Evidence summary must declare algo {EVIDENCE_SUMMARY_ALGO!r}."
+    if set(summary) != {"algo", "lines", "longest_line_bytes"}:
+        # Closed on purpose: the summary is a disclosure bound, so an unknown
+        # member would be an unbounded channel for the bytes it exists to keep out.
+        return "Evidence summary must carry exactly 'algo', 'lines' and 'longest_line_bytes'."
+    values = []
+    for name in ("lines", "longest_line_bytes"):
+        value = summary.get(name)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            return f"Evidence summary '{name}' must be a non-negative integer."
+        values.append(value)
+    lines, longest = values
+    if lines > declared_bytes or longest > declared_bytes:
+        return "Evidence summary describes more content than the declared byte count."
+    if longest + max(lines - 1, 0) > declared_bytes:
+        return "Evidence summary line shape does not fit the declared byte count."
+    if declared_bytes > 0 and lines < 1:
+        return "Evidence summary claims no lines for a non-empty artifact."
+    return None
+
+
 def _evidence_is_published(item: Optional[Mapping[str, Any]]) -> bool:
     """Return whether the Bundle carries readable bytes for this item.
 
@@ -1567,6 +1632,10 @@ class EvidenceCompiler:
             elif len(published) > max_item_bytes:
                 item["status"] = "truncated"
                 item["omitted_reason"] = "size-limit"
+                # Derived from the source bytes, which are what `sha256` and
+                # `bytes` already describe, so the item stays one consistent
+                # account of one artifact.
+                item["summary"] = evidence_summary(data)
                 warnings.append(
                     {
                         "reason": "truncated-evidence",
@@ -3203,6 +3272,15 @@ class BundleValidator:
                     relative,
                     "Published evidence must not carry an omission reason.",
                 )
+            if status != "truncated" and "summary" in item:
+                # Only a withheld-for-size item has anything to summarize, and
+                # the summary is a bounded disclosure surface. Letting any item
+                # carry one would put that surface on artifacts the Bundle
+                # already publishes in full.
+                profile_violation(
+                    relative,
+                    "Only truncated evidence may declare a summary.",
+                )
             if status == "masked":
                 # Re-derived from the profile rather than believed: a Bundle
                 # that declares an item masked under a profile with no masking
@@ -3263,7 +3341,18 @@ class BundleValidator:
                         relative,
                         "Truncated evidence must carry the size-limit omission reason.",
                     )
-                elif isinstance(max_item_bytes, int) and item["bytes"] <= max_item_bytes:
+                summary_problem = evidence_summary_problem(
+                    item.get("summary"), item["bytes"]
+                )
+                if summary_problem is not None:
+                    # Spec section C: a truncated item is "a summary plus the
+                    # original sha256 and original byte count". The summary is
+                    # checked against the byte count rather than believed --
+                    # every other truncated-item rule on this branch was added
+                    # because a declaration nothing verified is a declaration
+                    # the producer writes for itself.
+                    profile_violation(relative, summary_problem)
+                if isinstance(max_item_bytes, int) and item["bytes"] <= max_item_bytes:
                     # `truncated` is the one withholding status whose reason was
                     # taken on trust. `omitted` has its reason checked against
                     # the profile, so a producer could withhold any optional
